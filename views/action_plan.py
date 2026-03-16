@@ -92,7 +92,6 @@ def render():
             "Filtrer type",
             ["meta", "content", "technical"],
             default=["meta", "content", "technical"],
-            horizontal=True,
         )
         
         filtered_actions = [a for a in actions if a.get("type", "meta") in type_filter]
