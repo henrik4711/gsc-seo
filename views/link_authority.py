@@ -56,7 +56,7 @@ def _render_upload():
         best_file = st.file_uploader(
             "Upload Best by Links CSV",
             type=["csv", "tsv"],
-            key="ahrefs_best",
+            key="upload_ahrefs_best",
             help="Side-niveau data med referring domains og backlinks"
         )
         if best_file:
@@ -77,7 +77,7 @@ def _render_upload():
         bl_file = st.file_uploader(
             "Upload Backlinks CSV",
             type=["csv", "tsv"],
-            key="ahrefs_backlinks",
+            key="upload_ahrefs_backlinks",
             help="Individuelle backlinks med anchor text og DR"
         )
         if bl_file:
@@ -98,7 +98,7 @@ def _render_upload():
         kw_file = st.file_uploader(
             "Upload Organic Keywords CSV",
             type=["csv", "tsv"],
-            key="ahrefs_keywords",
+            key="upload_ahrefs_keywords",
             help="Soegevolume og keyword difficulty (supplement til GSC)"
         )
         if kw_file:
