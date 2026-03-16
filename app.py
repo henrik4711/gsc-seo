@@ -8,14 +8,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS - clean dark professional theme
+# Custom CSS - dark theme with high contrast text
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500&display=swap');
 
-/* Base */
-html, body, [class*="css"] {
+/* ── GLOBAL TEXT COLOR OVERRIDE ─────────────────────────── */
+html, body, [class*="css"],
+.stApp, .stApp * {
     font-family: 'Inter', sans-serif;
+    color: #e8e8f0;
 }
 
 /* Hide default streamlit elements */
@@ -26,28 +28,96 @@ header {visibility: hidden;}
 /* Background */
 .stApp {
     background: #0a0a0f;
-    color: #e8e8f0;
 }
 
-/* Sidebar */
+/* ── ALL TEXT: force light on dark ───────────────────────── */
+p, span, label, div, li, td, th, a,
+.stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown li,
+.stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4 {
+    color: #e8e8f0 !important;
+}
+
+h1, h2, h3, h4 {
+    font-family: 'Syne', sans-serif !important;
+    font-weight: 700;
+    color: #f0f0ff !important;
+}
+
+/* ── Sidebar ────────────────────────────────────────────── */
 section[data-testid="stSidebar"] {
     background: #0f0f1a;
     border-right: 1px solid #1e1e2e;
+}
+
+section[data-testid="stSidebar"] * {
+    color: #d0d0e8 !important;
 }
 
 section[data-testid="stSidebar"] .stMarkdown h1,
 section[data-testid="stSidebar"] .stMarkdown h2,
 section[data-testid="stSidebar"] .stMarkdown h3 {
     font-family: 'Syne', sans-serif;
+    color: #f0f0ff !important;
 }
 
-/* Page title */
-h1, h2, h3 {
-    font-family: 'Syne', sans-serif !important;
-    font-weight: 700;
+/* ── Radio buttons ──────────────────────────────────────── */
+.stRadio label, .stRadio p, .stRadio span,
+.stRadio > div > label > div,
+.stRadio > div > label > div > p,
+[data-testid="stRadio"] label,
+[data-testid="stRadio"] p {
+    color: #e0e0f0 !important;
 }
 
-/* Metrics */
+/* ── All form labels ────────────────────────────────────── */
+.stSelectbox label, .stTextInput label, .stNumberInput label,
+.stTextArea label, .stRadio label, .stFileUploader label,
+.stCheckbox label, .stSlider label,
+[data-testid="stWidgetLabel"] label,
+[data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] span {
+    color: #d0d0e8 !important;
+    font-size: 0.85rem !important;
+}
+
+/* ── Inputs ─────────────────────────────────────────────── */
+.stSelectbox > div > div,
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stTextArea > div > div > textarea,
+[data-baseweb="select"] > div,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea {
+    background: #12121f !important;
+    border: 1px solid #2a2a40 !important;
+    border-radius: 6px !important;
+    color: #f0f0ff !important;
+}
+
+/* Selectbox dropdown text */
+[data-baseweb="select"] span,
+[data-baseweb="menu"] li,
+[data-baseweb="menu"] div,
+[role="listbox"] li,
+[role="option"] span {
+    color: #e8e8f0 !important;
+}
+
+/* ── File uploader ──────────────────────────────────────── */
+[data-testid="stFileUploader"] div,
+[data-testid="stFileUploader"] span,
+[data-testid="stFileUploader"] p,
+[data-testid="stFileUploader"] label,
+[data-testid="stFileUploader"] small {
+    color: #d0d0e8 !important;
+}
+
+[data-testid="stFileUploaderDropzone"] {
+    background: #12121f !important;
+    border: 1px dashed #3a3a5c !important;
+}
+
+/* ── Metrics ────────────────────────────────────────────── */
 [data-testid="metric-container"] {
     background: #12121f;
     border: 1px solid #1e1e2e;
@@ -58,7 +128,7 @@ h1, h2, h3 {
 [data-testid="metric-container"] label {
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.7rem !important;
-    color: #6b6b8a !important;
+    color: #9b9bb8 !important;
     text-transform: uppercase;
     letter-spacing: 0.1em;
 }
@@ -70,16 +140,16 @@ h1, h2, h3 {
     color: #c8b4ff !important;
 }
 
-/* Dataframes */
+/* ── Dataframes ─────────────────────────────────────────── */
 .stDataFrame {
     border: 1px solid #1e1e2e;
     border-radius: 8px;
 }
 
-/* Buttons */
+/* ── Buttons ────────────────────────────────────────────── */
 .stButton > button {
     background: #5533ff;
-    color: white;
+    color: white !important;
     border: none;
     border-radius: 6px;
     font-family: 'IBM Plex Mono', monospace;
@@ -92,60 +162,43 @@ h1, h2, h3 {
 
 .stButton > button:hover {
     background: #7755ff;
+    color: white !important;
     transform: translateY(-1px);
     box-shadow: 0 4px 20px rgba(85, 51, 255, 0.4);
 }
 
-/* Selectbox, inputs */
-.stSelectbox > div > div,
-.stTextInput > div > div > input,
-.stNumberInput > div > div > input,
-.stTextArea > div > div > textarea {
-    background: #12121f !important;
-    border: 1px solid #1e1e2e !important;
-    border-radius: 6px !important;
-    color: #e8e8f0 !important;
-    font-family: 'Inter', sans-serif;
+.stButton > button span {
+    color: white !important;
 }
 
-/* Labels and text readability */
-.stSelectbox label, .stTextInput label, .stNumberInput label,
-.stTextArea label, .stRadio label, .stFileUploader label,
-.stCheckbox label {
-    color: #c8c8e0 !important;
-    font-size: 0.85rem !important;
+/* ── Alert boxes (info, success, warning, error) ────────── */
+.stAlert, .stAlert *,
+[data-testid="stAlert"], [data-testid="stAlert"] * {
+    color: #f0f0ff !important;
 }
 
-/* Radio button text */
-.stRadio > div > label > div > p {
-    color: #c8c8e0 !important;
+.stAlert {
+    border-radius: 6px;
 }
 
-/* General paragraph text */
-.stMarkdown p {
-    color: #d0d0e8;
-}
-
-/* Info/success/warning boxes text */
-.stAlert p {
-    color: #e8e8f0 !important;
-}
-
-/* Expander */
-.streamlit-expanderHeader {
+/* ── Expander ───────────────────────────────────────────── */
+.streamlit-expanderHeader,
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary span {
     background: #12121f !important;
     border: 1px solid #1e1e2e !important;
     border-radius: 6px !important;
     font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.8rem;
+    color: #e0e0f0 !important;
 }
 
-/* Info/warning/success boxes */
-.stAlert {
-    border-radius: 6px;
+[data-testid="stExpander"] div[data-testid="stExpanderDetails"],
+[data-testid="stExpander"] div[data-testid="stExpanderDetails"] * {
+    color: #d0d0e8 !important;
 }
 
-/* Tabs */
+/* ── Tabs ───────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {
     background: #0f0f1a;
     border-bottom: 1px solid #1e1e2e;
@@ -154,7 +207,7 @@ h1, h2, h3 {
 
 .stTabs [data-baseweb="tab"] {
     background: transparent;
-    color: #6b6b8a;
+    color: #9b9bb8 !important;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.75rem;
     letter-spacing: 0.08em;
@@ -168,20 +221,29 @@ h1, h2, h3 {
     border-bottom: 2px solid #5533ff !important;
 }
 
-/* Status badge helper classes */
-.badge-critical { color: #ff4455; font-weight: 600; }
-.badge-warn { color: #ffaa33; font-weight: 600; }
-.badge-ok { color: #33dd88; font-weight: 600; }
+/* ── Status badges ──────────────────────────────────────── */
+.badge-critical { color: #ff4455 !important; font-weight: 600; }
+.badge-warn { color: #ffaa33 !important; font-weight: 600; }
+.badge-ok { color: #33dd88 !important; font-weight: 600; }
 .badge-mono { font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; }
 
-/* Progress */
+/* ── Progress / Spinner ─────────────────────────────────── */
 .stProgress > div > div {
     background: #5533ff !important;
 }
 
-/* Spinner */
 .stSpinner > div {
     border-top-color: #5533ff !important;
+}
+
+/* ── Tooltip / help icons ───────────────────────────────── */
+[data-testid="stTooltipIcon"] svg {
+    fill: #9b9bb8 !important;
+}
+
+/* ── Separator / divider ────────────────────────────────── */
+hr {
+    border-color: #1e1e2e !important;
 }
 </style>
 """, unsafe_allow_html=True)
