@@ -266,79 +266,104 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ── Pipeline step definitions ──────────────────────────────────────
+STEPS = [
+    ("1. Setup & Connect",  "setup",        "gsc_data",          "Forbind GSC + API keys"),
+    ("2. Upload Ahrefs",    "ahrefs",       "page_authority",    "Upload backlink-data"),
+    ("3. CTR Analysis",     "ctr",          "ctr_gaps",          "Find underperformers"),
+    ("4. Cannibalization",  "cannibal",     "cannibalization",   "Find keyword-konflikter"),
+    ("5. Topic Clusters",   "topics",       "topic_clusters",    "Grupper keywords i topics"),
+    ("6. Page Auditor",     "auditor",      "audit_results",     "Tjek meta + indhold"),
+    ("7. Content Generator","content",      "generated_content", "AI-genereret indhold"),
+    ("8. Action Plan",      "action",       "action_plan",       "Prioriteret handlingsplan"),
+]
+
+# Figure out which step the user should be on
+def _next_step_index():
+    for i, (_, _, state_key, _) in enumerate(STEPS):
+        if state_key not in st.session_state:
+            return i
+    return len(STEPS) - 1
+
+next_idx = _next_step_index()
+
 # Sidebar navigation
 with st.sidebar:
     st.markdown("""
-    <div style="padding: 1rem 0; border-bottom: 1px solid #1e1e2e; margin-bottom: 1rem;">
-        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 0.65rem; color: #5533ff; letter-spacing: 0.15em; text-transform: uppercase;">
-            NAVIGATION
+    <div style="padding: 0.5rem 0 0.8rem 0; border-bottom: 1px solid #1e1e2e; margin-bottom: 0.8rem;">
+        <div style="font-family: 'Syne', sans-serif; font-size: 1rem; font-weight: 700; color: #e8e8f0;">
+            SEO Pipeline
+        </div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 0.6rem; color: #5533ff; letter-spacing: 0.1em; margin-top: 0.2rem;">
+            FOELG TRINNENE I RAEKKEFOELGE
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#5533ff; letter-spacing:0.1em; margin-bottom:0.3rem;">DATA</div>
-    """, unsafe_allow_html=True)
 
-    page = st.radio(
-        "",
-        [
-            "Setup & Connect",
-            "CTR Analysis",
-            "Cannibalization",
-            "Topic Clusters",
-            "Link Authority",
-            "Page Auditor",
-            "Content Generator",
-            "Action Plan",
-        ],
-        label_visibility="collapsed"
-    )
+    page_labels = [s[0] for s in STEPS]
+    page = st.radio("", page_labels, index=next_idx, label_visibility="collapsed")
 
     st.markdown("---")
-    st.markdown("""
-    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 0.65rem; color: #3a3a5c; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem;">
-        PIPELINE STATUS
+
+    # Pipeline progress
+    done_count = sum(1 for _, _, key, _ in STEPS if key in st.session_state)
+    st.markdown(f"""
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:0.65rem; color:#5533ff; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.5rem;">
+        PIPELINE {done_count}/{len(STEPS)}
     </div>
     """, unsafe_allow_html=True)
 
-    # Show session state pipeline status
-    steps = {
-        "GSC Connected": "gsc_data" in st.session_state,
-        "Ahrefs Loaded": "page_authority" in st.session_state,
-        "CTR Analysis": "ctr_gaps" in st.session_state,
-        "Cannibalization": "cannibalization" in st.session_state,
-        "Topic Clusters": "topic_clusters" in st.session_state,
-        "Pages Audited": "audit_results" in st.session_state,
-        "Content Generated": "generated_content" in st.session_state,
-    }
-    for step, done in steps.items():
-        color = "#33dd88" if done else "#3a3a5c"
-        icon = "+" if done else "o"
-        st.markdown(f"<div style='font-size:0.75rem; color: {color}; padding: 2px 0;'>{icon} {step}</div>", unsafe_allow_html=True)
+    for i, (label, _, state_key, hint) in enumerate(STEPS):
+        done = state_key in st.session_state
+        is_next = (i == next_idx) and not done
+        if done:
+            color = "#33dd88"
+            marker = "OK"
+        elif is_next:
+            color = "#5533ff"
+            marker = ">>"
+        else:
+            color = "#3a3a5c"
+            marker = "  "
+        st.markdown(
+            f"<div style='font-size:0.72rem; color:{color}; padding:2px 0; font-family:\"IBM Plex Mono\",monospace;'>"
+            f"{marker} {label}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Next step hint
+    if next_idx < len(STEPS):
+        _, _, _, hint = STEPS[next_idx]
+        st.markdown(f"""
+        <div style="margin-top:1rem; padding:0.8rem; background:#12121f; border:1px solid #2a2a40; border-radius:6px;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#5533ff; margin-bottom:0.3rem;">NAESTE SKRIDT</div>
+            <div style="font-size:0.8rem; color:#c8b4ff;">{hint}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # Route to pages
-if "Setup" in page:
+selected = page.split(". ", 1)[1] if ". " in page else page
+if "Setup" in selected:
     from views import setup
     setup.render()
-elif "CTR Analysis" in page:
-    from views import ctr_analysis
-    ctr_analysis.render()
-elif "Cannibalization" in page:
-    from views import cannibalization
-    cannibalization.render()
-elif "Topic Clusters" in page:
-    from views import topic_clusters
-    topic_clusters.render()
-elif "Link Authority" in page:
+elif "Ahrefs" in selected:
     from views import link_authority
     link_authority.render()
-elif "Page Auditor" in page:
+elif "CTR" in selected:
+    from views import ctr_analysis
+    ctr_analysis.render()
+elif "Cannibalization" in selected:
+    from views import cannibalization
+    cannibalization.render()
+elif "Topic" in selected:
+    from views import topic_clusters
+    topic_clusters.render()
+elif "Auditor" in selected:
     from views import page_auditor
     page_auditor.render()
-elif "Content Generator" in page:
+elif "Content" in selected:
     from views import content_generator
     content_generator.render()
-elif "Action Plan" in page:
+elif "Action" in selected:
     from views import action_plan
     action_plan.render()

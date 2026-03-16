@@ -16,11 +16,11 @@ def render():
     )
 
     if not has_anthropic_key():
-        st.warning("Tilfoej Anthropic API-noegle i Setup & Connect eller saet ANTHROPIC_API_KEY env var")
+        st.warning("Gaa til **1. Setup & Connect** og tilfoej Anthropic API-noegle (eller saet ANTHROPIC_API_KEY i Railway)")
         return
-    
+
     if "gsc_data" not in st.session_state:
-        st.warning("⚠️ Hent GSC data først")
+        st.warning("Gaa til **1. Setup & Connect** og forbind GSC foerst.")
         return
     
     df = st.session_state["gsc_data"]

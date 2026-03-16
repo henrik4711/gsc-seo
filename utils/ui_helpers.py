@@ -1,0 +1,50 @@
+"""
+Shared UI helpers for consistent next-step guidance across pages.
+"""
+
+import streamlit as st
+
+
+STEP_ORDER = [
+    ("gsc_data",          "1. Setup & Connect",  "Forbind GSC og tilfoej API keys"),
+    ("page_authority",    "2. Upload Ahrefs",    "Upload Ahrefs CSV-filer for backlink-data"),
+    ("ctr_gaps",          "3. CTR Analysis",     "Klik 'Analyser CTR Gaps' for at finde underperformers"),
+    ("cannibalization",   "4. Cannibalization",  "Klik 'Analyser kannibalisering' for at finde keyword-konflikter"),
+    ("topic_clusters",    "5. Topic Clusters",   "Klik 'Byg Topic Clusters' for at gruppere keywords"),
+    ("audit_results",     "6. Page Auditor",     "Klik 'Audit valgte sider' for at tjekke meta og indhold"),
+    ("generated_content", "7. Content Generator", "Vaelg en side og generer AI-optimeret indhold"),
+    ("action_plan",       "8. Action Plan",      "Klik 'Generer AI Action Plan' for prioriteret handlingsplan"),
+]
+
+
+def show_next_step():
+    """Show a box at the bottom telling the user what to do next."""
+    for state_key, step_name, description in STEP_ORDER:
+        if state_key not in st.session_state:
+            st.markdown(f"""
+            <div style="margin-top:2rem; padding:1rem; background:#0d0d1a; border:1px solid #5533ff; border-radius:8px;">
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:0.65rem; color:#5533ff; letter-spacing:0.1em; margin-bottom:0.3rem;">
+                    NAESTE SKRIDT
+                </div>
+                <div style="font-size:0.9rem; color:#e8e8f0; font-weight:600;">
+                    {step_name}
+                </div>
+                <div style="font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;">
+                    {description}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            return
+    # All done
+    st.markdown("""
+    <div style="margin-top:2rem; padding:1rem; background:#0d1a0d; border:1px solid #33dd88; border-radius:8px;">
+        <div style="font-size:0.9rem; color:#33dd88; font-weight:600;">
+            Pipeline komplet! Alle trin er gennemfoert.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def show_missing_step(step_name: str, description: str):
+    """Show a warning that a previous step needs to be completed first."""
+    st.warning(f"Gaa til **{step_name}** foerst: {description}")

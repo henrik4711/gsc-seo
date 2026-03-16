@@ -17,7 +17,7 @@ def render():
     )
     
     if "gsc_data" not in st.session_state:
-        st.warning("⚠️ Ingen GSC-data. Gå til Setup & Connect og tilslut GSC først.")
+        st.warning("Gaa til **1. Setup & Connect** og forbind GSC foerst.")
         return
     
     df = st.session_state["gsc_data"].copy()

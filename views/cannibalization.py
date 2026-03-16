@@ -16,7 +16,7 @@ def render():
     )
 
     if "gsc_data" not in st.session_state:
-        st.warning("Hent GSC data forst (Setup & Connect)")
+        st.warning("Gaa til **1. Setup & Connect** og forbind GSC foerst.")
         return
 
     df = st.session_state["gsc_data"]
