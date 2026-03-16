@@ -427,11 +427,12 @@ def audit_category_content(
 
     # ── 6. Internal linking ───────────────────────────────────
     internal_links = page_data.get("internal_links", [])
-    if len(internal_links) < 5 and page_type != "product":
+    link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
+    if link_count < 5 and page_type != "product":
         issues.append({
             "severity": "warn",
             "area": "links",
-            "msg": f"Faa interne links ({len(internal_links)}). Kategorisider boer linke til relaterede kategorier.",
+            "msg": f"Faa interne links ({link_count}). Kategorisider boer linke til relaterede kategorier.",
         })
         score -= 5
 
