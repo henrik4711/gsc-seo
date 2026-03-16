@@ -200,33 +200,33 @@ def generate_demo_data() -> pd.DataFrame:
     np.random.seed(42)
     
     pages = [
-        "https://mshop.se/vibratorer/",
-        "https://mshop.se/dildoer/",
-        "https://mshop.se/lingeri/",
-        "https://mshop.se/kondomtillbehor/",
-        "https://mshop.se/parbindsel/",
-        "https://mshop.se/analleksaker/",
-        "https://mshop.se/vibratorer/klitoris/",
-        "https://mshop.se/products/we-vibe-chorus/",
-        "https://mshop.se/products/womanizer-premium-2/",
-        "https://mshop.se/lustgel/",
-        "https://mshop.se/sm-leksaker/",
-        "https://mshop.se/massagestavar/",
+        "https://demo-store.example.com/headphones/",
+        "https://demo-store.example.com/laptops/",
+        "https://demo-store.example.com/running-shoes/",
+        "https://demo-store.example.com/smartwatches/",
+        "https://demo-store.example.com/backpacks/",
+        "https://demo-store.example.com/keyboards/",
+        "https://demo-store.example.com/headphones/wireless/",
+        "https://demo-store.example.com/products/sony-wh1000xm5/",
+        "https://demo-store.example.com/products/macbook-air-m3/",
+        "https://demo-store.example.com/phone-cases/",
+        "https://demo-store.example.com/monitors/",
+        "https://demo-store.example.com/webcams/",
     ]
-    
+
     queries_by_page = {
-        pages[0]: ["vibrator", "vibratorer billiga", "bästa vibratorn", "vibrator för par", "vibrator test"],
-        pages[1]: ["dildo", "realistisk dildo", "köpa dildo", "stor dildo", "dildo med sugpropp"],
-        pages[2]: ["sexig lingeri", "erotisk lingeri", "lingeri dam", "body stocking", "underkläder sexig"],
-        pages[3]: ["kondomer", "stora kondomer", "tunna kondomer", "kondomer köpa", "kondom gel"],
-        pages[4]: ["sexleksaker par", "parvibrator", "leksaker för par", "paringssex", "vibrator för par"],
-        pages[5]: ["analplugg", "anal vibrator", "analset", "anal dildo", "analleksaker nybörjare"],
-        pages[6]: ["klitoris vibrator", "vibrator klitoris", "suger vibrator", "womanizer", "klitorisstimulator"],
-        pages[7]: ["we-vibe chorus", "we vibe", "parvibrator app", "vibrator med app"],
-        pages[8]: ["womanizer premium", "womanizer 2", "lufttrycksvibrator", "sugvibrator"],
-        pages[9]: ["glidmedel", "lustgel", "massageolja", "glidmedel vattenbaserat"],
-        pages[10]: ["handbojor", "bondage", "sm-utrustning", "bindning", "läder bondage"],
-        pages[11]: ["massagestav", "magic wand", "stor vibrator", "massager"],
+        pages[0]: ["headphones", "best headphones", "wireless headphones", "noise cancelling headphones", "headphones review"],
+        pages[1]: ["laptop", "best budget laptop", "laptop for students", "lightweight laptop", "laptop deals"],
+        pages[2]: ["running shoes", "best running shoes", "trail running shoes", "running shoes women", "marathon shoes"],
+        pages[3]: ["smartwatch", "best smartwatch", "fitness tracker", "smartwatch for running", "gps watch"],
+        pages[4]: ["backpack", "travel backpack", "laptop backpack", "hiking backpack", "waterproof backpack"],
+        pages[5]: ["mechanical keyboard", "wireless keyboard", "gaming keyboard", "keyboard switch types", "ergonomic keyboard"],
+        pages[6]: ["wireless earbuds", "bluetooth headphones", "earbuds for running", "budget earbuds", "true wireless"],
+        pages[7]: ["sony wh1000xm5", "sony headphones", "best noise cancelling", "sony xm5 review"],
+        pages[8]: ["macbook air m3", "macbook air review", "best ultrabook", "macbook vs dell xps"],
+        pages[9]: ["phone case", "iphone case", "protective case", "clear phone case", "rugged case"],
+        pages[10]: ["monitor", "4k monitor", "ultrawide monitor", "gaming monitor", "monitor for work"],
+        pages[11]: ["webcam", "best webcam", "4k webcam", "streaming webcam", "webcam for zoom"],
     }
     
     records = []

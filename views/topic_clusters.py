@@ -11,12 +11,12 @@ def render():
     st.markdown("## Topic Clusters")
     st.markdown(
         "<p style='color:#9b9bb8; margin-bottom:2rem;'>"
-        "Grupperer keywords i topics, viser side-overlap og content gaps</p>",
+        "Groups keywords into topics, shows page overlap and content gaps</p>",
         unsafe_allow_html=True
     )
 
     if "gsc_data" not in st.session_state:
-        st.warning("Gaa til **1. Setup & Connect** og forbind GSC foerst.")
+        st.warning("Go to **1. Setup & Connect** and connect GSC first.")
         return
 
     df = st.session_state["gsc_data"]
@@ -25,8 +25,8 @@ def render():
     with col1:
         min_cluster = st.number_input("Min. queries per cluster", value=2, min_value=2, max_value=10)
     with col2:
-        if st.button("Byg Topic Clusters", type="primary", use_container_width=True):
-            with st.spinner("Analyserer keyword-topics..."):
+        if st.button("Build Topic Clusters", type="primary", use_container_width=True):
+            with st.spinner("Analyzing keyword topics..."):
                 from utils.topic_clusters import build_topic_clusters, identify_content_gaps
                 result = build_topic_clusters(df, min_cluster_size=min_cluster)
                 st.session_state["topic_clusters"] = result
@@ -37,7 +37,7 @@ def render():
                 st.session_state["content_gaps"] = gaps
 
     if "topic_clusters" not in st.session_state:
-        st.info("Klik 'Byg Topic Clusters' for at starte")
+        st.info("Click 'Build Topic Clusters' to start")
         return
 
     result = st.session_state["topic_clusters"]
@@ -46,14 +46,15 @@ def render():
     gaps = st.session_state.get("content_gaps", [])
 
     if not clusters:
-        st.warning("Ingen clusters fundet. Proev at saenke minimum queries.")
+        st.warning("No clusters found. Try lowering the minimum queries.")
         return
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "Topic Oversigt",
-        "Side-Topic Map",
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Topic Overview",
+        "Page-Topic Map",
         "Content Gaps",
-        "Side Overlap",
+        "Page Overlap",
+        "Content Roadmap",
     ])
 
     with tab1:
@@ -68,9 +69,12 @@ def render():
     with tab4:
         _render_overlap(overlap)
 
+    with tab5:
+        _render_content_roadmap(result)
+
 
 def _render_clusters(clusters):
-    st.markdown("### Alle Topic Clusters")
+    st.markdown("### All Topic Clusters")
 
     # Metrics
     m1, m2, m3, m4 = st.columns(4)
@@ -78,13 +82,13 @@ def _render_clusters(clusters):
         st.metric("Topics", len(clusters))
     with m2:
         total_queries = sum(c["query_count"] for c in clusters)
-        st.metric("Queries i clusters", total_queries)
+        st.metric("Queries in Clusters", total_queries)
     with m3:
         split_count = sum(1 for c in clusters if c["is_split"])
-        st.metric("Split topics", split_count)
+        st.metric("Split Topics", split_count)
     with m4:
         total_impr = sum(c["total_impressions"] for c in clusters)
-        st.metric("Total impressions", f"{total_impr:,}")
+        st.metric("Total Impressions", f"{total_impr:,}")
 
     # Cluster list
     for i, cluster in enumerate(clusters[:30]):
@@ -93,8 +97,8 @@ def _render_clusters(clusters):
 
         with st.expander(
             f"{cluster['topic']}{split_warn} - "
-            f"{cluster['query_count']} queries, {cluster['total_clicks']} klik, "
-            f"{cluster['page_count']} sider"
+            f"{cluster['query_count']} queries, {cluster['total_clicks']} clicks, "
+            f"{cluster['page_count']} pages"
         ):
             st.markdown(f"**Core terms:** {', '.join(cluster['core_terms'])}")
             st.markdown(f"**Impressions:** {cluster['total_impressions']:,}")
@@ -102,33 +106,33 @@ def _render_clusters(clusters):
             if cluster["is_split"]:
                 st.markdown(
                     f"<div style='color:#ffaa33; font-weight:600;'>"
-                    f"OBS: Topic fordelt paa {cluster['page_count']} sider - mulig kannibalisering</div>",
+                    f"NOTE: Topic split across {cluster['page_count']} pages - possible cannibalization</div>",
                     unsafe_allow_html=True,
                 )
 
             # Pages serving this topic
-            st.markdown("**Sider:**")
+            st.markdown("**Pages:**")
             for p in cluster["pages"]:
                 st.markdown(
                     f"- `{p['page']}` - {p['query_count']} queries, "
-                    f"{p['total_clicks']} klik, pos {p['avg_position']:.1f}"
+                    f"{p['total_clicks']} clicks, pos {p['avg_position']:.1f}"
                 )
 
             # Queries in cluster
             st.markdown(f"**Queries:** {', '.join(cluster['queries'][:20])}")
             if len(cluster["queries"]) > 20:
-                st.markdown(f"*...og {len(cluster['queries']) - 20} mere*")
+                st.markdown(f"*...and {len(cluster['queries']) - 20} more*")
 
 
 def _render_page_map(page_topics):
-    st.markdown("### Side-Topic Map")
+    st.markdown("### Page-Topic Map")
     st.markdown(
-        "<p style='color:#9b9bb8;'>Hvilke topics daekker hver side?</p>",
+        "<p style='color:#9b9bb8;'>Which topics does each page cover?</p>",
         unsafe_allow_html=True,
     )
 
     if not page_topics:
-        st.info("Ingen topic data")
+        st.info("No topic data")
         return
 
     # Build summary table
@@ -145,10 +149,10 @@ def _render_page_map(page_topics):
 
     st.dataframe(
         page_df.rename(columns={
-            "page": "Side",
+            "page": "Page",
             "topic_count": "Topics",
-            "topics": "Topic navne",
-            "total_clicks": "Total klik",
+            "topics": "Topic Names",
+            "total_clicks": "Total Clicks",
         }),
         use_container_width=True,
         hide_index=True,
@@ -158,12 +162,12 @@ def _render_page_map(page_topics):
 def _render_gaps(gaps):
     st.markdown("### Content Gaps")
     st.markdown(
-        "<p style='color:#9b9bb8;'>Topics der er underserved eller har problemer</p>",
+        "<p style='color:#9b9bb8;'>Topics that are underserved or have issues</p>",
         unsafe_allow_html=True,
     )
 
     if not gaps:
-        st.success("Ingen content gaps identificeret")
+        st.success("No content gaps identified")
         return
 
     high = [g for g in gaps if g["priority"] == "high"]
@@ -193,26 +197,26 @@ def _render_gaps(gaps):
 
 
 def _render_overlap(overlap):
-    st.markdown("### Side Overlap")
+    st.markdown("### Page Overlap")
     st.markdown(
         "<p style='color:#9b9bb8;'>"
-        "Sider der deler topics boer enten konsolideres eller tydeliggoeres</p>",
+        "Pages sharing topics should either be consolidated or differentiated</p>",
         unsafe_allow_html=True,
     )
 
     if not overlap:
-        st.success("Ingen side-overlap fundet")
+        st.success("No page overlap found")
         return
 
     for pair in overlap[:20]:
         with st.expander(
             f"{pair['page_1'].split('/')[-2] or pair['page_1']} <-> "
             f"{pair['page_2'].split('/')[-2] or pair['page_2']} "
-            f"({pair['shared_topics']} faelles topics)"
+            f"({pair['shared_topics']} shared topics)"
         ):
-            st.markdown(f"**Side 1:** `{pair['page_1']}`")
-            st.markdown(f"**Side 2:** `{pair['page_2']}`")
-            st.markdown(f"**Faelles topics:** {', '.join(pair['topic_names'])}")
+            st.markdown(f"**Page 1:** `{pair['page_1']}`")
+            st.markdown(f"**Page 2:** `{pair['page_2']}`")
+            st.markdown(f"**Shared topics:** {', '.join(pair['topic_names'])}")
 
             # Show authority if available
             if "page_authority" in st.session_state:
@@ -222,3 +226,140 @@ def _render_overlap(overlap):
                     if not page_auth.empty:
                         rd = page_auth.iloc[0].get("referring_domains", 0)
                         st.markdown(f"- `{page}`: **{rd}** referring domains")
+
+
+def _render_content_roadmap(topic_result: dict):
+    st.markdown("### Content Roadmap")
+    st.markdown(
+        "<p style='color:#9b9bb8;'>New articles needed to fill content gaps and strengthen topic clusters</p>",
+        unsafe_allow_html=True,
+    )
+
+    if st.button("Generate Content Roadmap", type="primary"):
+        with st.spinner("Analyzing content gaps and generating roadmap..."):
+            from utils.topic_clusters import generate_content_roadmap
+
+            gsc_data = st.session_state.get("gsc_data")
+            auth_data = st.session_state.get("page_authority")
+
+            roadmap = generate_content_roadmap(
+                clusters=topic_result["clusters"],
+                page_topics=topic_result["page_topics"],
+                gsc_data=gsc_data,
+                authority_data=auth_data,
+            )
+            st.session_state["content_roadmap"] = roadmap
+
+    if "content_roadmap" not in st.session_state:
+        st.info("Click 'Generate Content Roadmap' to analyze gaps and suggest new articles")
+        return
+
+    roadmap = st.session_state["content_roadmap"]
+    articles = roadmap.get("articles_needed", [])
+    supporting = roadmap.get("supporting_content", [])
+
+    # Summary metrics
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("Articles Needed", roadmap.get("total_articles", 0))
+    with m2:
+        st.metric("Opportunity (impressions)", f"{roadmap.get('total_opportunity_impressions', 0):,}")
+    with m3:
+        st.metric("Clusters Needing Depth", roadmap.get("total_supporting_gaps", 0))
+
+    # Tab: New Articles
+    if articles:
+        st.markdown("---")
+        st.markdown(
+            "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:#5533ff; "
+            "text-transform:uppercase; letter-spacing:0.1em; margin:1rem 0 0.5rem;'>"
+            "SUGGESTED NEW ARTICLES</div>",
+            unsafe_allow_html=True,
+        )
+
+        for i, article in enumerate(articles[:15]):
+            pri = article.get("priority", "medium").upper()
+            pri_color = "#ff4455" if pri == "HIGH" else "#ffaa33" if pri == "MEDIUM" else "#6b6b8a"
+            ct = article.get("content_type", "guide")
+            ct_color = {"how-to": "#33dd88", "comparison": "#c8b4ff", "listicle": "#ffaa33",
+                        "explainer": "#6b6baa", "guide": "#5533ff"}.get(ct, "#6b6b8a")
+
+            with st.expander(
+                f"{'[' + pri + ']':8s} {article['suggested_title'][:60]} "
+                f"({article['estimated_impressions']:,} est. impressions)"
+            ):
+                # Article info
+                st.markdown(
+                    f"<div style='display:flex; gap:0.5rem; margin-bottom:0.5rem;'>"
+                    f"<span style='background:{ct_color}22; border:1px solid {ct_color}; border-radius:4px; "
+                    f"padding:2px 8px; font-size:0.7rem; color:{ct_color};'>{ct.upper()}</span>"
+                    f"<span style='background:{pri_color}22; border:1px solid {pri_color}; border-radius:4px; "
+                    f"padding:2px 8px; font-size:0.7rem; color:{pri_color};'>PRIORITY: {pri}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+                st.markdown(f"**Cluster:** {article.get('cluster_topic', '?')}")
+                st.markdown(f"**Subtopic:** {article.get('subtopic', '?')}")
+
+                if article.get("supporting_page"):
+                    st.markdown(f"**Supports:** `{article['supporting_page']}`")
+
+                # Target keywords
+                kws = article.get("target_keywords", [])
+                if kws:
+                    kw_badges = " ".join([
+                        f"<span style='background:#0d0d15; border:1px solid #5533ff; border-radius:4px; "
+                        f"padding:2px 6px; font-size:0.7rem; color:#c8b4ff; margin:2px; display:inline-block;'>{kw}</span>"
+                        for kw in kws[:8]
+                    ])
+                    st.markdown(f"**Target keywords:**<br>{kw_badges}", unsafe_allow_html=True)
+
+                # Internal linking plan
+                linking_plan = article.get("internal_linking_plan", [])
+                if linking_plan:
+                    st.markdown(
+                        "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:#5533ff; "
+                        "margin-top:0.5rem;'>INTERNAL LINKING PLAN:</div>",
+                        unsafe_allow_html=True,
+                    )
+                    for lp in linking_plan:
+                        direction = lp.get("direction", "")
+                        from_page = lp["from"][:50]
+                        to_page = lp["to"][:50]
+                        anchor = lp.get("anchor", "")
+                        st.markdown(
+                            f"<div style='font-size:0.78rem; padding:2px 0;'>"
+                            f"<span style='color:#6b6b8a;'>{direction}:</span> "
+                            f"<code>{from_page}</code> -> <code>{to_page}</code><br>"
+                            f"<span style='color:#6b6b8a;'>Anchor:</span> "
+                            f"<span style='color:#33dd88;'>\"{anchor}\"</span></div>",
+                            unsafe_allow_html=True,
+                        )
+
+    # Supporting content gaps
+    if supporting:
+        st.markdown("---")
+        st.markdown(
+            "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:#5533ff; "
+            "text-transform:uppercase; letter-spacing:0.1em; margin:1rem 0 0.5rem;'>"
+            "CLUSTERS NEEDING MORE DEPTH</div>",
+            unsafe_allow_html=True,
+        )
+
+        for sc in supporting[:10]:
+            info_badge = "<span style='color:#33dd88;'>Has guides</span>" if sc["has_informational"] else "<span style='color:#ff4455;'>No guides/blogs</span>"
+            st.markdown(
+                f"<div style='background:#0d0d15; border:1px solid #1e1e2e; border-radius:6px; "
+                f"padding:0.7rem; margin-bottom:0.4rem;'>"
+                f"<div style='font-weight:600; color:#e8e8f0;'>{sc['cluster_topic']}</div>"
+                f"<div style='font-size:0.78rem; color:#6b6b8a; margin-top:0.3rem;'>"
+                f"Pages: {sc['page_count']} | Queries: {sc['query_count']} | "
+                f"Impressions: {sc['impressions']:,} | {info_badge}</div>"
+                f"<div style='font-size:0.8rem; color:#c8b4ff; margin-top:0.3rem;'>"
+                f"-> {sc['recommendation']}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+    if not articles and not supporting:
+        st.success("No content gaps found - your topic coverage looks solid!")

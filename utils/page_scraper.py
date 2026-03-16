@@ -17,7 +17,7 @@ except ImportError:
 
 HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (compatible; SEOBot/1.0; +https://mshop.se)"
+        "Mozilla/5.0 (compatible; SEOBot/1.0)"
     )
 }
 
@@ -144,24 +144,24 @@ def evaluate_meta(page_data: dict, target_keywords: list) -> dict:
     
     # Title checks
     if not title:
-        issues.append({"type": "critical", "field": "title", "msg": "Mangler meta title"})
+        issues.append({"type": "critical", "field": "title", "msg": "Missing meta title"})
         score -= 30
     elif title_len < 30:
-        issues.append({"type": "warn", "field": "title", "msg": f"Title for kort ({title_len} tegn, anbefalet 50-60)"})
+        issues.append({"type": "warn", "field": "title", "msg": f"Title too short ({title_len} chars, recommended 50-60)"})
         score -= 10
     elif title_len > 65:
-        issues.append({"type": "warn", "field": "title", "msg": f"Title for lang ({title_len} tegn, maks ~60)"})
+        issues.append({"type": "warn", "field": "title", "msg": f"Title too long ({title_len} chars, max ~60)"})
         score -= 8
     
     # Description checks
     if not desc:
-        issues.append({"type": "critical", "field": "description", "msg": "Mangler meta description"})
+        issues.append({"type": "critical", "field": "description", "msg": "Missing meta description"})
         score -= 25
     elif desc_len < 80:
-        issues.append({"type": "warn", "field": "description", "msg": f"Description for kort ({desc_len} tegn, anbefalet 140-160)"})
+        issues.append({"type": "warn", "field": "description", "msg": f"Description too short ({desc_len} chars, recommended 140-160)"})
         score -= 10
     elif desc_len > 165:
-        issues.append({"type": "warn", "field": "description", "msg": f"Description afskæres i SERP ({desc_len} tegn, maks ~160)"})
+        issues.append({"type": "warn", "field": "description", "msg": f"Description truncated in SERP ({desc_len} chars, max ~160)"})
         score -= 5
     
     # Keyword presence
@@ -169,24 +169,27 @@ def evaluate_meta(page_data: dict, target_keywords: list) -> dict:
     kw_in_desc = sum(1 for kw in target_keywords if kw.lower() in desc.lower())
     
     if target_keywords and kw_in_title == 0:
-        issues.append({"type": "warn", "field": "title", "msg": "Primære keywords ikke i title"})
+        issues.append({"type": "warn", "field": "title", "msg": "Primary keywords not in title"})
         score -= 15
     
     if target_keywords and kw_in_desc == 0:
-        issues.append({"type": "warn", "field": "description", "msg": "Primære keywords ikke i description"})
+        issues.append({"type": "warn", "field": "description", "msg": "Primary keywords not in description"})
         score -= 10
     
     # CTR-optimization signals
-    cta_words = ["köp", "bestall", "se", "hitta", "bäst", "billig", "fri frakt", "snabb", "top", "test"]
+    cta_words = ["köp", "beställ", "bestall", "se", "hitta", "bäst", "billig", "fri frakt", "snabb",
+                  "kob", "bestil", "bedst", "gratis fragt",
+                  "top", "test", "buy", "order", "shop", "find", "best", "cheap",
+                  "free shipping", "fast", "deal", "save", "discount", "offer"]
     has_cta_title = any(w in title.lower() for w in cta_words)
     has_cta_desc = any(w in desc.lower() for w in cta_words)
     
     if not has_cta_title:
-        issues.append({"type": "info", "field": "title", "msg": "Ingen call-to-action signaler i title"})
+        issues.append({"type": "info", "field": "title", "msg": "No call-to-action signals in title"})
         score -= 5
     
     if not has_cta_desc:
-        issues.append({"type": "info", "field": "description", "msg": "Ingen USP/CTA i description (fri frakt, snabb leverans etc.)"})
+        issues.append({"type": "info", "field": "description", "msg": "No USP/CTA in description (free shipping, fast delivery, etc.)"})
         score -= 5
     
     return {

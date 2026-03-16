@@ -19,7 +19,7 @@ except ImportError:
 
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; SEOBot/1.0; +https://mshop.se)"
+    "User-Agent": "Mozilla/5.0 (compatible; SEOBot/1.0)"
 }
 
 
@@ -55,14 +55,6 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
     elif any(p in url_lower for p in category_patterns):
         result["page_type"] = "category"
         result["signals"].append("URL contains category path")
-
-    if "mshop.se" in url_lower:
-        if len(segments) >= 2 and segments[0] == "sexleksaker":
-            result["page_type"] = "category"
-            result["signals"].append("mshop.se category URL pattern")
-        elif len(segments) == 1 and segments[0] not in ("blog", "om-oss", "kontakt", "kundservice"):
-            result["page_type"] = "category"
-            result["signals"].append("mshop.se top-level category")
 
     if page_data:
         schema_types = page_data.get("schema_types", [])
@@ -204,7 +196,7 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
                         result["has_faq"] = True
                         entities = item.get("mainEntity", [])
                         result["faq_count"] = len(entities) if isinstance(entities, list) else 0
-                        result["trust_signals"].append(f"FAQPage schema med {result['faq_count']} spoergsmaal")
+                        result["trust_signals"].append(f"FAQPage schema with {result['faq_count']} questions")
 
                     # Review / Rating
                     if stype in ("Review", "AggregateRating") or "aggregateRating" in item:
@@ -233,7 +225,7 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
                     # ItemList (category signal)
                     if stype == "ItemList":
                         items_in_list = item.get("itemListElement", [])
-                        result["trust_signals"].append(f"ItemList schema med {len(items_in_list)} items")
+                        result["trust_signals"].append(f"ItemList schema with {len(items_in_list)} items")
 
             except Exception:
                 pass
@@ -256,13 +248,13 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
         )
         if review_elements:
             result["has_reviews"] = True
-            result["trust_signals"].append(f"{len(review_elements)} review-element i HTML")
+            result["trust_signals"].append(f"{len(review_elements)} review elements in HTML")
 
         # Author signals
         author_el = soup.find(attrs={"class": re.compile(r"author|byline|writer", re.I)})
         if author_el:
             result["has_author"] = True
-            result["trust_signals"].append(f"Forfatterinfo: {author_el.get_text(strip=True)[:60]}")
+            result["trust_signals"].append(f"Author info: {author_el.get_text(strip=True)[:60]}")
         author_meta = soup.find("meta", attrs={"name": "author"})
         if author_meta:
             result["has_author"] = True
@@ -364,7 +356,7 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
                 href_lower = href.lower()
                 if re.search(r"/products?/|/produkt/|/p/", href_lower):
                     result["product_links_on_page"].append(link_info)
-                elif (re.search(r"/kategori/|/category/|/collections?/|/sexleksaker", href_lower)
+                elif (re.search(r"/kategori/|/category/|/collections?/", href_lower)
                       or (href.count("/") <= 3 and not re.search(r"\.\w{2,4}$", href))):
                     # Category-like: short paths, no file extension
                     result["category_links"].append(link_info)
@@ -406,7 +398,10 @@ def _group_queries_into_subtopics(queries: list) -> list:
                  "det", "de", "till", "som", "är", "att", "the", "and",
                  "for", "with", "in", "of", "to", "a", "an", "best",
                  "bra", "billig", "billiga", "bäst", "bästa", "köp",
-                 "online", "pris", "sex"}
+                 "online", "pris", "sex",
+                 "og", "er", "af", "fra", "der", "et",
+                 "kob", "bedst", "bedste",
+                 "buy", "cheap", "price", "top", "how"}
 
     query_terms = {}
     for q in queries:
@@ -467,7 +462,7 @@ def _group_queries_into_subtopics(queries: list) -> list:
     orphans = [q for q in queries if q not in used]
     if orphans:
         subtopics.append({
-            "topic": "(oevrige)",
+            "topic": "(other)",
             "queries": orphans,
             "terms": set(),
         })
@@ -516,31 +511,31 @@ def audit_category_content(
         if total_editorial < 50:
             issues.append({
                 "severity": "critical", "area": "content_volume",
-                "msg": f"Naesten ingen redaktionel tekst ({total_editorial} ord). Kategorisider SKAL have intro + bundtekst.",
+                "msg": f"Almost no editorial text ({total_editorial} words). Category pages MUST have intro + bottom text.",
             })
             score -= 30
-            recommendations.append("Tilfoej 150-300 ord intro-tekst OVER produktgrid")
-            recommendations.append("Tilfoej 300-500 ord bundtekst med koepguide/FAQ UNDER produktgrid")
+            recommendations.append("Add 150-300 words of intro text ABOVE the product grid")
+            recommendations.append("Add 300-500 words of bottom text with buying guide/FAQ BELOW the product grid")
         elif total_editorial < 150:
             issues.append({
                 "severity": "warn", "area": "content_volume",
-                "msg": f"For lidt redaktionel tekst ({total_editorial} ord). Anbefalet: 300-800 ord total.",
+                "msg": f"Too little editorial text ({total_editorial} words). Recommended: 300-800 words total.",
             })
             score -= 15
         elif total_editorial < 300:
             issues.append({
                 "severity": "info", "area": "content_volume",
-                "msg": f"Acceptabelt indhold ({total_editorial} ord) men kan vaere dybere.",
+                "msg": f"Acceptable content ({total_editorial} words) but could be deeper.",
             })
             score -= 5
 
         if intro_words < 30:
             issues.append({
                 "severity": "warn", "area": "intro",
-                "msg": "Ingen/minimal intro-tekst over produktgrid. Google og brugere ser dette foerst.",
+                "msg": "No/minimal intro text above the product grid. Google and users see this first.",
             })
             score -= 10
-            recommendations.append("Tilfoej 80-150 ord intro der forklarer kategorien og hjaelper kunden vaelge")
+            recommendations.append("Add 80-150 words of intro explaining the category and helping the customer choose")
 
     # ═══════════════════════════════════════════════════════════
     # B. TOPIC-LEVEL COVERAGE (not just keywords)
@@ -548,10 +543,10 @@ def audit_category_content(
     subtopics = _group_queries_into_subtopics(all_keywords)
     subtopic_results = []
     covered_topics = 0
-    total_topics = len([s for s in subtopics if s["topic"] != "(oevrige)"])
+    total_topics = len([s for s in subtopics if s["topic"] != "(other)"])
 
     for st_item in subtopics:
-        if st_item["topic"] == "(oevrige)":
+        if st_item["topic"] == "(other)":
             continue
         # Check if ANY of the sub-topic's terms appear in editorial text
         terms = st_item["terms"]
@@ -584,13 +579,13 @@ def audit_category_content(
         if topic_coverage_pct < 30:
             issues.append({
                 "severity": "critical", "area": "topic_coverage",
-                "msg": f"Kun {topic_coverage_pct:.0f}% af cluster-emner daekkes i sidens tekst ({covered_topics:.0f}/{total_topics} emner)",
+                "msg": f"Only {topic_coverage_pct:.0f}% of cluster topics are covered in the page text ({covered_topics:.0f}/{total_topics} topics)",
             })
             score -= 25
         elif topic_coverage_pct < 60:
             issues.append({
                 "severity": "warn", "area": "topic_coverage",
-                "msg": f"{topic_coverage_pct:.0f}% af cluster-emner daekkes ({covered_topics:.0f}/{total_topics})",
+                "msg": f"{topic_coverage_pct:.0f}% of cluster topics covered ({covered_topics:.0f}/{total_topics})",
             })
             score -= 12
 
@@ -598,11 +593,11 @@ def audit_category_content(
         if missing_topics:
             topic_names = [s["topic"] for s in missing_topics[:5]]
             recommendations.append(
-                f"Tilfoej indhold om disse emner: {', '.join(topic_names)}"
+                f"Add content about these topics: {', '.join(topic_names)}"
             )
             for mt in missing_topics[:3]:
                 recommendations.append(
-                    f"  -> Emne '{mt['topic']}' mangler helt ({mt['query_count']} queries: {', '.join(mt['queries'][:3])})"
+                    f"  -> Topic '{mt['topic']}' is completely missing ({mt['query_count']} queries: {', '.join(mt['queries'][:3])})"
                 )
 
     # ═══════════════════════════════════════════════════════════
@@ -639,13 +634,13 @@ def audit_category_content(
     if kw_coverage_pct < 30:
         issues.append({
             "severity": "critical", "area": "keyword_coverage",
-            "msg": f"Kun {kw_coverage_pct:.0f}% af keywords i sidens tekst ({len(covered_kws)}/{len(all_keywords[:30])})",
+            "msg": f"Only {kw_coverage_pct:.0f}% of keywords found in page text ({len(covered_kws)}/{len(all_keywords[:30])})",
         })
         score -= 15
     elif kw_coverage_pct < 60:
         issues.append({
             "severity": "warn", "area": "keyword_coverage",
-            "msg": f"{kw_coverage_pct:.0f}% keyword-daekning ({len(covered_kws)}/{len(all_keywords[:30])})",
+            "msg": f"{kw_coverage_pct:.0f}% keyword coverage ({len(covered_kws)}/{len(all_keywords[:30])})",
         })
         score -= 8
 
@@ -653,7 +648,7 @@ def audit_category_content(
     if all_keywords and kw_in_h1 == 0:
         issues.append({
             "severity": "warn", "area": "keyword_placement",
-            "msg": "Intet primaert keyword i H1. H1 skal indeholde hoved-keyword.",
+            "msg": "No primary keyword in H1. H1 should contain the main keyword.",
         })
         score -= 5
 
@@ -661,12 +656,12 @@ def audit_category_content(
     if all_keywords and kw_in_intro == 0 and intro_text:
         issues.append({
             "severity": "warn", "area": "keyword_placement",
-            "msg": "Intet keyword i intro-teksten. Foerste afsnit skal indeholde hoved-keyword.",
+            "msg": "No keyword in the intro text. The first paragraph should contain the main keyword.",
         })
         score -= 3
 
     if missing_kws:
-        recommendations.append(f"Integrer disse keywords naturligt: {', '.join(missing_kws[:8])}")
+        recommendations.append(f"Integrate these keywords naturally: {', '.join(missing_kws[:8])}")
 
     # ═══════════════════════════════════════════════════════════
     # D. CONTENT STRUCTURE
@@ -675,26 +670,26 @@ def audit_category_content(
     if len(editorial_h2s) < 2 and page_type == "category":
         issues.append({
             "severity": "warn", "area": "structure",
-            "msg": f"For faa redaktionelle H2-overskrifter ({len(editorial_h2s)}). Strukturer med H2 for koepguide/FAQ/typer.",
+            "msg": f"Too few editorial H2 headings ({len(editorial_h2s)}). Structure with H2 for buying guide/FAQ/types.",
         })
         score -= 8
-        recommendations.append("Tilfoej H2-sektioner: 'Typer af [kategori]', 'Saadan vaelger du', 'FAQ'")
+        recommendations.append("Add H2 sections: 'Types of [category]', 'How to choose', 'FAQ'")
 
     if not has_faq and page_type == "category":
         issues.append({
             "severity": "warn", "area": "faq",
-            "msg": "Ingen FAQ. FAQ er vaerdifuldt for featured snippets og long-tail keywords.",
+            "msg": "No FAQ. FAQ is valuable for featured snippets and long-tail keywords.",
         })
         score -= 5
-        recommendations.append("Tilfoej 4-6 FAQ baseret paa GSC long-tail queries")
+        recommendations.append("Add 4-6 FAQ based on GSC long-tail queries")
 
     if not has_guide and page_type == "category":
         issues.append({
             "severity": "info", "area": "guide",
-            "msg": "Ingen koepguide-sektion.",
+            "msg": "No buying guide section.",
         })
         score -= 3
-        recommendations.append("Tilfoej koepguide: 'Hvad skal man kigge efter?', 'Forskelle mellem typer'")
+        recommendations.append("Add buying guide: 'What to look for?', 'Differences between types'")
 
     # ═══════════════════════════════════════════════════════════
     # E. INTERNAL LINKING ANALYSIS
@@ -706,7 +701,7 @@ def audit_category_content(
 
     linking_issues = _audit_internal_linking(
         url, internal_links, category_links, product_links_on_page,
-        all_keywords, page_type, topic_clusters
+        all_keywords, page_type, topic_clusters, page_data=page_data
     )
     for li in linking_issues["issues"]:
         issues.append(li)
@@ -714,13 +709,63 @@ def audit_category_content(
     recommendations.extend(linking_issues["recommendations"])
 
     # ═══════════════════════════════════════════════════════════
-    # F. TRUST & E-E-A-T SIGNALS
+    # F. PRODUCT-CLUSTER ALIGNMENT
+    # ═══════════════════════════════════════════════════════════
+    product_alignment = {}
+    subcategory_alignment = {}
+    if page_type == "category":
+        product_names = page_data.get("product_names", [])
+        product_links_list = page_data.get("product_links_on_page", [])
+        product_alignment = _audit_product_alignment(
+            product_names, product_links_list,
+            all_keywords, topic_clusters, url
+        )
+        for pi in product_alignment.get("issues", []):
+            issues.append(pi)
+            score -= 5
+        recommendations.extend(product_alignment.get("recommendations", []))
+
+        subcategory_alignment = _audit_subcategory_alignment(
+            category_links, topic_clusters, url
+        )
+        unrelated_subcats = subcategory_alignment.get("unrelated", [])
+        if unrelated_subcats:
+            issues.append({
+                "severity": "info", "area": "subcategory_alignment",
+                "msg": f"{len(unrelated_subcats)} linked subcategories are outside this topic cluster.",
+            })
+
+    # ═══════════════════════════════════════════════════════════
+    # G. TRUST & E-E-A-T SIGNALS
     # ═══════════════════════════════════════════════════════════
     trust_result = _audit_trust_signals(page_data, page_type)
     for ti in trust_result["issues"]:
         issues.append(ti)
     score -= trust_result["penalty"]
     recommendations.extend(trust_result["recommendations"])
+
+    # ═══════════════════════════════════════════════════════════
+    # H. ENHANCED E-E-A-T DEPTH
+    # ═══════════════════════════════════════════════════════════
+    credibility = _check_content_credibility(
+        full_text, page_data.get("external_link_count", 0)
+    )
+    topical_auth = _check_topical_authority(url, topic_clusters)
+    trust_flow = _check_trust_flow(url, page_authority, topic_clusters)
+
+    # Merge enhanced E-E-A-T issues
+    for ci in topical_auth.get("issues", []):
+        issues.append(ci)
+        score -= 3
+    for fi in trust_flow.get("issues", []):
+        issues.append(fi)
+
+    if credibility["credibility_score"] == 0 and page_type in ("blog", "category"):
+        issues.append({
+            "severity": "info", "area": "credibility",
+            "msg": "No content credibility signals (citations, data, expert language). Consider adding authoritative references.",
+        })
+        recommendations.append("Add expert language, cite sources, or include specific data/statistics to boost credibility")
 
     return {
         "score": max(0, score),
@@ -753,7 +798,14 @@ def audit_category_content(
             "coverage_pct": round(topic_coverage_pct, 1),
         },
         "linking": linking_issues["details"],
+        "product_alignment": product_alignment,
+        "subcategory_alignment": subcategory_alignment,
         "trust": trust_result["details"],
+        "eeat_depth": {
+            "credibility": credibility,
+            "topical_authority": topical_auth,
+            "trust_flow": trust_flow,
+        },
     }
 
 
@@ -763,7 +815,7 @@ def audit_category_content(
 
 def _audit_internal_linking(
     url, internal_links, category_links, product_links_on_page,
-    keywords, page_type, topic_clusters=None,
+    keywords, page_type, topic_clusters=None, page_data=None,
 ) -> dict:
     """
     Validate internal linking:
@@ -784,7 +836,7 @@ def _audit_internal_linking(
     if link_count < 5 and page_type == "category":
         issues.append({
             "severity": "warn", "area": "internal_links",
-            "msg": f"Faa interne links ({link_count}). Kategorisider boer linke til relaterede kategorier og guides.",
+            "msg": f"Few internal links ({link_count}). Category pages should link to related categories and guides.",
         })
         penalty += 5
 
@@ -792,15 +844,15 @@ def _audit_internal_linking(
     if page_type == "category" and cat_link_count < 2:
         issues.append({
             "severity": "warn", "area": "category_links",
-            "msg": f"Kun {cat_link_count} links til andre kategorier. Tilfoej links til relaterede/underkategorier.",
+            "msg": f"Only {cat_link_count} links to other categories. Add links to related/subcategories.",
         })
         penalty += 5
-        recommendations.append("Tilfoej links til relaterede kategorier i bundteksten (f.eks. 'Se ogsaa: [relateret kategori]')")
+        recommendations.append("Add links to related categories in the bottom text (e.g. 'See also: [related category]')")
 
     # Anchor text quality
     if isinstance(internal_links, list) and internal_links:
         anchors = [l.get("anchor", "") for l in internal_links if l.get("anchor")]
-        empty_anchors = sum(1 for a in anchors if not a.strip() or a.strip() in (".", ">", "Læs mere", "Klik her", "Se mere"))
+        empty_anchors = sum(1 for a in anchors if not a.strip() or a.strip() in (".", ">", "Read more", "Click here", "See more"))
         keyword_anchors = 0
         if keywords:
             kw_lower = set(k.lower() for k in keywords[:10])
@@ -811,17 +863,17 @@ def _audit_internal_linking(
         if len(anchors) > 0 and empty_anchors / len(anchors) > 0.5:
             issues.append({
                 "severity": "info", "area": "anchor_text",
-                "msg": f"{empty_anchors}/{len(anchors)} interne links har tom/generisk anchor-tekst.",
+                "msg": f"{empty_anchors}/{len(anchors)} internal links have empty/generic anchor text.",
             })
             penalty += 2
 
         if len(anchors) > 5 and keyword_anchors == 0:
             issues.append({
                 "severity": "info", "area": "anchor_text",
-                "msg": "Ingen interne link-anchors indeholder target keywords.",
+                "msg": "No internal link anchors contain target keywords.",
             })
             penalty += 2
-            recommendations.append("Brug keyword-rige anchor-tekster i interne links (ikke 'klik her')")
+            recommendations.append("Use keyword-rich anchor texts in internal links (not 'click here')")
 
     # Cross-reference with topic clusters — find pages that SHOULD be linked
     missing_links = []
@@ -856,14 +908,43 @@ def _audit_internal_linking(
         top_missing = missing_links[:5]
         issues.append({
             "severity": "warn", "area": "missing_crosslinks",
-            "msg": f"{len(missing_links)} relaterede sider i samme topic-cluster er IKKE linket fra denne side.",
+            "msg": f"{len(missing_links)} related pages in the same topic cluster are NOT linked from this page.",
         })
         penalty += min(len(missing_links), 5)
         for ml in top_missing:
             short_url = ml["url"].replace("https://", "").replace("http://", "")
             recommendations.append(
-                f"Mangler link til: {short_url} (faelles topics: {', '.join(ml['shared_topics'][:2])})"
+                f"Missing link to: {short_url} (shared topics: {', '.join(ml['shared_topics'][:2])})"
             )
+
+    # Semantic validation of existing links (WP1)
+    semantic_validation = _validate_existing_links(internal_links, url, topic_clusters)
+
+    if semantic_validation["anchor_mismatches"]:
+        mismatch_count = len(semantic_validation["anchor_mismatches"])
+        issues.append({
+            "severity": "info", "area": "anchor_optimization",
+            "msg": f"{mismatch_count} internal links have anchor text that doesn't match cluster terms.",
+        })
+        penalty += min(mismatch_count, 3)
+        for am in semantic_validation["anchor_mismatches"][:3]:
+            recommendations.append(
+                f"Improve anchor for {am['url'][:50]}: '{am['current_anchor']}' → '{am['suggested_anchor']}'"
+            )
+
+    non_semantic = semantic_validation["non_semantic_links"]
+    if non_semantic and len(non_semantic) > link_count * 0.5 and link_count > 5:
+        issues.append({
+            "severity": "warn", "area": "link_relevance",
+            "msg": f"{len(non_semantic)}/{link_count} internal links point to pages outside this topic cluster.",
+        })
+        penalty += 3
+
+    # Generate specific fix suggestions for missing links (WP1)
+    link_fix_suggestions = _generate_link_fix_suggestions(
+        missing_links[:10], page_data=page_data or {},
+        topic_clusters=topic_clusters,
+    ) if missing_links else []
 
     return {
         "issues": issues,
@@ -875,6 +956,8 @@ def _audit_internal_linking(
             "product_links": prod_link_count,
             "missing_crosslinks": missing_links[:10],
             "anchor_quality": "checked" if isinstance(internal_links, list) else "not_available",
+            "semantic_validation": semantic_validation,
+            "link_fix_suggestions": link_fix_suggestions,
         },
     }
 
@@ -917,10 +1000,10 @@ def _audit_trust_signals(page_data: dict, page_type: str) -> dict:
         if page_type == "category":
             issues.append({
                 "severity": "warn", "area": "schema",
-                "msg": "Mangler BreadcrumbList schema. Vigtigt for Google's forstaaelse af site-hierarki.",
+                "msg": "Missing BreadcrumbList schema. Important for Google's understanding of site hierarchy.",
             })
             penalty += 3
-            recommendations.append("Tilfoej BreadcrumbList structured data")
+            recommendations.append("Add BreadcrumbList structured data")
 
     # FAQ schema (if page has FAQ content)
     has_faq_content = page_data.get("has_faq", False)
@@ -931,10 +1014,10 @@ def _audit_trust_signals(page_data: dict, page_type: str) -> dict:
         else:
             issues.append({
                 "severity": "info", "area": "schema",
-                "msg": "Siden har FAQ-indhold men mangler FAQPage schema markup.",
+                "msg": "Page has FAQ content but is missing FAQPage schema markup.",
             })
             penalty += 2
-            recommendations.append("Tilfoej FAQPage schema for at faa FAQ rich snippets i Google")
+            recommendations.append("Add FAQPage schema to get FAQ rich snippets in Google")
 
     # AggregateRating / Reviews
     trust_max += 1
@@ -944,10 +1027,10 @@ def _audit_trust_signals(page_data: dict, page_type: str) -> dict:
         if page_type == "category":
             issues.append({
                 "severity": "info", "area": "trust",
-                "msg": "Ingen reviews eller ratings synlige paa kategorisiden.",
+                "msg": "No reviews or ratings visible on the category page.",
             })
             penalty += 2
-            recommendations.append("Vis aggregerede produkt-ratings paa kategorisiden for social proof")
+            recommendations.append("Show aggregated product ratings on the category page for social proof")
 
     # Organization schema (site-wide trust)
     trust_max += 1
@@ -956,7 +1039,7 @@ def _audit_trust_signals(page_data: dict, page_type: str) -> dict:
     else:
         issues.append({
             "severity": "info", "area": "schema",
-            "msg": "Mangler Organization/Store schema. Signalerer trovaerdighed til Google.",
+            "msg": "Missing Organization/Store schema. Signals trustworthiness to Google.",
         })
         penalty += 1
 
@@ -967,10 +1050,10 @@ def _audit_trust_signals(page_data: dict, page_type: str) -> dict:
     else:
         issues.append({
             "severity": "info", "area": "freshness",
-            "msg": "Ingen synlig opdateringsdato. Friskhed er et ranking-signal.",
+            "msg": "No visible update date. Freshness is a ranking signal.",
         })
         penalty += 1
-        recommendations.append("Tilfoej 'Sidst opdateret' dato paa kategorisider")
+        recommendations.append("Add 'Last updated' date on category pages")
 
     # Canonical
     canonical = page_data.get("canonical", "")
@@ -981,13 +1064,13 @@ def _audit_trust_signals(page_data: dict, page_type: str) -> dict:
         if canonical.rstrip("/").lower() != url.rstrip("/").lower():
             issues.append({
                 "severity": "warn", "area": "canonical",
-                "msg": f"Canonical peger paa en anden URL: {canonical}",
+                "msg": f"Canonical points to a different URL: {canonical}",
             })
             penalty += 3
     else:
         issues.append({
             "severity": "warn", "area": "canonical",
-            "msg": "Mangler canonical tag. Risiko for duplicate content.",
+            "msg": "Missing canonical tag. Risk of duplicate content.",
         })
         penalty += 3
 
@@ -997,10 +1080,10 @@ def _audit_trust_signals(page_data: dict, page_type: str) -> dict:
     if images_total > 0 and images_without_alt > images_total * 0.3:
         issues.append({
             "severity": "warn", "area": "images",
-            "msg": f"{images_without_alt}/{images_total} billeder mangler alt-tekst.",
+            "msg": f"{images_without_alt}/{images_total} images are missing alt text.",
         })
         penalty += 2
-        recommendations.append("Tilfoej beskrivende alt-tekst med keywords til produkt-billeder")
+        recommendations.append("Add descriptive alt text with keywords to product images")
 
     trust_pct = (trust_score / max(trust_max, 1)) * 100
 
@@ -1023,4 +1106,548 @@ def _audit_trust_signals(page_data: dict, page_type: str) -> dict:
             "schema_types": schema_types,
             "signals_found": trust_signals,
         },
+    }
+
+
+# ══════════════════════════════════════════════════════════════════
+# 6. SEMANTIC LINK VALIDATION (WP1)
+# ══════════════════════════════════════════════════════════════════
+
+def _validate_existing_links(
+    internal_links: list, current_url: str, topic_clusters: dict = None,
+) -> dict:
+    """
+    Check if existing internal links point to semantically related pages.
+    Validates anchor text against shared cluster terms.
+    """
+    result = {
+        "semantic_links": [],
+        "non_semantic_links": [],
+        "anchor_mismatches": [],
+    }
+
+    if not topic_clusters or not isinstance(internal_links, list):
+        return result
+
+    page_topics = topic_clusters.get("page_topics", {})
+    clusters = topic_clusters.get("clusters", [])
+
+    # Build lookup: url -> set of core_terms from its clusters
+    url_core_terms = {}
+    for cluster in clusters:
+        terms = set(cluster.get("core_terms", []))
+        for p in cluster.get("pages", []):
+            key = p["page"].rstrip("/").lower()
+            url_core_terms.setdefault(key, set()).update(terms)
+
+    my_topics = page_topics.get(current_url, [])
+    my_topic_names = set(t.get("topic", "") for t in my_topics)
+    my_terms = url_core_terms.get(current_url.rstrip("/").lower(), set())
+
+    domain = urlparse(current_url).netloc
+
+    for link in internal_links:
+        link_url = link.get("url", "")
+        anchor = link.get("anchor", "").strip()
+        if not link_url:
+            continue
+
+        # Normalize URL
+        if link_url.startswith("/"):
+            link_url_full = f"https://{domain}{link_url}"
+        else:
+            link_url_full = link_url
+        link_key = link_url_full.rstrip("/").lower()
+
+        # Find target's topics
+        target_topics = page_topics.get(link_url_full, [])
+        if not target_topics:
+            # Try without trailing slash variations
+            for pt_url in page_topics:
+                if pt_url.rstrip("/").lower() == link_key:
+                    target_topics = page_topics[pt_url]
+                    break
+
+        target_topic_names = set(t.get("topic", "") for t in target_topics)
+        shared = my_topic_names & target_topic_names
+        target_terms = url_core_terms.get(link_key, set())
+
+        if shared:
+            result["semantic_links"].append({
+                "url": link_url, "anchor": anchor,
+                "shared_topics": list(shared)[:3],
+            })
+            # Check anchor text quality
+            if anchor and target_terms:
+                anchor_lower = anchor.lower()
+                has_term = any(t.lower() in anchor_lower for t in target_terms)
+                if not has_term and len(anchor) > 2:
+                    suggested = " ".join(sorted(target_terms)[:3])
+                    result["anchor_mismatches"].append({
+                        "url": link_url,
+                        "current_anchor": anchor,
+                        "suggested_anchor": suggested,
+                        "reason": f"Anchor '{anchor}' doesn't contain cluster terms ({suggested})",
+                    })
+        elif target_topics:
+            result["non_semantic_links"].append({
+                "url": link_url, "anchor": anchor,
+                "target_topics": list(target_topic_names)[:2],
+            })
+
+    return result
+
+
+def _generate_link_fix_suggestions(
+    missing_crosslinks: list, page_data: dict, topic_clusters: dict = None,
+) -> list:
+    """
+    Generate specific, actionable link fix suggestions for missing crosslinks.
+    Includes suggested anchor text and placement section.
+    """
+    if not missing_crosslinks:
+        return []
+
+    clusters = (topic_clusters or {}).get("clusters", [])
+    h2s = page_data.get("h2s", [])
+    has_bottom = page_data.get("bottom_word_count", 0) > 30
+    has_intro = page_data.get("intro_word_count", 0) > 30
+
+    # Build url -> cluster core_terms lookup
+    url_terms = {}
+    for cluster in clusters:
+        terms = cluster.get("core_terms", [])
+        label = cluster.get("topic", "")
+        for p in cluster.get("pages", []):
+            key = p["page"].rstrip("/").lower()
+            url_terms[key] = {"terms": terms, "topic": label,
+                              "impressions": p.get("total_clicks", 0)}
+
+    suggestions = []
+    for ml in missing_crosslinks[:10]:
+        target_url = ml["url"]
+        target_key = target_url.rstrip("/").lower()
+        shared_topics = ml.get("shared_topics", [])
+        shared_count = ml.get("shared_count", 0)
+
+        target_info = url_terms.get(target_key, {})
+        terms = target_info.get("terms", [])
+        target_impressions = target_info.get("impressions", 0)
+
+        # Build suggested anchor from cluster terms + shared topics
+        anchor_parts = terms[:2] if terms else shared_topics[:2]
+        suggested_anchor = " ".join(anchor_parts) if anchor_parts else target_url.split("/")[-2] or "related page"
+
+        # Find best placement section
+        placement = "bottom_text" if has_bottom else "intro_text" if has_intro else "new_section"
+        placement_detail = ""
+
+        # Try to match against an H2 that relates to the shared topic
+        for h2 in h2s:
+            h2_lower = h2.lower()
+            if any(t.lower() in h2_lower for t in anchor_parts):
+                placement = "h2_section"
+                placement_detail = h2
+                break
+
+        # Priority: shared_count * 2 + has_impressions
+        priority_score = shared_count * 2 + (1 if target_impressions > 0 else 0)
+        priority = "high" if priority_score >= 4 else "medium" if priority_score >= 2 else "low"
+
+        suggestions.append({
+            "target_url": target_url,
+            "suggested_anchor": suggested_anchor,
+            "placement": placement,
+            "placement_detail": placement_detail,
+            "priority": priority,
+            "shared_topics": shared_topics[:3],
+            "shared_count": shared_count,
+            "reason": f"{shared_count} shared topic(s): {', '.join(shared_topics[:2])}",
+        })
+
+    suggestions.sort(key=lambda x: {"high": 0, "medium": 1, "low": 2}.get(x["priority"], 3))
+    return suggestions
+
+
+# ══════════════════════════════════════════════════════════════════
+# 7. PRODUCT-CLUSTER ALIGNMENT (WP2)
+# ══════════════════════════════════════════════════════════════════
+
+def _audit_product_alignment(
+    product_names: list, product_links: list,
+    cluster_keywords: list, topic_clusters: dict = None,
+    current_url: str = "",
+) -> dict:
+    """
+    Check if products on a category page match the cluster topic.
+    """
+    issues = []
+    recommendations = []
+
+    if not product_names and not product_links:
+        return {"alignment_pct": None, "issues": issues, "recommendations": recommendations,
+                "aligned": [], "misplaced": []}
+
+    # Get core terms for this page's cluster
+    clusters = (topic_clusters or {}).get("clusters", [])
+    page_topics_map = (topic_clusters or {}).get("page_topics", {})
+
+    my_topics = page_topics_map.get(current_url, [])
+    my_topic_names = set(t.get("topic", "") for t in my_topics)
+
+    # Collect all core terms from page's clusters
+    my_core_terms = set()
+    for cluster in clusters:
+        cluster_topic = cluster.get("topic", "")
+        if cluster_topic in my_topic_names:
+            my_core_terms.update(t.lower() for t in cluster.get("core_terms", []))
+
+    # Also add keywords as terms
+    kw_terms = set()
+    for kw in (cluster_keywords or [])[:20]:
+        kw_terms.update(kw.lower().split())
+
+    all_terms = my_core_terms | kw_terms
+
+    # Check product names against cluster terms
+    aligned = []
+    misplaced = []
+
+    for name in product_names[:30]:
+        name_lower = name.lower()
+        name_tokens = set(name_lower.split())
+        overlap = name_tokens & all_terms
+        if overlap:
+            aligned.append({"name": name, "matching_terms": list(overlap)[:3]})
+        else:
+            misplaced.append({"name": name, "reason": "No cluster term match in product name"})
+
+    # Check product links against page_topics
+    for pl in (product_links or [])[:20]:
+        pl_url = pl.get("url", "")
+        if not pl_url:
+            continue
+        # Normalize
+        if pl_url.startswith("/"):
+            domain = urlparse(current_url).netloc
+            pl_url_full = f"https://{domain}{pl_url}"
+        else:
+            pl_url_full = pl_url
+
+        target_topics = page_topics_map.get(pl_url_full, [])
+        if not target_topics:
+            for pt_url in page_topics_map:
+                if pt_url.rstrip("/").lower() == pl_url_full.rstrip("/").lower():
+                    target_topics = page_topics_map[pt_url]
+                    break
+
+        if target_topics:
+            target_topic_names = set(t.get("topic", "") for t in target_topics)
+            shared = my_topic_names & target_topic_names
+            if not shared and target_topic_names:
+                anchor = pl.get("anchor", pl_url)[:60]
+                misplaced.append({
+                    "name": anchor,
+                    "reason": f"Product belongs to different cluster ({', '.join(list(target_topic_names)[:2])})",
+                    "url": pl_url,
+                })
+
+    total = len(product_names[:30]) if product_names else len(product_links[:20])
+    aligned_count = len(aligned)
+    alignment_pct = (aligned_count / max(total, 1)) * 100
+
+    if alignment_pct < 40:
+        issues.append({
+            "severity": "critical", "area": "product_alignment",
+            "msg": f"Only {alignment_pct:.0f}% of products match the cluster topic. Many products may be miscategorized.",
+        })
+    elif alignment_pct < 70:
+        issues.append({
+            "severity": "warn", "area": "product_alignment",
+            "msg": f"{alignment_pct:.0f}% product-cluster alignment. Some products may not belong in this category.",
+        })
+
+    if misplaced:
+        top_misplaced = [m["name"][:40] for m in misplaced[:3]]
+        recommendations.append(
+            f"Review these potentially misplaced products: {', '.join(top_misplaced)}"
+        )
+
+    return {
+        "alignment_pct": round(alignment_pct, 1),
+        "aligned": aligned[:10],
+        "misplaced": misplaced[:10],
+        "total_checked": total,
+        "issues": issues,
+        "recommendations": recommendations,
+    }
+
+
+def _audit_subcategory_alignment(
+    category_links: list, topic_clusters: dict = None, current_url: str = "",
+) -> dict:
+    """Check if linked subcategories share the parent topic cluster."""
+    aligned = []
+    unrelated = []
+
+    if not topic_clusters or not isinstance(category_links, list):
+        return {"aligned": aligned, "unrelated": unrelated}
+
+    page_topics_map = topic_clusters.get("page_topics", {})
+    my_topics = page_topics_map.get(current_url, [])
+    my_topic_names = set(t.get("topic", "") for t in my_topics)
+
+    domain = urlparse(current_url).netloc
+
+    for cl in category_links:
+        cl_url = cl.get("url", "")
+        anchor = cl.get("anchor", "")
+        if not cl_url:
+            continue
+
+        if cl_url.startswith("/"):
+            cl_url_full = f"https://{domain}{cl_url}"
+        else:
+            cl_url_full = cl_url
+
+        target_topics = page_topics_map.get(cl_url_full, [])
+        if not target_topics:
+            for pt_url in page_topics_map:
+                if pt_url.rstrip("/").lower() == cl_url_full.rstrip("/").lower():
+                    target_topics = page_topics_map[pt_url]
+                    break
+
+        if target_topics:
+            target_topic_names = set(t.get("topic", "") for t in target_topics)
+            shared = my_topic_names & target_topic_names
+            entry = {"url": cl_url, "anchor": anchor}
+            if shared:
+                entry["shared_topics"] = list(shared)[:3]
+                aligned.append(entry)
+            else:
+                entry["target_topics"] = list(target_topic_names)[:2]
+                unrelated.append(entry)
+
+    return {"aligned": aligned, "unrelated": unrelated}
+
+
+# ══════════════════════════════════════════════════════════════════
+# 8. ENHANCED E-E-A-T DEPTH (WP3)
+# ══════════════════════════════════════════════════════════════════
+
+def _check_content_credibility(full_text: str, external_link_count: int = 0) -> dict:
+    """
+    Check for content credibility signals: citations, data, expert language.
+    """
+    signals = []
+    score = 0
+    max_score = 4
+
+    text_lower = full_text.lower() if full_text else ""
+
+    # Citation patterns (multilingual)
+    citation_patterns = [
+        r"according to", r"study shows?", r"research (shows?|indicates?|suggests?)",
+        r"expert[s]?\s+(say|recommend|suggest)", r"data (shows?|indicates?)",
+        r"enligt", r"forskning visar", r"studie",  # Swedish
+        r"ifølge", r"undersøgelse", r"forskning",  # Danish
+    ]
+    has_citations = any(re.search(p, text_lower) for p in citation_patterns)
+    if has_citations:
+        signals.append("Content cites sources or research")
+        score += 1
+
+    # Statistics / specific data
+    stat_patterns = [
+        r"\d+\s*%", r"\d+\s*(users?|customers?|people|studies|reviews?)",
+        r"\d{4}\s*(study|survey|report|data)",
+    ]
+    has_stats = any(re.search(p, text_lower) for p in stat_patterns)
+    if has_stats:
+        signals.append("Contains specific data or statistics")
+        score += 1
+
+    # External authoritative links
+    if external_link_count >= 2:
+        signals.append(f"{external_link_count} external links (potential source citations)")
+        score += 1
+
+    # Expert language signals
+    expert_patterns = [
+        r"(we recommend|our experts?|our team|years of experience)",
+        r"(vi rekommenderar|våra experter|vår erfarenhet)",  # Swedish
+        r"(vi anbefaler|vores eksperter|års erfaring)",  # Danish
+    ]
+    has_expert = any(re.search(p, text_lower) for p in expert_patterns)
+    if has_expert:
+        signals.append("Expert/authority language detected")
+        score += 1
+
+    return {
+        "credibility_score": score,
+        "credibility_max": max_score,
+        "credibility_pct": round((score / max_score) * 100),
+        "signals": signals,
+    }
+
+
+def _check_topical_authority(
+    current_url: str, topic_clusters: dict = None,
+) -> dict:
+    """
+    Check topical authority: how many pages does the site have in this topic cluster?
+    Low authority = need supporting content.
+    """
+    issues = []
+    signals = []
+
+    if not topic_clusters:
+        return {"authority_score": 0, "issues": issues, "signals": signals,
+                "pages_in_cluster": 0, "has_informational_content": False}
+
+    page_topics = topic_clusters.get("page_topics", {})
+    clusters = topic_clusters.get("clusters", [])
+
+    my_topics = page_topics.get(current_url, [])
+    my_topic_names = set(t.get("topic", "") for t in my_topics)
+
+    # Find clusters this page belongs to
+    pages_in_cluster = set()
+    total_queries = 0
+    has_informational = False
+
+    for cluster in clusters:
+        if cluster.get("topic", "") in my_topic_names:
+            total_queries += cluster.get("query_count", 0)
+            for p in cluster.get("pages", []):
+                pages_in_cluster.add(p["page"])
+                # Check if any page looks informational (blog/guide)
+                p_url = p["page"].lower()
+                if any(pat in p_url for pat in ["/blog", "/guide", "/artikel", "/tips", "/how-to", "/faq"]):
+                    has_informational = True
+
+    page_count = len(pages_in_cluster)
+
+    # Scoring
+    if page_count >= 5:
+        authority_score = 3
+        signals.append(f"Strong: {page_count} pages cover this topic cluster")
+    elif page_count >= 3:
+        authority_score = 2
+        signals.append(f"Moderate: {page_count} pages cover this topic cluster")
+    elif page_count >= 2:
+        authority_score = 1
+        signals.append(f"Weak: only {page_count} pages for {total_queries} queries in this cluster")
+        issues.append({
+            "severity": "warn", "area": "topical_authority",
+            "msg": f"Low topical authority: only {page_count} pages for {total_queries} queries. Add supporting content.",
+        })
+    else:
+        authority_score = 0
+        signals.append(f"Very weak: single page covering {total_queries} queries")
+        if total_queries >= 10:
+            issues.append({
+                "severity": "critical", "area": "topical_authority",
+                "msg": f"Single page covers {total_queries} queries. Need supporting articles/guides for topical depth.",
+            })
+
+    if not has_informational and total_queries > 5:
+        issues.append({
+            "severity": "info", "area": "topical_authority",
+            "msg": "No informational content (blog/guide) in this topic cluster. Add a guide or FAQ article.",
+        })
+
+    return {
+        "authority_score": authority_score,
+        "authority_max": 3,
+        "pages_in_cluster": page_count,
+        "total_queries_in_cluster": total_queries,
+        "has_informational_content": has_informational,
+        "issues": issues,
+        "signals": signals,
+    }
+
+
+def _check_trust_flow(
+    current_url: str, page_authority=None, topic_clusters: dict = None,
+) -> dict:
+    """
+    Check backlink trust flow: does this page receive external trust signals?
+    Cross-references with page_authority data from Ahrefs.
+    """
+    import pandas as pd
+    issues = []
+    signals = []
+
+    if page_authority is None or (isinstance(page_authority, pd.DataFrame) and page_authority.empty):
+        return {"trust_flow_score": 0, "issues": issues, "signals": signals, "referring_domains": 0}
+
+    # Find this page's authority
+    page_auth = page_authority[
+        page_authority["page"].str.rstrip("/").str.lower() == current_url.rstrip("/").lower()
+    ]
+
+    if page_auth.empty:
+        issues.append({
+            "severity": "info", "area": "trust_flow",
+            "msg": "Page not found in Ahrefs data. May have zero external backlinks.",
+        })
+        return {"trust_flow_score": 0, "issues": issues, "signals": signals, "referring_domains": 0}
+
+    rd = int(page_auth.iloc[0].get("referring_domains", 0))
+    backlinks = int(page_auth.iloc[0].get("backlinks", 0))
+
+    if rd >= 10:
+        trust_flow_score = 3
+        signals.append(f"Strong trust: {rd} referring domains, {backlinks} backlinks")
+    elif rd >= 3:
+        trust_flow_score = 2
+        signals.append(f"Moderate trust: {rd} referring domains")
+    elif rd >= 1:
+        trust_flow_score = 1
+        signals.append(f"Weak trust: only {rd} referring domain(s)")
+        issues.append({
+            "severity": "info", "area": "trust_flow",
+            "msg": f"Only {rd} referring domain(s). Consider link building for this page.",
+        })
+    else:
+        trust_flow_score = 0
+        issues.append({
+            "severity": "warn", "area": "trust_flow",
+            "msg": "Zero external backlinks. This page has no external trust signals.",
+        })
+
+    # Compare with cluster peers
+    if topic_clusters:
+        page_topics_map = topic_clusters.get("page_topics", {})
+        my_topics = page_topics_map.get(current_url, [])
+        my_topic_names = set(t.get("topic", "") for t in my_topics)
+        clusters = topic_clusters.get("clusters", [])
+
+        peer_rds = []
+        for cluster in clusters:
+            if cluster.get("topic", "") in my_topic_names:
+                for p in cluster.get("pages", []):
+                    if p["page"].rstrip("/").lower() != current_url.rstrip("/").lower():
+                        peer_auth = page_authority[
+                            page_authority["page"].str.rstrip("/").str.lower() == p["page"].rstrip("/").lower()
+                        ]
+                        if not peer_auth.empty:
+                            peer_rds.append(int(peer_auth.iloc[0].get("referring_domains", 0)))
+
+        if peer_rds:
+            avg_peer_rd = sum(peer_rds) / len(peer_rds)
+            if rd < avg_peer_rd * 0.5 and avg_peer_rd > 2:
+                issues.append({
+                    "severity": "info", "area": "trust_flow",
+                    "msg": f"Below cluster average: {rd} RDs vs {avg_peer_rd:.0f} avg for cluster peers.",
+                })
+
+    return {
+        "trust_flow_score": trust_flow_score,
+        "trust_flow_max": 3,
+        "referring_domains": rd,
+        "backlinks": backlinks,
+        "issues": issues,
+        "signals": signals,
     }

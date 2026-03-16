@@ -225,3 +225,167 @@ def _find_page_overlap(clusters: list) -> list:
         })
 
     return overlap
+
+
+# ══════════════════════════════════════════════════════════════════
+# CONTENT ROADMAP (WP4)
+# ══════════════════════════════════════════════════════════════════
+
+def generate_content_roadmap(
+    clusters: list, page_topics: dict, gsc_data: pd.DataFrame = None,
+    authority_data: pd.DataFrame = None,
+) -> dict:
+    """
+    Generate a content roadmap: identify uncovered subtopics that need new articles,
+    thin clusters that need supporting content, and provide specific article suggestions
+    with internal linking plans.
+    """
+    from utils.category_analyzer import _group_queries_into_subtopics
+
+    articles_needed = []
+    supporting_content = []
+    total_opportunity = 0
+
+    for cluster in clusters:
+        queries = cluster.get("queries", [])
+        core_terms = cluster.get("core_terms", [])
+        pages = cluster.get("pages", [])
+        topic_label = cluster.get("topic", "")
+        primary_page = pages[0]["page"] if pages else None
+
+        # Group queries into subtopics
+        subtopics = _group_queries_into_subtopics(queries)
+
+        # Get impressions per query from GSC data
+        query_impressions = {}
+        if gsc_data is not None and not gsc_data.empty:
+            for q in queries:
+                qdata = gsc_data[gsc_data["query"] == q]
+                if not qdata.empty:
+                    query_impressions[q] = int(qdata["impressions"].sum())
+
+        # Check each subtopic for coverage
+        for st_item in subtopics:
+            if st_item["topic"] == "(other)":
+                continue
+
+            st_queries = st_item["queries"]
+            st_impressions = sum(query_impressions.get(q, 0) for q in st_queries)
+
+            # Is this subtopic well-covered by an existing page?
+            covered = False
+            if gsc_data is not None:
+                for q in st_queries:
+                    qdata = gsc_data[gsc_data["query"] == q]
+                    if not qdata.empty and qdata["position"].min() <= 15:
+                        covered = True
+                        break
+
+            if not covered and st_impressions >= 50:
+                content_type = _infer_content_type(st_queries)
+                top_query = max(st_queries, key=lambda q: query_impressions.get(q, 0))
+
+                title_prefix = {
+                    "how-to": "How to",
+                    "comparison": "Comparing",
+                    "listicle": "Best",
+                    "explainer": "What is",
+                    "guide": "Guide:",
+                }.get(content_type, "Guide:")
+
+                suggested_title = f"{title_prefix} {top_query.title()}"
+
+                # Internal linking plan
+                linking_plan = []
+                if primary_page:
+                    linking_plan.append({
+                        "from": primary_page,
+                        "to": "(new article)",
+                        "anchor": " ".join(core_terms[:2]) + " " + st_item["topic"],
+                        "direction": "hub → article",
+                    })
+                    linking_plan.append({
+                        "from": "(new article)",
+                        "to": primary_page,
+                        "anchor": " ".join(core_terms[:2]),
+                        "direction": "article → hub",
+                    })
+
+                articles_needed.append({
+                    "suggested_title": suggested_title,
+                    "target_keywords": st_queries[:8],
+                    "estimated_impressions": st_impressions,
+                    "content_type": content_type,
+                    "supporting_page": primary_page,
+                    "cluster_topic": topic_label,
+                    "subtopic": st_item["topic"],
+                    "internal_linking_plan": linking_plan,
+                    "priority": "high" if st_impressions >= 200 else "medium" if st_impressions >= 100 else "low",
+                })
+                total_opportunity += st_impressions
+
+        # Check if cluster needs more supporting content overall
+        page_count = cluster.get("page_count", 0)
+        query_count = cluster.get("query_count", 0)
+        total_impressions = cluster.get("total_impressions", 0)
+
+        has_informational = False
+        for p in pages:
+            p_url = p["page"].lower()
+            if any(pat in p_url for pat in ["/blog", "/guide", "/artikel", "/tips", "/how-to", "/faq"]):
+                has_informational = True
+                break
+
+        if page_count <= 2 and query_count >= 8 and total_impressions >= 200:
+            supporting_content.append({
+                "cluster_topic": topic_label,
+                "primary_page": primary_page,
+                "page_count": page_count,
+                "query_count": query_count,
+                "impressions": total_impressions,
+                "has_informational": has_informational,
+                "recommendation": (
+                    "Add blog/guide content to support this category"
+                    if not has_informational else
+                    "Consider adding more depth: comparison articles, FAQ pages, or buyer's guides"
+                ),
+            })
+
+    # Sort by priority and impressions
+    articles_needed.sort(key=lambda x: (
+        {"high": 0, "medium": 1, "low": 2}.get(x["priority"], 3),
+        -x["estimated_impressions"],
+    ))
+
+    supporting_content.sort(key=lambda x: -x["impressions"])
+
+    return {
+        "articles_needed": articles_needed,
+        "supporting_content": supporting_content,
+        "total_articles": len(articles_needed),
+        "total_opportunity_impressions": total_opportunity,
+        "total_supporting_gaps": len(supporting_content),
+    }
+
+
+def _infer_content_type(queries: list) -> str:
+    """Infer the best content type from a list of queries (multilingual)."""
+    text = " ".join(queries).lower()
+
+    # How-to patterns
+    if re.search(r"\b(how to|how do|hur|hvordan|guide to|steg för steg)\b", text):
+        return "how-to"
+
+    # Comparison patterns
+    if re.search(r"\b(vs\.?|versus|compare|jämför|sammenlign|eller|or\b.*\bor\b|skillnad)", text):
+        return "comparison"
+
+    # Listicle patterns
+    if re.search(r"\b(best|top \d|bäst|bedst|bra|topp)\b", text):
+        return "listicle"
+
+    # Explainer patterns
+    if re.search(r"\b(what is|what are|vad är|hvad er|definition|meaning)\b", text):
+        return "explainer"
+
+    return "guide"

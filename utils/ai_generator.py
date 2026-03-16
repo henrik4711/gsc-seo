@@ -27,8 +27,8 @@ def generate_meta_suggestions(
     """
     Generate optimized meta title and description variants
     """
-    current_title = page_data.get("title") or "Ingen title"
-    current_desc = page_data.get("meta_description") or "Ingen description"
+    current_title = page_data.get("title") or "No title"
+    current_desc = page_data.get("meta_description") or "No description"
     url = page_data.get("url", "")
     h1 = page_data.get("h1") or ""
     h2s = page_data.get("h2s", [])[:5]
@@ -40,56 +40,56 @@ def generate_meta_suggestions(
         cat_audit = page_data.get("content_audit", {})
         stats = cat_audit.get("content_stats", {})
         cat_context = f"""
-Sidetype: KATEGORISIDE (viser produkter i et grid)
-Produkter paa siden: {stats.get('product_count', '?')}
-Redaktionelle ord (intro+bund): {stats.get('total_editorial', '?')}
-Har FAQ: {'Ja' if stats.get('has_faq') else 'Nej'}
-Har koepguide: {'Ja' if stats.get('has_buying_guide') else 'Nej'}
-VIGTIGT: Meta for kategorisider skal fokusere paa kategori-intent (browse/explore), ikke enkelt-produkt-intent."""
+Page type: CATEGORY PAGE (shows products in a grid)
+Products on the page: {stats.get('product_count', '?')}
+Editorial words (intro+bottom): {stats.get('total_editorial', '?')}
+Has FAQ: {'Yes' if stats.get('has_faq') else 'No'}
+Has buying guide: {'Yes' if stats.get('has_buying_guide') else 'No'}
+IMPORTANT: Meta for category pages should focus on category intent (browse/explore), not single-product intent."""
     elif page_type == "product":
-        cat_context = "\nSidetype: PRODUKTSIDE (enkelt produkt)\nVIGTIGT: Meta skal fokusere paa produkt-specifikke features og koebsintent."
+        cat_context = "\nPage type: PRODUCT PAGE (single product)\nIMPORTANT: Meta should focus on product-specific features and purchase intent."
     elif page_type == "blog":
-        cat_context = "\nSidetype: BLOG/GUIDE\nVIGTIGT: Meta skal fokusere paa informations-intent og vaerdi for laeseren."
+        cat_context = "\nPage type: BLOG/GUIDE\nIMPORTANT: Meta should focus on informational intent and value for the reader."
 
-    prompt = f"""Du er en senior SEO-specialist og konverteringsoptimerings-ekspert for en skandinavisk e-commerce webshop der saelger voksenprodukter.
+    prompt = f"""You are a senior SEO specialist and conversion optimization expert for an e-commerce webshop.
 
-## NUVAERENDE SITUATION
+## CURRENT SITUATION
 URL: {url}{cat_context}
-Nuvaerende title: {current_title} ({len(current_title)} tegn)
-Nuvaerende meta description: {current_desc} ({len(current_desc)} tegn)
+Current title: {current_title} ({len(current_title)} chars)
+Current meta description: {current_desc} ({len(current_desc)} chars)
 H1: {h1}
-H2'er: {', '.join(h2s) if h2s else 'Ingen'}
-Maalgruppe-keywords fra GSC: {', '.join(target_keywords)}
-Site-kontekst: {site_context}
+H2s: {', '.join(h2s) if h2s else 'None'}
+Target keywords from GSC: {', '.join(target_keywords)}
+Site context: {site_context}
 
-## OPGAVE
-Generer {n_variants} varianter af forbedrede meta title + description.
+## TASK
+Generate {n_variants} variants of improved meta title + description.
 
-### KRAV til TITLE (kritisk):
-- 50-60 tegn (ALDRIG over 65)
-- Primær keyword tidligst muligt (helst ord 1-3)
-- Ét konkret benefit eller USP
-- Undgå: "Køb", "Bestil" som første ord (Google kan lave det)
-- Sproget: {language}
+### TITLE REQUIREMENTS (critical):
+- 50-60 characters (NEVER over 65)
+- Primary keyword as early as possible (preferably words 1-3)
+- One concrete benefit or USP
+- Avoid: "Buy", "Order" as first word (Google can add that)
+- Language: {language}
 
-### KRAV til META DESCRIPTION (kritisk):
-- 140-160 tegn (ALDRIG over 165)
-- Inkluder primær keyword naturligt
-- Stærk CTA: fri frakt, hurtig levering, diskret forsendelse, stort udvalg
-- Skab nysgerrighed/FOMO eller løs et problem
-- Inkluder specifikke detaljer der differentierer
-- Sproget: {language}
+### META DESCRIPTION REQUIREMENTS (critical):
+- 140-160 characters (NEVER over 165)
+- Include primary keyword naturally
+- Strong CTA: free shipping, fast delivery, discreet shipping, wide selection
+- Create curiosity/FOMO or solve a problem
+- Include specific differentiating details
+- Language: {language}
 
-## OUTPUT FORMAT (kun JSON, ingen markdown-wrapping):
+## OUTPUT FORMAT (JSON only, no markdown wrapping):
 {{
-  "analysis": "Kort analyse af hvad der er galt med nuværende meta (2-3 sætninger)",
+  "analysis": "Brief analysis of what's wrong with the current meta (2-3 sentences)",
   "variants": [
     {{
       "title": "...",
       "title_chars": 0,
       "description": "...",
       "description_chars": 0,
-      "strategy": "Hvad er strategien bag denne variant (1 sætning)"
+      "strategy": "What is the strategy behind this variant (1 sentence)"
     }}
   ]
 }}"""
@@ -126,32 +126,32 @@ def generate_content_audit(
     body = page_data.get("body_text", "")[:4000]
     url = page_data.get("url", "")
     
-    prompt = f"""Du er en SEO content-analytiker. Analysér denne landingpage og dens keyword-dækning.
+    prompt = f"""You are an SEO content analyst. Analyze this landing page and its keyword coverage.
 
 URL: {url}
-GSC-keywords der driver trafik: {', '.join(gsc_queries[:20])}
+GSC keywords driving traffic: {', '.join(gsc_queries[:20])}
 Target focus keywords: {', '.join(target_keywords)}
 
-NUVÆRENDE INDHOLD (uddrag):
+CURRENT CONTENT (excerpt):
 {body}
 
-## OPGAVE: Lav en keyword gap-analyse
+## TASK: Perform a keyword gap analysis
 
-Returner KUN JSON (ingen markdown):
+Return ONLY JSON (no markdown):
 {{
   "keyword_coverage": [
-    {{"keyword": "...", "present": true/false, "context": "Hvor/hvordan det bruges eller mangler"}}
+    {{"keyword": "...", "present": true/false, "context": "Where/how it is used or missing"}}
   ],
-  "missing_topics": ["Emner der burde dækkes men ikke gør"],
+  "missing_topics": ["Topics that should be covered but are not"],
   "thin_content": true/false,
-  "content_issues": ["Liste af konkrete indholdsproblemer"],
-  "opportunities": ["Konkrete muligheder for at forbedre SEO-indhold"],
+  "content_issues": ["List of specific content issues"],
+  "opportunities": ["Specific opportunities to improve SEO content"],
   "recommended_structure": {{
     "suggested_h1": "...",
-    "suggested_sections": ["H2 sektion 1", "H2 sektion 2", "..."]
+    "suggested_sections": ["H2 section 1", "H2 section 2", "..."]
   }},
   "overall_score": 0-100,
-  "summary": "2-3 sætninger om sidens SEO-indhold status"
+  "summary": "2-3 sentences about the page's SEO content status"
 }}"""
 
     message = client.messages.create(
@@ -172,7 +172,7 @@ def generate_landing_page_text(
     gsc_queries: list,
     site_context: str = "",
     language: str = "Swedish",
-    tone: str = "Professionel men tilgængelig",
+    tone: str = "Professional but approachable",
 ) -> dict:
     """
     Generate a full optimized landing page text
@@ -189,66 +189,66 @@ def generate_landing_page_text(
         bottom_words = page_data.get("bottom_word_count", 0)
         product_count = page_data.get("product_count", 0)
         type_instruction = f"""
-## SIDETYPE: KATEGORI
-Denne side viser {product_count} produkter i et grid.
-Nuvaerende intro-tekst: {intro_words} ord (OVER grid)
-Nuvaerende bundtekst: {bottom_words} ord (UNDER grid)
+## PAGE TYPE: CATEGORY
+This page shows {product_count} products in a grid.
+Current intro text: {intro_words} words (ABOVE grid)
+Current bottom text: {bottom_words} words (BELOW grid)
 
-VIGTIGT for kategorisider:
-- Intro (over grid): 80-150 ord, forklar kategorien, hjaelp kunden forstaa udvalget
-- Bundtekst (under grid): 200-400 ord med koepguide, FAQ, og dybere keyword-daekning
-- Teksten skal IKKE beskrive enkelte produkter (det goer produktsiderne)
-- Fokuser paa: Hvad er forskellen mellem typerne? Hvad skal man kigge efter? Hvem er maalgruppen?
+IMPORTANT for category pages:
+- Intro (above grid): 80-150 words, explain the category, help the customer understand the selection
+- Bottom text (below grid): 200-400 words with buying guide, FAQ, and deeper keyword coverage
+- Text should NOT describe individual products (product pages do that)
+- Focus on: What are the differences between types? What should one look for? Who is the target audience?
 """
     elif page_type == "product":
         type_instruction = """
-## SIDETYPE: PRODUKT
-Fokuser paa produktspecifikke features, fordele og brugsscenarier.
+## PAGE TYPE: PRODUCT
+Focus on product-specific features, benefits and use cases.
 """
     elif page_type == "blog":
         type_instruction = """
-## SIDETYPE: BLOG/GUIDE
-Fokuser paa informationsvaerdi, E-E-A-T signaler og dybde.
+## PAGE TYPE: BLOG/GUIDE
+Focus on informational value, E-E-A-T signals and depth.
 """
 
-    prompt = f"""Du er en senior SEO-copywriter specialiseret i e-commerce og voksenprodukter (skandinavisk marked).
+    prompt = f"""You are a senior SEO copywriter specialized in e-commerce.
 
-## KONTEKST
+## CONTEXT
 URL: {url}
 Site: {site_context}
-Primaere keywords: {', '.join(target_keywords[:5])}
-Alle GSC-soegeforespoergsler vi rangerer for: {', '.join(gsc_queries[:25])}
-Nuvaerende H2-struktur: {', '.join(h2s) if h2s else 'Ingen'}
-Eksisterende indhold (eksempel): {existing[:1000]}
+Primary keywords: {', '.join(target_keywords[:5])}
+All GSC search queries we rank for: {', '.join(gsc_queries[:25])}
+Current H2 structure: {', '.join(h2s) if h2s else 'None'}
+Existing content (excerpt): {existing[:1000]}
 Tone of voice: {tone}
-Sprog: {language}
+Language: {language}
 {type_instruction}
-## OPGAVE
-Skriv optimeret landingpage-indhold der:
-1. Er naturlig og konverterende - IKKE SEO-spam
-2. Inkluderer primaere keywords naturligt (density ca. 1-2%)
-3. Daekker alle relevante LSI-keywords fra GSC-data
-4. Har klar struktur med H2/H3
-5. Inkluderer sociale beviser, USPs og CTA
-6. Er passende for voksenprodukter (diskret, respektfuld tone)
+## TASK
+Write optimized landing page content that:
+1. Is natural and converting - NOT SEO spam
+2. Includes primary keywords naturally (density ~1-2%)
+3. Covers all relevant LSI keywords from GSC data
+4. Has clear structure with H2/H3
+5. Includes social proof, USPs and CTA
+6. Uses a discreet, respectful tone appropriate for the product category
 
-Returner KUN JSON:
+Return ONLY JSON:
 {{
-  "intro_paragraph": "Kategori-intro tekst (80-120 ord)",
+  "intro_paragraph": "Category intro text (80-120 words)",
   "sections": [
     {{
-      "h2": "Sektions-overskrift",
-      "content": "Sektions-indhold (60-100 ord)",
+      "h2": "Section heading",
+      "content": "Section content (60-100 words)",
       "h3_subsections": [
-        {{"h3": "Evt. underoverskrift", "content": "..."}}
+        {{"h3": "Optional subheading", "content": "..."}}
       ]
     }}
   ],
-  "buying_guide_snippet": "Kort guide-afsnit der hjælper kunden vælge (80-100 ord)",
+  "buying_guide_snippet": "Short guide section helping the customer choose (80-100 words)",
   "faq_items": [
     {{"question": "...", "answer": "..."}}
   ],
-  "seo_notes": "Noter til redaktøren om keyword-placement (2-3 bullet points)"
+  "seo_notes": "Notes for the editor about keyword placement (2-3 bullet points)"
 }}"""
 
     message = client.messages.create(
@@ -291,27 +291,27 @@ def generate_action_plan(
             "issues": [str(i) for i in r.get("issues", [])[:3]],
         })
 
-    prompt = f"""Du er SEO-strateg for {site_url}. Lav en prioriteret handlingsplan baseret på disse audit-resultater:
+    prompt = f"""You are an SEO strategist for {site_url}. Create a prioritized action plan based on these audit results:
 
 {json.dumps(summary_data, ensure_ascii=False, indent=2)}
 
-Returner KUN JSON:
+Return ONLY JSON:
 {{
-  "executive_summary": "3-4 sætninger om den overordnede SEO-situation og potentiale",
+  "executive_summary": "3-4 sentences about the overall SEO situation and potential",
   "estimated_monthly_clicks_gain": 0,
   "priority_actions": [
     {{
       "priority": 1,
       "url": "...",
-      "action": "Hvad skal gøres",
-      "reason": "Hvorfor dette er vigtigt",
-      "estimated_impact": "Estimeret klik-gevinst",
-      "effort": "Lav/Medium/Høj",
+      "action": "What needs to be done",
+      "reason": "Why this is important",
+      "estimated_impact": "Estimated click gain",
+      "effort": "Low/Medium/High",
       "type": "meta|content|technical"
     }}
   ],
-  "quick_wins": ["Actions der kan gøres på under 30 min"],
-  "strategic_recommendations": ["Større strategiske ændringer (1-3 mdr)"]
+  "quick_wins": ["Actions that can be done in under 30 min"],
+  "strategic_recommendations": ["Larger strategic changes (1-3 months)"]
 }}"""
 
     message = client.messages.create(

@@ -2,7 +2,7 @@ import streamlit as st
 from config import init_from_env
 
 st.set_page_config(
-    page_title="SEO Intelligence · Mshop",
+    page_title="SEO Intelligence Platform",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -258,24 +258,24 @@ st.markdown("""
         ⚡ SEO INTELLIGENCE PLATFORM
     </div>
     <h1 style="margin: 0; font-size: 2rem; background: linear-gradient(135deg, #e8e8f0 0%, #c8b4ff 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-        CTR Gap Optimizer
+        SEO Intelligence Platform
     </h1>
     <p style="color: #6b6b8a; margin: 0.5rem 0 0 0; font-size: 0.9rem;">
-        Find pages where click-through rate underperforms their organic position · Generate AI-powered fixes
+        Analyze CTR gaps, audit pages, validate topic clusters &amp; generate AI-powered content
     </p>
 </div>
 """, unsafe_allow_html=True)
 
 # ── Pipeline step definitions ──────────────────────────────────────
 STEPS = [
-    ("1. Setup & Connect",  "setup",        "gsc_data",          "Forbind GSC + API keys"),
-    ("2. Upload Ahrefs",    "ahrefs",       "page_authority",    "Upload backlink-data"),
+    ("1. Setup & Connect",  "setup",        "gsc_data",          "Connect GSC + API keys"),
+    ("2. Upload Ahrefs",    "ahrefs",       "page_authority",    "Upload backlink data"),
     ("3. CTR Analysis",     "ctr",          "ctr_gaps",          "Find underperformers"),
-    ("4. Cannibalization",  "cannibal",     "cannibalization",   "Find keyword-konflikter"),
-    ("5. Topic Clusters",   "topics",       "topic_clusters",    "Grupper keywords i topics"),
-    ("6. Page Auditor",     "auditor",      "audit_results",     "Tjek meta + indhold"),
-    ("7. Content Generator","content",      "generated_content", "AI-genereret indhold"),
-    ("8. Action Plan",      "action",       "action_plan",       "Prioriteret handlingsplan"),
+    ("4. Cannibalization",  "cannibal",     "cannibalization",   "Find keyword conflicts"),
+    ("5. Topic Clusters",   "topics",       "topic_clusters",    "Group keywords into topics"),
+    ("6. Page Auditor",     "auditor",      "audit_results",     "Check meta + content"),
+    ("7. Content Generator","content",      "generated_content", "AI-generated content"),
+    ("8. Action Plan",      "action",       "action_plan",       "Prioritized action plan"),
 ]
 
 # Figure out which step the user should be on
@@ -295,7 +295,7 @@ with st.sidebar:
             SEO Pipeline
         </div>
         <div style="font-family: 'IBM Plex Mono', monospace; font-size: 0.6rem; color: #5533ff; letter-spacing: 0.1em; margin-top: 0.2rem;">
-            FOELG TRINNENE I RAEKKEFOELGE
+            FOLLOW THE STEPS IN ORDER
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -336,7 +336,7 @@ with st.sidebar:
         _, _, _, hint = STEPS[next_idx]
         st.markdown(f"""
         <div style="margin-top:1rem; padding:0.8rem; background:#12121f; border:1px solid #2a2a40; border-radius:6px;">
-            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#5533ff; margin-bottom:0.3rem;">NAESTE SKRIDT</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#5533ff; margin-bottom:0.3rem;">NEXT STEP</div>
             <div style="font-size:0.8rem; color:#c8b4ff;">{hint}</div>
         </div>
         """, unsafe_allow_html=True)
