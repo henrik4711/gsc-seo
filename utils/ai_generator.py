@@ -222,21 +222,27 @@ def generate_action_plan(
     """
     Generate prioritized action plan from all audit results
     """
-    # Build summary of issues
+    # Build summary of issues - convert numpy types to native Python
+    import json
+
+    def _to_native(val):
+        if hasattr(val, 'item'):
+            return val.item()
+        return val
+
     summary_data = []
     for r in audit_results[:20]:  # Cap for token limit
         summary_data.append({
-            "url": r.get("url"),
-            "lost_clicks": r.get("lost_clicks_estimate", 0),
-            "position": r.get("position"),
-            "ctr_gap": r.get("ctr_gap_pct"),
-            "meta_score": r.get("meta_score", 100),
-            "content_score": r.get("content_score", 100),
-            "top_keywords": r.get("target_keywords", [])[:3],
-            "issues": r.get("issues", [])[:3],
+            "url": str(r.get("url", "")),
+            "lost_clicks": _to_native(r.get("lost_clicks_estimate", 0)),
+            "position": _to_native(r.get("position", 0)),
+            "ctr_gap": _to_native(r.get("ctr_gap_pct", 0)),
+            "meta_score": _to_native(r.get("meta_score", 100)),
+            "content_score": _to_native(r.get("content_score", 100)),
+            "top_keywords": [str(k) for k in r.get("target_keywords", [])[:3]],
+            "issues": [str(i) for i in r.get("issues", [])[:3]],
         })
-    
-    import json
+
     prompt = f"""Du er SEO-strateg for {site_url}. Lav en prioriteret handlingsplan baseret på disse audit-resultater:
 
 {json.dumps(summary_data, ensure_ascii=False, indent=2)}
