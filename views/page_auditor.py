@@ -53,7 +53,7 @@ def _get_cluster_keywords(url: str) -> list:
         for page in cluster.get("pages", []):
             if page.get("page", "").rstrip("/").lower() == url.rstrip("/").lower():
                 keywords.extend(cluster.get("queries", []))
-    return list(set(keywords))[:30]
+    return list(set(keywords))[:50]
 
 
 def render():
@@ -175,7 +175,9 @@ def render():
                     # Category content audit (when applicable)
                     if result.get("page_type") == "category" and deep_category:
                         cat_audit = audit_category_content(
-                            result, cluster_keywords, target_keywords
+                            result, cluster_keywords, target_keywords,
+                            topic_clusters=st.session_state.get("topic_clusters"),
+                            page_authority=st.session_state.get("page_authority"),
                         )
                         result["content_score"] = cat_audit["score"]
                         result["content_audit"] = cat_audit
@@ -304,49 +306,134 @@ def render():
                     h2_list = " ".join(r["h2s"][:5])
                     st.markdown(f"<div style='font-size:0.75rem; color:#6b6b8a; margin-top:0.5rem; font-family:\"IBM Plex Mono\",monospace;'>H2: {h2_list}</div>", unsafe_allow_html=True)
 
-                # ── Category-specific content audit ────────────────
+                # ── Category-specific deep audit ───────────────────
                 cat_audit = r.get("content_audit")
                 if cat_audit:
                     st.markdown("---")
-                    st.markdown("#### Kategori-indholdsanalyse")
+                    st.markdown("#### Dyb kategori-analyse")
 
                     stats = cat_audit.get("content_stats", {})
                     kw_cov = cat_audit.get("keyword_coverage", {})
+                    topic_cov = cat_audit.get("topic_coverage", {})
+                    linking = cat_audit.get("linking", {})
+                    trust = cat_audit.get("trust", {})
 
-                    # Content stats
-                    c1, c2, c3, c4 = st.columns(4)
-                    with c1:
+                    # ── Score overview ──
+                    s1, s2, s3, s4, s5 = st.columns(5)
+                    with s1:
                         intro_w = stats.get("intro_words", 0)
                         intro_color = "#33dd88" if intro_w >= 80 else "#ffaa33" if intro_w >= 30 else "#ff4455"
-                        st.markdown(f"<div style='text-align:center;'><div style='font-size:1.5rem; font-weight:700; color:{intro_color};'>{intro_w}</div><div style='font-size:0.65rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace;'>INTRO ORD</div></div>", unsafe_allow_html=True)
-                    with c2:
+                        st.markdown(f"<div style='text-align:center;'><div style='font-size:1.4rem; font-weight:700; color:{intro_color};'>{intro_w}</div><div style='font-size:0.6rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace;'>INTRO ORD</div></div>", unsafe_allow_html=True)
+                    with s2:
                         bottom_w = stats.get("bottom_words", 0)
                         bottom_color = "#33dd88" if bottom_w >= 150 else "#ffaa33" if bottom_w >= 50 else "#ff4455"
-                        st.markdown(f"<div style='text-align:center;'><div style='font-size:1.5rem; font-weight:700; color:{bottom_color};'>{bottom_w}</div><div style='font-size:0.65rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace;'>BUND ORD</div></div>", unsafe_allow_html=True)
-                    with c3:
-                        cov_pct = kw_cov.get("coverage_pct", 0)
-                        cov_color = "#33dd88" if cov_pct >= 60 else "#ffaa33" if cov_pct >= 30 else "#ff4455"
-                        st.markdown(f"<div style='text-align:center;'><div style='font-size:1.5rem; font-weight:700; color:{cov_color};'>{cov_pct:.0f}%</div><div style='font-size:0.65rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace;'>KW DAEKNING</div></div>", unsafe_allow_html=True)
-                    with c4:
-                        prod_count = stats.get("product_count", 0)
-                        st.markdown(f"<div style='text-align:center;'><div style='font-size:1.5rem; font-weight:700; color:#c8b4ff;'>{prod_count}</div><div style='font-size:0.65rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace;'>PRODUKTER</div></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align:center;'><div style='font-size:1.4rem; font-weight:700; color:{bottom_color};'>{bottom_w}</div><div style='font-size:0.6rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace;'>BUND ORD</div></div>", unsafe_allow_html=True)
+                    with s3:
+                        tp = topic_cov.get("coverage_pct", 0)
+                        tp_color = "#33dd88" if tp >= 60 else "#ffaa33" if tp >= 30 else "#ff4455"
+                        st.markdown(f"<div style='text-align:center;'><div style='font-size:1.4rem; font-weight:700; color:{tp_color};'>{tp:.0f}%</div><div style='font-size:0.6rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace;'>TOPIC MATCH</div></div>", unsafe_allow_html=True)
+                    with s4:
+                        kp = kw_cov.get("coverage_pct", 0)
+                        kp_color = "#33dd88" if kp >= 60 else "#ffaa33" if kp >= 30 else "#ff4455"
+                        st.markdown(f"<div style='text-align:center;'><div style='font-size:1.4rem; font-weight:700; color:{kp_color};'>{kp:.0f}%</div><div style='font-size:0.6rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace;'>KW DAEKNING</div></div>", unsafe_allow_html=True)
+                    with s5:
+                        tpct = trust.get("trust_pct", 0)
+                        t_color = "#33dd88" if tpct >= 60 else "#ffaa33" if tpct >= 30 else "#ff4455"
+                        st.markdown(f"<div style='text-align:center;'><div style='font-size:1.4rem; font-weight:700; color:{t_color};'>{tpct:.0f}%</div><div style='font-size:0.6rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace;'>TRUST/E-E-A-T</div></div>", unsafe_allow_html=True)
 
-                    # Feature flags
+                    # ── Feature flags row ──
                     has_faq = stats.get("has_faq", False)
                     has_guide = stats.get("has_buying_guide", False)
-                    faq_icon = "OK" if has_faq else "MANGLER"
-                    faq_color = "#33dd88" if has_faq else "#ff4455"
-                    guide_icon = "OK" if has_guide else "MANGLER"
-                    guide_color = "#33dd88" if has_guide else "#ff4455"
+                    faq_c = "#33dd88" if has_faq else "#ff4455"
+                    guide_c = "#33dd88" if has_guide else "#ff4455"
+                    bc_c = "#33dd88" if trust.get("has_breadcrumb") else "#ff4455"
+                    rev_c = "#33dd88" if trust.get("has_reviews") else "#ff4455"
                     st.markdown(
-                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem; margin-top:0.5rem;'>"
-                        f"FAQ: <span style='color:{faq_color};'>{faq_icon}</span> &nbsp; "
-                        f"Koepguide: <span style='color:{guide_color};'>{guide_icon}</span> &nbsp; "
-                        f"H2 sektioner: {stats.get('editorial_h2_count', 0)}</div>",
+                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; margin:0.5rem 0; padding:0.5rem; background:#0d0d15; border-radius:4px;'>"
+                        f"FAQ: <span style='color:{faq_c};'>{'OK' if has_faq else 'MANGLER'}</span> &nbsp;|&nbsp; "
+                        f"Koepguide: <span style='color:{guide_c};'>{'OK' if has_guide else 'MANGLER'}</span> &nbsp;|&nbsp; "
+                        f"Breadcrumb: <span style='color:{bc_c};'>{'OK' if trust.get('has_breadcrumb') else 'MANGLER'}</span> &nbsp;|&nbsp; "
+                        f"Reviews: <span style='color:{rev_c};'>{'OK' if trust.get('has_reviews') else 'MANGLER'}</span> &nbsp;|&nbsp; "
+                        f"H2: {stats.get('editorial_h2_count', 0)} &nbsp;|&nbsp; "
+                        f"Produkter: {stats.get('product_count', 0)}</div>",
                         unsafe_allow_html=True
                     )
 
-                    # Missing keywords
+                    # ── Topic coverage detail ──
+                    subtopics = topic_cov.get("subtopics", [])
+                    if subtopics:
+                        with st.expander(f"Topic-cluster daekning ({topic_cov.get('covered_topics',0)}/{topic_cov.get('total_topics',0)} emner)", expanded=True):
+                            for sub in subtopics:
+                                status = sub["status"]
+                                if status == "covered":
+                                    icon, scolor = "OK", "#33dd88"
+                                elif status == "partial":
+                                    icon, scolor = "DELVIST", "#ffaa33"
+                                else:
+                                    icon, scolor = "MANGLER", "#ff4455"
+                                queries_str = ", ".join(sub["queries"][:3])
+                                if sub["query_count"] > 3:
+                                    queries_str += f" +{sub['query_count']-3} mere"
+                                st.markdown(
+                                    f"<div style='padding:3px 0; font-size:0.8rem;'>"
+                                    f"<span style='color:{scolor}; font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; font-weight:600; min-width:70px; display:inline-block;'>[{icon}]</span> "
+                                    f"<span style='color:#e8e8f0; font-weight:500;'>{sub['topic']}</span> "
+                                    f"<span style='color:#6b6b8a; font-size:0.72rem;'>({queries_str})</span></div>",
+                                    unsafe_allow_html=True
+                                )
+
+                    # ── KW placement quality ──
+                    kw_h1 = kw_cov.get("in_h1", 0)
+                    kw_h2 = kw_cov.get("in_h2", 0)
+                    kw_intro = kw_cov.get("in_intro", 0)
+                    st.markdown(
+                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:#6b6b8a; margin:0.3rem 0;'>"
+                        f"KW i H1: <span style='color:{'#33dd88' if kw_h1 > 0 else '#ff4455'};'>{kw_h1}</span> &nbsp; "
+                        f"KW i H2: <span style='color:{'#33dd88' if kw_h2 > 0 else '#ffaa33'};'>{kw_h2}</span> &nbsp; "
+                        f"KW i intro: <span style='color:{'#33dd88' if kw_intro > 0 else '#ff4455'};'>{kw_intro}</span></div>",
+                        unsafe_allow_html=True
+                    )
+
+                    # ── Internal linking detail ──
+                    missing_crosslinks = linking.get("missing_crosslinks", [])
+                    if missing_crosslinks or linking.get("category_links", 0) < 2:
+                        with st.expander(f"Intern linking ({linking.get('total_internal',0)} links, {linking.get('category_links',0)} til kategorier)", expanded=False):
+                            if missing_crosslinks:
+                                st.markdown(f"**{len(missing_crosslinks)} relaterede sider mangler link:**")
+                                for ml in missing_crosslinks[:5]:
+                                    short = ml["url"].replace("https://", "").replace("http://", "")
+                                    shared = ", ".join(ml["shared_topics"][:2])
+                                    st.markdown(
+                                        f"<div style='font-size:0.8rem; padding:2px 0;'>"
+                                        f"<span style='color:#ff8888;'>Mangler:</span> <code>{short}</code> "
+                                        f"<span style='color:#6b6b8a;'>(faelles: {shared})</span></div>",
+                                        unsafe_allow_html=True
+                                    )
+
+                    # ── Trust signals detail ──
+                    trust_signals_found = trust.get("signals_found", [])
+                    schema_types = trust.get("schema_types", [])
+                    with st.expander(f"Trust & E-E-A-T ({trust.get('trust_score',0)}/{trust.get('trust_max',0)} signaler)", expanded=False):
+                        if schema_types:
+                            st.markdown(f"**Schema types:** {', '.join(schema_types)}")
+                        else:
+                            st.markdown("<span style='color:#ff4455;'>Ingen structured data fundet</span>", unsafe_allow_html=True)
+                        if trust_signals_found:
+                            for sig in trust_signals_found:
+                                st.markdown(f"<div style='font-size:0.8rem; color:#33dd88; padding:1px 0;'>+ {sig}</div>", unsafe_allow_html=True)
+                        missing_trust = []
+                        if not trust.get("has_breadcrumb"):
+                            missing_trust.append("BreadcrumbList schema")
+                        if not trust.get("has_reviews"):
+                            missing_trust.append("Reviews/ratings")
+                        if not trust.get("has_last_modified"):
+                            missing_trust.append("Opdateringsdato")
+                        if not trust.get("has_org_schema"):
+                            missing_trust.append("Organization schema")
+                        for mt in missing_trust:
+                            st.markdown(f"<div style='font-size:0.8rem; color:#ff4455; padding:1px 0;'>- {mt}</div>", unsafe_allow_html=True)
+
+                    # ── Missing keywords ──
                     missing_kws = kw_cov.get("missing", [])
                     if missing_kws:
                         kw_badges = " ".join([
@@ -355,7 +442,7 @@ def render():
                         ])
                         st.markdown(f"<div style='margin-top:0.5rem;'><span style='font-size:0.7rem; color:#6b6b8a;'>Manglende keywords:</span><br>{kw_badges}</div>", unsafe_allow_html=True)
 
-                    # Recommendations
+                    # ── Recommendations ──
                     recs = cat_audit.get("recommendations", [])
                     if recs:
                         st.markdown("**Anbefalinger:**")
