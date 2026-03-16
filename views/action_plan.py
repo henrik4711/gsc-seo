@@ -5,6 +5,7 @@ Generates and displays prioritized SEO action list
 
 import streamlit as st
 import pandas as pd
+from config import get_anthropic_key, has_anthropic_key
 
 
 def render():
@@ -34,13 +35,13 @@ def render():
     col1, col2 = st.columns([3, 1])
     with col2:
         if st.button("🤖 Generer AI Action Plan", type="primary", use_container_width=True):
-            if "anthropic_key" not in st.session_state:
-                st.error("❌ Tilføj Anthropic API-nøgle i Setup")
+            if not has_anthropic_key():
+                st.error("Tilfoej Anthropic API-noegle i Setup eller saet ANTHROPIC_API_KEY env var")
             else:
                 with st.spinner("Claude analyserer alle resultater og prioriterer..."):
                     try:
                         from utils.ai_generator import get_client, generate_action_plan
-                        client = get_client(st.session_state["anthropic_key"])
+                        client = get_client(get_anthropic_key())
                         result = generate_action_plan(client, audit_results, site_url)
                         st.session_state["action_plan"] = result
                     except Exception as e:

@@ -5,17 +5,18 @@ AI-powered generation of meta title, description, and landing page text
 
 import streamlit as st
 import json
+from config import get_anthropic_key, has_anthropic_key
 
 
 def render():
-    st.markdown("## ✍️ Content Generator")
+    st.markdown("## Content Generator")
     st.markdown(
         "<p style='color:#6b6b8a; margin-bottom:2rem;'>Generer AI-optimerede meta-tekster og landingpage-indhold</p>",
         unsafe_allow_html=True
     )
-    
-    if "anthropic_key" not in st.session_state:
-        st.warning("⚠️ Tilføj Anthropic API-nøgle i Setup & Connect")
+
+    if not has_anthropic_key():
+        st.warning("Tilfoej Anthropic API-noegle i Setup & Connect eller saet ANTHROPIC_API_KEY env var")
         return
     
     if "gsc_data" not in st.session_state:
@@ -109,7 +110,7 @@ def render():
             with st.spinner(f"Claude genererer {n_variants} meta-varianter..."):
                 try:
                     from utils.ai_generator import get_client, generate_meta_suggestions
-                    client = get_client(st.session_state["anthropic_key"])
+                    client = get_client(get_anthropic_key())
                     
                     # Ensure page_data has url
                     pdata = dict(page_data)
@@ -181,7 +182,7 @@ def render():
             with st.spinner("Analyserer keyword-dækning..."):
                 try:
                     from utils.ai_generator import get_client, generate_content_audit
-                    client = get_client(st.session_state["anthropic_key"])
+                    client = get_client(get_anthropic_key())
                     
                     result = generate_content_audit(
                         client, page_data, target_keywords,
@@ -255,7 +256,7 @@ def render():
             with st.spinner("Claude skriver optimeret indhold... (ca. 30 sek)"):
                 try:
                     from utils.ai_generator import get_client, generate_landing_page_text
-                    client = get_client(st.session_state["anthropic_key"])
+                    client = get_client(get_anthropic_key())
                     
                     pdata = dict(page_data)
                     pdata["url"] = selected_url

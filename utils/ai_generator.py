@@ -3,13 +3,17 @@ AI content generation: meta titles, descriptions, and landing page text
 Uses Claude claude-sonnet-4-20250514 via Anthropic API
 """
 
+import os
 import anthropic
 import streamlit as st
 from typing import Optional
 
 
-def get_client(api_key: str) -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=api_key)
+def get_client(api_key: str = "") -> anthropic.Anthropic:
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        raise ValueError("No Anthropic API key provided. Set ANTHROPIC_API_KEY env var or enter key in Setup.")
+    return anthropic.Anthropic(api_key=key)
 
 
 def generate_meta_suggestions(

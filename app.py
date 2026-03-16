@@ -1,4 +1,5 @@
 import streamlit as st
+from config import init_from_env
 
 st.set_page_config(
     page_title="SEO Intelligence · Mshop",
@@ -184,6 +185,9 @@ h1, h2, h3 {
 }
 </style>
 """, unsafe_allow_html=True)
+
+# Load environment variables (Railway) into session state
+init_from_env()
 
 # Header
 st.markdown("""
