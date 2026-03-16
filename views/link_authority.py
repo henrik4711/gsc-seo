@@ -130,9 +130,11 @@ def _render_upload():
             # Auto-merge with GSC if available
             if "gsc_data" in st.session_state:
                 from utils.ahrefs_import import merge_authority_with_gsc
-                st.session_state["gsc_data_enriched"] = merge_authority_with_gsc(
+                enriched = merge_authority_with_gsc(
                     st.session_state["gsc_data"], authority
                 )
+                st.session_state["gsc_data_enriched"] = enriched
+                st.session_state["gsc_data"] = enriched
 
             st.success(f"Authority beregnet for {len(authority)} sider")
             st.rerun()

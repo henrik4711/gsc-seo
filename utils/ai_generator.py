@@ -32,16 +32,34 @@ def generate_meta_suggestions(
     url = page_data.get("url", "")
     h1 = page_data.get("h1") or ""
     h2s = page_data.get("h2s", [])[:5]
-    
-    prompt = f"""Du er en senior SEO-specialist og konverteringsoptimerings-ekspert for en skandinavisk e-commerce webshop der sælger voksenprodukter.
+    page_type = page_data.get("page_type", "unknown")
 
-## NUVÆRENDE SITUATION
-URL: {url}
-Nuværende title: {current_title} ({len(current_title)} tegn)
-Nuværende meta description: {current_desc} ({len(current_desc)} tegn)
+    # Category-specific context
+    cat_context = ""
+    if page_type == "category":
+        cat_audit = page_data.get("content_audit", {})
+        stats = cat_audit.get("content_stats", {})
+        cat_context = f"""
+Sidetype: KATEGORISIDE (viser produkter i et grid)
+Produkter paa siden: {stats.get('product_count', '?')}
+Redaktionelle ord (intro+bund): {stats.get('total_editorial', '?')}
+Har FAQ: {'Ja' if stats.get('has_faq') else 'Nej'}
+Har koepguide: {'Ja' if stats.get('has_buying_guide') else 'Nej'}
+VIGTIGT: Meta for kategorisider skal fokusere paa kategori-intent (browse/explore), ikke enkelt-produkt-intent."""
+    elif page_type == "product":
+        cat_context = "\nSidetype: PRODUKTSIDE (enkelt produkt)\nVIGTIGT: Meta skal fokusere paa produkt-specifikke features og koebsintent."
+    elif page_type == "blog":
+        cat_context = "\nSidetype: BLOG/GUIDE\nVIGTIGT: Meta skal fokusere paa informations-intent og vaerdi for laeseren."
+
+    prompt = f"""Du er en senior SEO-specialist og konverteringsoptimerings-ekspert for en skandinavisk e-commerce webshop der saelger voksenprodukter.
+
+## NUVAERENDE SITUATION
+URL: {url}{cat_context}
+Nuvaerende title: {current_title} ({len(current_title)} tegn)
+Nuvaerende meta description: {current_desc} ({len(current_desc)} tegn)
 H1: {h1}
 H2'er: {', '.join(h2s) if h2s else 'Ingen'}
-Målgruppe-keywords fra GSC: {', '.join(target_keywords)}
+Maalgruppe-keywords fra GSC: {', '.join(target_keywords)}
 Site-kontekst: {site_context}
 
 ## OPGAVE
@@ -162,24 +180,54 @@ def generate_landing_page_text(
     url = page_data.get("url", "")
     h2s = page_data.get("h2s", [])
     existing = page_data.get("body_text", "")[:2000]
-    
+    page_type = page_data.get("page_type", "unknown")
+
+    # Page-type specific instructions
+    type_instruction = ""
+    if page_type == "category":
+        intro_words = page_data.get("intro_word_count", 0)
+        bottom_words = page_data.get("bottom_word_count", 0)
+        product_count = page_data.get("product_count", 0)
+        type_instruction = f"""
+## SIDETYPE: KATEGORI
+Denne side viser {product_count} produkter i et grid.
+Nuvaerende intro-tekst: {intro_words} ord (OVER grid)
+Nuvaerende bundtekst: {bottom_words} ord (UNDER grid)
+
+VIGTIGT for kategorisider:
+- Intro (over grid): 80-150 ord, forklar kategorien, hjaelp kunden forstaa udvalget
+- Bundtekst (under grid): 200-400 ord med koepguide, FAQ, og dybere keyword-daekning
+- Teksten skal IKKE beskrive enkelte produkter (det goer produktsiderne)
+- Fokuser paa: Hvad er forskellen mellem typerne? Hvad skal man kigge efter? Hvem er maalgruppen?
+"""
+    elif page_type == "product":
+        type_instruction = """
+## SIDETYPE: PRODUKT
+Fokuser paa produktspecifikke features, fordele og brugsscenarier.
+"""
+    elif page_type == "blog":
+        type_instruction = """
+## SIDETYPE: BLOG/GUIDE
+Fokuser paa informationsvaerdi, E-E-A-T signaler og dybde.
+"""
+
     prompt = f"""Du er en senior SEO-copywriter specialiseret i e-commerce og voksenprodukter (skandinavisk marked).
 
 ## KONTEKST
 URL: {url}
 Site: {site_context}
-Primære keywords: {', '.join(target_keywords[:5])}
-Alle GSC-søgeforespørgsler vi rangerer for: {', '.join(gsc_queries[:25])}
-Nuværende H2-struktur: {', '.join(h2s) if h2s else 'Ingen'}
+Primaere keywords: {', '.join(target_keywords[:5])}
+Alle GSC-soegeforespoergsler vi rangerer for: {', '.join(gsc_queries[:25])}
+Nuvaerende H2-struktur: {', '.join(h2s) if h2s else 'Ingen'}
 Eksisterende indhold (eksempel): {existing[:1000]}
 Tone of voice: {tone}
 Sprog: {language}
-
+{type_instruction}
 ## OPGAVE
 Skriv optimeret landingpage-indhold der:
 1. Er naturlig og konverterende - IKKE SEO-spam
-2. Inkluderer primære keywords naturligt (density ca. 1-2%)
-3. Dækker alle relevante LSI-keywords fra GSC-data
+2. Inkluderer primaere keywords naturligt (density ca. 1-2%)
+3. Daekker alle relevante LSI-keywords fra GSC-data
 4. Har klar struktur med H2/H3
 5. Inkluderer sociale beviser, USPs og CTA
 6. Er passende for voksenprodukter (diskret, respektfuld tone)

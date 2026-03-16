@@ -61,6 +61,29 @@ def render():
     selected_audit = next((r for r in audit_results if r["url"] == selected_url), None)
     if selected_audit:
         page_data = selected_audit
+
+    # Show page type if known
+    page_type = page_data.get("page_type", "unknown")
+    if page_type != "unknown":
+        type_labels = {"category": ("KATEGORI", "#c8b4ff"), "product": ("PRODUKT", "#33dd88"), "blog": ("BLOG/GUIDE", "#ffaa33")}
+        label, color = type_labels.get(page_type, ("UKENDT", "#6b6b8a"))
+        st.markdown(
+            f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:{color}; "
+            f"background:#0d0d15; padding:3px 10px; border:1px solid {color}; border-radius:4px;'>{label} SIDE</span>",
+            unsafe_allow_html=True
+        )
+        if page_type == "category":
+            cat_audit = page_data.get("content_audit")
+            if cat_audit:
+                cov = cat_audit.get("keyword_coverage", {}).get("coverage_pct", 0)
+                ed_words = cat_audit.get("content_stats", {}).get("total_editorial", 0)
+                st.markdown(
+                    f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem; color:#6b6b8a; margin-top:0.3rem;'>"
+                    f"Redaktionelt: {ed_words} ord | KW-daekning: {cov:.0f}% | "
+                    f"FAQ: {'OK' if cat_audit.get('content_stats',{}).get('has_faq') else 'Mangler'} | "
+                    f"Guide: {'OK' if cat_audit.get('content_stats',{}).get('has_buying_guide') else 'Mangler'}</div>",
+                    unsafe_allow_html=True
+                )
     
     # Keywords for selected URL
     page_queries = df[df["page"] == selected_url].sort_values("impressions", ascending=False)
