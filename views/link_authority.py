@@ -147,9 +147,9 @@ def _render_upload():
         "Page Authority": "page_authority",
     }
     for name, key in datasets.items():
-        if key in st.session_state:
-            count = len(st.session_state[key])
-            st.markdown(f"+ **{name}**: {count:,} rows loaded")
+        data = st.session_state.get(key)
+        if data is not None and hasattr(data, '__len__') and not hasattr(data, 'read'):
+            st.markdown(f"+ **{name}**: {len(data):,} rows loaded")
         else:
             st.markdown(f"X **{name}**: Not loaded")
 
