@@ -283,7 +283,7 @@ def build_page_authority(
             if max_hdr > 0:
                 result["authority_score"] += (result["high_dr_links"] / max_hdr * 30).clip(upper=30)
 
-        result["authority_score"] = result["authority_score"].round(0).astype(int)
+        result["authority_score"] = result["authority_score"].fillna(0).round(0).astype(int)
 
     # Risk level: high authority = high risk to change
     if "authority_score" in result.columns:
