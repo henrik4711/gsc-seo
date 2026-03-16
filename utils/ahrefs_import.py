@@ -25,22 +25,33 @@ def parse_best_by_links(file_content) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Normalize column names (Ahrefs varies between exports)
+    # Normalize column names - Ahrefs "Best by links" actual columns:
+    # "Page title", "Page URL", "UR", "Referring domains", "Top DR",
+    # "Links to target", "Dofollow", "Nofollow", etc.
     col_map = {}
     for col in df.columns:
-        col_lower = col.lower().strip()
-        if "url" in col_lower and "source" not in col_lower and "ref" not in col_lower:
+        col_lower = col.lower().strip().strip('"')
+        if col_lower == "page url":
             col_map[col] = "page"
-        elif "referring" in col_lower and "domain" in col_lower:
+        elif col_lower == "page title":
+            col_map[col] = "page_title"
+        elif col_lower == "referring domains":
             col_map[col] = "referring_domains"
-        elif col_lower in ("dofollow", "backlinks", "dofollow backlinks"):
+        elif col_lower in ("dofollow", "dofollow backlinks"):
             col_map[col] = "backlinks"
-        elif col_lower in ("dr", "domain rating"):
+        elif col_lower == "links to target":
+            col_map[col] = "total_links"
+        elif col_lower in ("top dr", "dr", "domain rating"):
             col_map[col] = "dr"
+        elif col_lower == "ur":
+            col_map[col] = "ur"
         elif col_lower in ("traffic", "organic traffic"):
             col_map[col] = "ahrefs_traffic"
         elif col_lower in ("keywords", "organic keywords"):
             col_map[col] = "ahrefs_keywords"
+        # Fallback: any column with "url" that isn't already mapped
+        elif "url" in col_lower and "source" not in col_lower and "ref" not in col_lower and "page" not in [v for v in col_map.values()]:
+            col_map[col] = "page"
 
     df = df.rename(columns=col_map)
 
@@ -85,23 +96,42 @@ def parse_backlinks(file_content) -> pd.DataFrame:
     if df.empty:
         return df
 
+    # Ahrefs Backlinks actual columns:
+    # "Referring page title", "Referring page URL", "Domain rating", "UR",
+    # "Domain traffic", "Page traffic", "Target URL", "Anchor", "Type",
+    # "Is spam", "Nofollow", "First seen", "Last seen", etc.
     col_map = {}
     for col in df.columns:
-        col_lower = col.lower().strip()
-        if ("source" in col_lower or "referring" in col_lower) and "url" in col_lower:
+        col_lower = col.lower().strip().strip('"')
+        if col_lower == "referring page url":
+            col_map[col] = "source_url"
+        elif col_lower == "referring page title":
+            col_map[col] = "source_title"
+        elif col_lower == "target url":
+            col_map[col] = "target_url"
+        elif col_lower == "anchor":
+            col_map[col] = "anchor"
+        elif col_lower == "domain rating":
+            col_map[col] = "source_dr"
+        elif col_lower == "domain traffic":
+            col_map[col] = "domain_traffic"
+        elif col_lower == "page traffic":
+            col_map[col] = "source_traffic"
+        elif col_lower == "type":
+            col_map[col] = "link_type"
+        elif col_lower == "is spam":
+            col_map[col] = "is_spam"
+        elif col_lower == "first seen":
+            col_map[col] = "first_seen"
+        elif col_lower == "last seen":
+            col_map[col] = "last_seen"
+        elif col_lower == "nofollow":
+            col_map[col] = "nofollow"
+        # Fallback for URL-like columns
+        elif ("source" in col_lower or "referring" in col_lower) and "url" in col_lower:
             col_map[col] = "source_url"
         elif "target" in col_lower and "url" in col_lower:
             col_map[col] = "target_url"
-        elif col_lower in ("anchor", "anchor text"):
-            col_map[col] = "anchor"
-        elif col_lower in ("dr", "domain rating"):
-            col_map[col] = "source_dr"
-        elif col_lower in ("traffic", "page traffic"):
-            col_map[col] = "source_traffic"
-        elif col_lower in ("type", "link type"):
-            col_map[col] = "link_type"
-        elif "first seen" in col_lower:
-            col_map[col] = "first_seen"
 
     df = df.rename(columns=col_map)
 
@@ -142,23 +172,44 @@ def parse_organic_keywords(file_content) -> pd.DataFrame:
     if df.empty:
         return df
 
+    # Ahrefs Organic Keywords actual columns:
+    # "Keyword", "Country", "Volume", "KD", "CPC",
+    # "Current organic traffic", "Current position", "Current URL",
+    # "Previous position", "Position change", "Branded", "Informational",
+    # "Commercial", "Transactional", etc.
     col_map = {}
     for col in df.columns:
-        col_lower = col.lower().strip()
-        if col_lower in ("keyword", "query"):
+        col_lower = col.lower().strip().strip('"')
+        if col_lower == "keyword":
             col_map[col] = "keyword"
-        elif col_lower in ("volume", "search volume"):
+        elif col_lower == "volume":
             col_map[col] = "volume"
-        elif col_lower in ("kd", "keyword difficulty"):
+        elif col_lower == "kd":
             col_map[col] = "keyword_difficulty"
-        elif col_lower in ("position", "current position"):
+        elif col_lower == "current position":
             col_map[col] = "position"
-        elif col_lower in ("traffic", "estimated traffic"):
+        elif col_lower == "previous position":
+            col_map[col] = "prev_position"
+        elif col_lower == "position change":
+            col_map[col] = "position_change"
+        elif col_lower == "current organic traffic":
             col_map[col] = "est_traffic"
-        elif "url" in col_lower:
+        elif col_lower == "current url":
             col_map[col] = "page"
-        elif col_lower in ("cpc",):
+        elif col_lower == "previous url":
+            col_map[col] = "prev_page"
+        elif col_lower == "cpc":
             col_map[col] = "cpc"
+        elif col_lower == "country":
+            col_map[col] = "country"
+        elif col_lower == "informational":
+            col_map[col] = "intent_informational"
+        elif col_lower == "commercial":
+            col_map[col] = "intent_commercial"
+        elif col_lower == "transactional":
+            col_map[col] = "intent_transactional"
+        elif col_lower == "branded":
+            col_map[col] = "is_branded"
 
     df = df.rename(columns=col_map)
 
@@ -285,16 +336,21 @@ def merge_authority_with_gsc(gsc_df: pd.DataFrame, authority_df: pd.DataFrame) -
 
 
 def _read_csv_flexible(file_content) -> pd.DataFrame:
-    """Read CSV with flexible encoding and separator detection."""
+    """Read CSV with flexible encoding and separator detection.
+    Ahrefs exports are typically UTF-16LE with BOM and tab-separated.
+    """
     if isinstance(file_content, bytes):
         content = file_content
     else:
         content = file_content.read()
 
-    # Try different encodings
-    for encoding in ["utf-8", "utf-8-sig", "latin-1", "cp1252"]:
+    # Try encodings in order of likelihood for Ahrefs exports
+    for encoding in ["utf-16", "utf-16-le", "utf-16-be", "utf-8-sig", "utf-8", "latin-1", "cp1252"]:
         try:
             text = content.decode(encoding)
+            # Remove BOM if present
+            text = text.lstrip("\ufeff")
+
             # Detect separator
             first_line = text.split("\n")[0]
             if "\t" in first_line:
@@ -304,10 +360,12 @@ def _read_csv_flexible(file_content) -> pd.DataFrame:
             else:
                 sep = ","
 
-            df = pd.read_csv(io.StringIO(text), sep=sep)
+            df = pd.read_csv(io.StringIO(text), sep=sep, on_bad_lines="skip")
+            # Clean column names (strip whitespace and quotes)
+            df.columns = [c.strip().strip('"').strip() for c in df.columns]
             if len(df.columns) > 1:
                 return df
-        except (UnicodeDecodeError, pd.errors.ParserError):
+        except (UnicodeDecodeError, pd.errors.ParserError, LookupError):
             continue
 
     return pd.DataFrame()
