@@ -98,12 +98,36 @@ h1, h2, h3 {
 /* Selectbox, inputs */
 .stSelectbox > div > div,
 .stTextInput > div > div > input,
-.stNumberInput > div > div > input {
+.stNumberInput > div > div > input,
+.stTextArea > div > div > textarea {
     background: #12121f !important;
     border: 1px solid #1e1e2e !important;
     border-radius: 6px !important;
     color: #e8e8f0 !important;
     font-family: 'Inter', sans-serif;
+}
+
+/* Labels and text readability */
+.stSelectbox label, .stTextInput label, .stNumberInput label,
+.stTextArea label, .stRadio label, .stFileUploader label,
+.stCheckbox label {
+    color: #c8c8e0 !important;
+    font-size: 0.85rem !important;
+}
+
+/* Radio button text */
+.stRadio > div > label > div > p {
+    color: #c8c8e0 !important;
+}
+
+/* General paragraph text */
+.stMarkdown p {
+    color: #d0d0e8;
+}
+
+/* Info/success/warning boxes text */
+.stAlert p {
+    color: #e8e8f0 !important;
 }
 
 /* Expander */
@@ -212,17 +236,17 @@ with st.sidebar:
 
 # Route to pages
 if "Setup" in page:
-    from pages import setup
+    from views import setup
     setup.render()
 elif "CTR Analysis" in page:
-    from pages import ctr_analysis
+    from views import ctr_analysis
     ctr_analysis.render()
 elif "Page Auditor" in page:
-    from pages import page_auditor
+    from views import page_auditor
     page_auditor.render()
 elif "Content Generator" in page:
-    from pages import content_generator
+    from views import content_generator
     content_generator.render()
 elif "Action Plan" in page:
-    from pages import action_plan
+    from views import action_plan
     action_plan.render()
