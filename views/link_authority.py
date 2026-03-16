@@ -60,13 +60,17 @@ def _render_upload():
             help="Side-niveau data med referring domains og backlinks"
         )
         if best_file:
-            from utils.ahrefs_import import parse_best_by_links
-            df = parse_best_by_links(best_file.read())
-            if not df.empty:
-                st.session_state["ahrefs_best_by_links"] = df
-                st.success(f"{len(df)} sider importeret")
-            else:
-                st.error("Kunne ikke parse filen")
+            try:
+                from utils.ahrefs_import import parse_best_by_links
+                df = parse_best_by_links(best_file.read())
+                if not df.empty:
+                    st.session_state["ahrefs_best_by_links"] = df
+                    st.success(f"{len(df)} sider importeret")
+                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+                else:
+                    st.error("Ingen data fundet i filen. Tjek at det er en Ahrefs Best by Links CSV.")
+            except Exception as e:
+                st.error(f"Fejl ved parsing: {e}")
 
     with col2:
         st.markdown("#### Backlinks")
@@ -77,13 +81,17 @@ def _render_upload():
             help="Individuelle backlinks med anchor text og DR"
         )
         if bl_file:
-            from utils.ahrefs_import import parse_backlinks
-            df = parse_backlinks(bl_file.read())
-            if not df.empty:
-                st.session_state["ahrefs_backlinks"] = df
-                st.success(f"{len(df)} backlinks importeret")
-            else:
-                st.error("Kunne ikke parse filen")
+            try:
+                from utils.ahrefs_import import parse_backlinks
+                df = parse_backlinks(bl_file.read())
+                if not df.empty:
+                    st.session_state["ahrefs_backlinks"] = df
+                    st.success(f"{len(df)} backlinks importeret")
+                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+                else:
+                    st.error("Ingen data fundet. Tjek at det er en Ahrefs Backlinks CSV.")
+            except Exception as e:
+                st.error(f"Fejl ved parsing: {e}")
 
     with col3:
         st.markdown("#### Organic Keywords")
@@ -94,13 +102,17 @@ def _render_upload():
             help="Soegevolume og keyword difficulty (supplement til GSC)"
         )
         if kw_file:
-            from utils.ahrefs_import import parse_organic_keywords
-            df = parse_organic_keywords(kw_file.read())
-            if not df.empty:
-                st.session_state["ahrefs_organic_keywords"] = df
-                st.success(f"{len(df)} keywords importeret")
-            else:
-                st.error("Kunne ikke parse filen")
+            try:
+                from utils.ahrefs_import import parse_organic_keywords
+                df = parse_organic_keywords(kw_file.read())
+                if not df.empty:
+                    st.session_state["ahrefs_organic_keywords"] = df
+                    st.success(f"{len(df)} keywords importeret")
+                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+                else:
+                    st.error("Ingen data fundet. Tjek at det er en Ahrefs Organic Keywords CSV.")
+            except Exception as e:
+                st.error(f"Fejl ved parsing: {e}")
 
     # Build authority after upload
     has_best = "ahrefs_best_by_links" in st.session_state

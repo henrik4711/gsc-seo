@@ -44,19 +44,28 @@ def parse_best_by_links(file_content) -> pd.DataFrame:
 
     df = df.rename(columns=col_map)
 
-    # Ensure required columns
+    # Ensure required columns - find a column containing URLs
     if "page" not in df.columns:
-        # Try first column as URL
-        df = df.rename(columns={df.columns[0]: "page"})
+        # Search all columns for one that looks like URLs
+        for col in df.columns:
+            sample = df[col].dropna().head(10).astype(str)
+            if sample.str.contains(r"https?://", case=False).any():
+                df = df.rename(columns={col: "page"})
+                break
+        else:
+            # Last resort: use first column
+            df = df.rename(columns={df.columns[0]: "page"})
+
+    # Convert page to string and strip
+    df["page"] = df["page"].astype(str).str.strip()
+
+    # Drop rows where page doesn't look like a URL
+    df = df[df["page"].str.contains(r"https?://", case=False, na=False)].copy()
 
     # Convert numeric columns
     for col in ["referring_domains", "backlinks", "dr", "ahrefs_traffic", "ahrefs_keywords"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-
-    # Normalize URLs
-    if "page" in df.columns:
-        df["page"] = df["page"].str.strip()
 
     return df
 
@@ -95,6 +104,22 @@ def parse_backlinks(file_content) -> pd.DataFrame:
             col_map[col] = "first_seen"
 
     df = df.rename(columns=col_map)
+
+    # Find URL columns if not mapped
+    for needed, hint in [("source_url", "source"), ("target_url", "target")]:
+        if needed not in df.columns:
+            for col in df.columns:
+                if col in col_map.values():
+                    continue
+                sample = df[col].dropna().head(10).astype(str)
+                if sample.str.contains(r"https?://", case=False).any():
+                    df = df.rename(columns={col: needed})
+                    break
+
+    # Ensure string types for URL columns
+    for col in ["source_url", "target_url", "anchor"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
 
     # Extract source domain
     if "source_url" in df.columns:
