@@ -276,29 +276,46 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     
+    st.markdown("""
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#5533ff; letter-spacing:0.1em; margin-bottom:0.3rem;">DATA</div>
+    """, unsafe_allow_html=True)
+
     page = st.radio(
         "",
-        ["🔌  Setup & Connect", "📊  CTR Analysis", "🔬  Page Auditor", "✍️  Content Generator", "📋  Action Plan"],
+        [
+            "Setup & Connect",
+            "CTR Analysis",
+            "Cannibalization",
+            "Topic Clusters",
+            "Link Authority",
+            "Page Auditor",
+            "Content Generator",
+            "Action Plan",
+        ],
         label_visibility="collapsed"
     )
-    
+
     st.markdown("---")
     st.markdown("""
     <div style="font-family: 'IBM Plex Mono', monospace; font-size: 0.65rem; color: #3a3a5c; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem;">
         PIPELINE STATUS
     </div>
     """, unsafe_allow_html=True)
-    
+
     # Show session state pipeline status
     steps = {
         "GSC Connected": "gsc_data" in st.session_state,
-        "CTR Analysis Done": "ctr_gaps" in st.session_state,
+        "Ahrefs Loaded": "page_authority" in st.session_state,
+        "CTR Analysis": "ctr_gaps" in st.session_state,
+        "Cannibalization": "cannibalization" in st.session_state,
+        "Topic Clusters": "topic_clusters" in st.session_state,
         "Pages Audited": "audit_results" in st.session_state,
         "Content Generated": "generated_content" in st.session_state,
     }
     for step, done in steps.items():
-        icon = "✅" if done else "⭕"
-        st.markdown(f"<div style='font-size:0.75rem; color: {'#33dd88' if done else '#3a3a5c'}; padding: 2px 0;'>{icon} {step}</div>", unsafe_allow_html=True)
+        color = "#33dd88" if done else "#3a3a5c"
+        icon = "+" if done else "o"
+        st.markdown(f"<div style='font-size:0.75rem; color: {color}; padding: 2px 0;'>{icon} {step}</div>", unsafe_allow_html=True)
 
 # Route to pages
 if "Setup" in page:
@@ -307,6 +324,15 @@ if "Setup" in page:
 elif "CTR Analysis" in page:
     from views import ctr_analysis
     ctr_analysis.render()
+elif "Cannibalization" in page:
+    from views import cannibalization
+    cannibalization.render()
+elif "Topic Clusters" in page:
+    from views import topic_clusters
+    topic_clusters.render()
+elif "Link Authority" in page:
+    from views import link_authority
+    link_authority.render()
 elif "Page Auditor" in page:
     from views import page_auditor
     page_auditor.render()
