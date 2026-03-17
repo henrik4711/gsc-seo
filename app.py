@@ -309,7 +309,11 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     page_labels = [s[0] for s in STEPS]
-    page = st.radio("", page_labels, index=next_idx, label_visibility="collapsed")
+    # Don't override user's selection with next_idx on re-render
+    if "selected_page" not in st.session_state:
+        st.session_state["selected_page"] = page_labels[next_idx]
+    page = st.radio("", page_labels, index=page_labels.index(st.session_state["selected_page"]), label_visibility="collapsed", key="nav_radio")
+    st.session_state["selected_page"] = page
 
     st.markdown("---")
 
