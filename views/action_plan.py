@@ -290,7 +290,11 @@ def render():
     site_context = st.session_state.get("site_context", "")
     language = st.session_state.get("content_language", "Swedish")
 
-    plans = _build_page_plans(audit_results, gsc_data, topic_clusters)
+    # Cache plans in session state — only rebuild when audit changes
+    cache_key = f"_impl_plans_{len(audit_results)}"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = _build_page_plans(audit_results, gsc_data, topic_clusters)
+    plans = st.session_state[cache_key]
 
     if not plans:
         st.success("All audited pages look good — no issues found!")
@@ -309,8 +313,18 @@ def render():
 
     st.markdown("---")
 
+    # ── Pagination ────────────────────────────────────────────────
+    PAGES_PER_VIEW = 10
+    total_pages_count = len(plans)
+    max_page = max(1, (total_pages_count + PAGES_PER_VIEW - 1) // PAGES_PER_VIEW)
+    current_page = st.number_input("Page", min_value=1, max_value=max_page, value=1, key="impl_page")
+    start = (current_page - 1) * PAGES_PER_VIEW
+    visible_plans = plans[start:start + PAGES_PER_VIEW]
+
+    st.markdown(f"**Showing pages {start+1}-{min(start+PAGES_PER_VIEW, total_pages_count)} of {total_pages_count}**")
+
     # ── Page cards ────────────────────────────────────────────────
-    for plan_idx, plan in enumerate(plans):
+    for plan_idx, plan in enumerate(visible_plans):
         url = plan["url"]
         ptype = plan["page_type"].upper()
         lost = plan["lost_clicks"]

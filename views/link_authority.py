@@ -69,6 +69,8 @@ def _render_upload():
                 df = parse_best_by_links(best_file.read())
                 if not df.empty:
                     st.session_state["ahrefs_best_by_links"] = df
+                    from utils.persistence import save_key
+                    save_key("ahrefs_best_by_links")
                     st.success(f"{len(df)} pages imported")
                     st.dataframe(df.head(5), use_container_width=True, hide_index=True)
                 else:
@@ -90,6 +92,8 @@ def _render_upload():
                 df = parse_backlinks(bl_file.read())
                 if not df.empty:
                     st.session_state["ahrefs_backlinks"] = df
+                    from utils.persistence import save_key
+                    save_key("ahrefs_backlinks")
                     st.success(f"{len(df)} backlinks imported")
                     st.dataframe(df.head(5), use_container_width=True, hide_index=True)
                 else:
@@ -111,6 +115,8 @@ def _render_upload():
                 df = parse_organic_keywords(kw_file.read())
                 if not df.empty:
                     st.session_state["ahrefs_organic_keywords"] = df
+                    from utils.persistence import save_key
+                    save_key("ahrefs_organic_keywords")
                     st.success(f"{len(df)} keywords imported")
                     st.dataframe(df.head(5), use_container_width=True, hide_index=True)
                 else:
@@ -178,6 +184,9 @@ def _render_upload():
                     st.session_state["sf_inlinks"] = df
                     link_map = build_complete_link_map(df)
                     st.session_state["sf_link_map"] = link_map
+                    from utils.persistence import save_key
+                    save_key("sf_inlinks")
+                    save_key("sf_link_map")
                     st.success(f"{len(df):,} internal links imported ({link_map['unique_pages']:,} unique pages)")
                     st.dataframe(df.head(5), use_container_width=True, hide_index=True)
                 else:
@@ -199,6 +208,8 @@ def _render_upload():
                 df = parse_all_pages(pages_file.read())
                 if not df.empty:
                     st.session_state["sf_pages"] = df
+                    from utils.persistence import save_key
+                    save_key("sf_pages")
                     st.success(f"{len(df):,} pages imported")
                     st.dataframe(df.head(5), use_container_width=True, hide_index=True)
                 else:

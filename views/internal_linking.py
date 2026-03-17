@@ -268,7 +268,12 @@ def render():
     language = st.session_state.get("content_language", "Swedish")
 
     sf_link_map = st.session_state.get("sf_link_map")
-    actions = _build_action_list(audit_results, topic_clusters, sf_link_map)
+
+    # Cache action list — only rebuild when data changes
+    cache_key = f"_link_actions_{len(audit_results)}_{bool(sf_link_map)}"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = _build_action_list(audit_results, topic_clusters, sf_link_map)
+    actions = st.session_state[cache_key]
 
     if not actions:
         st.success("No linking issues found. Internal linking looks good!")
@@ -307,10 +312,18 @@ def render():
         )
 
     filtered = [a for a in actions if a["priority"] in pri_filter and a["source"] in source_filter]
-    st.markdown(f"**Showing {len(filtered)} of {len(actions)} actions**")
+
+    # Pagination
+    ITEMS_PER_PAGE = 20
+    total_items = len(filtered)
+    max_pg = max(1, (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+    pg = st.number_input("Page", min_value=1, max_value=max_pg, value=1, key="link_page")
+    start_i = (pg - 1) * ITEMS_PER_PAGE
+    visible = filtered[start_i:start_i + ITEMS_PER_PAGE]
+    st.markdown(f"**Showing {start_i+1}-{min(start_i+ITEMS_PER_PAGE, total_items)} of {total_items} actions**")
 
     # ── Action cards ──────────────────────────────────────────────
-    for a in filtered:
+    for a in visible:
         pri = a["priority"]
         pri_color = {"high": "#ff4455", "medium": "#ffaa33", "low": "#33dd88"}[pri]
         border_color = {"high": "#ff4455", "medium": "#2a2a40", "low": "#1e1e2e"}[pri]

@@ -157,7 +157,12 @@ def render():
         unsafe_allow_html=True,
     )
 
-    tasks = _gather_all_tasks()
+    # Cache tasks
+    audit_len = len(st.session_state.get("audit_results", []))
+    cache_key = f"_unified_tasks_{audit_len}"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = _gather_all_tasks()
+    tasks = st.session_state[cache_key]
 
     if not tasks:
         st.info("Run the pipeline steps first (Audit, Topic Clusters, etc.) to generate tasks.")
@@ -204,8 +209,17 @@ def render():
     filtered = [t for t in tasks if t["priority"] in pri_filter and t["category"] in cat_filter]
     st.markdown(f"**Showing {len(filtered)} of {len(tasks)} tasks**")
 
+    # Pagination
+    ITEMS_PER_PAGE = 25
+    total_items = len(filtered)
+    max_pg = max(1, (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+    pg = st.number_input("Page", min_value=1, max_value=max_pg, value=1, key="tasks_page")
+    start_i = (pg - 1) * ITEMS_PER_PAGE
+    visible = filtered[start_i:start_i + ITEMS_PER_PAGE]
+    st.markdown(f"**Showing {start_i+1}-{min(start_i+ITEMS_PER_PAGE, total_items)} of {total_items} tasks**")
+
     # ── Task cards ────────────────────────────────────────────────
-    for t in filtered[:100]:  # Cap at 100 for performance
+    for t in visible:
         pri = t["priority"]
         pri_color = {"high": "#ff4455", "medium": "#ffaa33", "low": "#33dd88"}[pri]
         cat_color = {
@@ -242,8 +256,8 @@ def render():
             unsafe_allow_html=True,
         )
 
-    if len(filtered) > 100:
-        st.markdown(f"<div style='color:#6b6b8a;'>...and {len(filtered) - 100} more tasks</div>", unsafe_allow_html=True)
+    if total_items > ITEMS_PER_PAGE:
+        st.markdown(f"<div style='color:#6b6b8a;'>Page {pg} of {max_pg}</div>", unsafe_allow_html=True)
 
     # ── Download ──────────────────────────────────────────────────
     st.markdown("---")

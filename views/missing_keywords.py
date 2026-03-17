@@ -134,7 +134,11 @@ def render():
     site_context = st.session_state.get("site_context", "")
     language = st.session_state.get("content_language", "Swedish")
 
-    actions = _build_action_list(audit_results)
+    # Cache action list
+    cache_key = f"_kw_actions_{len(audit_results)}"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = _build_action_list(audit_results)
+    actions = st.session_state[cache_key]
 
     if not actions:
         st.success("All audited pages have good keyword coverage!")
@@ -162,10 +166,18 @@ def render():
         default=["high", "medium"],
     )
     filtered = [a for a in actions if a["priority"] in pri_filter]
-    st.markdown(f"**Showing {len(filtered)} of {len(actions)} pages**")
+
+    # Pagination
+    ITEMS_PER_PAGE = 10
+    total_items = len(filtered)
+    max_pg = max(1, (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+    pg = st.number_input("Page", min_value=1, max_value=max_pg, value=1, key="kw_page")
+    start_i = (pg - 1) * ITEMS_PER_PAGE
+    visible = filtered[start_i:start_i + ITEMS_PER_PAGE]
+    st.markdown(f"**Showing {start_i+1}-{min(start_i+ITEMS_PER_PAGE, total_items)} of {total_items} pages**")
 
     # ── Action cards ──────────────────────────────────────────────
-    for idx, a in enumerate(filtered):
+    for idx, a in enumerate(visible):
         # Use a stable key based on URL hash, not filtered index
         url_hash = hash(a["url"]) & 0xFFFFFF  # 6-digit stable ID
         url = a["url"]
