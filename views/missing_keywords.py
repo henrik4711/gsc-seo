@@ -26,13 +26,24 @@ def _build_action_list(audit_results):
         coverage_pct = kw_cov.get("coverage_pct", 100)
 
         # Filter missing keywords: only keep those RELEVANT to this page's topic
-        # Prevents showing "dildo" as missing on /sexleksaker-for-man
+        # Pillar pages (e.g. /sexleksaker) also get child-page keywords
         from urllib.parse import urlparse as _urlparse
-        slug_parts = set(_urlparse(url).path.lower().replace("-", " ").replace("/", " ").split())
+        page_path = _urlparse(url).path.lower().rstrip("/")
+        slug_parts = set(page_path.replace("-", " ").replace("/", " ").split())
         slug_parts.discard("")
 
-        page_cluster_topics = set()
+        # Detect pillar: find child page slugs
+        child_slug_words = set()
         tc = st.session_state.get("topic_clusters", {})
+        if tc:
+            for other_url in tc.get("page_topics", {}).keys():
+                other_path = _urlparse(other_url).path.lower().rstrip("/")
+                if other_path != page_path and other_path.startswith(page_path + "/"):
+                    child_part = other_path[len(page_path):].replace("-", " ").replace("/", " ")
+                    child_slug_words.update(child_part.split())
+        child_slug_words.discard("")
+
+        page_cluster_topics = set()
         if tc:
             for t in tc.get("page_topics", {}).get(url, []):
                 page_cluster_topics.add(t.get("topic", "").lower())
@@ -45,9 +56,12 @@ def _build_action_list(audit_results):
             # Matches URL slug?
             if kw_words & slug_parts:
                 return True
+            # Pillar page: matches child page slugs?
+            if child_slug_words and kw_words & child_slug_words:
+                return True
             # Matches cluster topics?
             for topic in page_cluster_topics:
-                if kw_lower in topic or topic in kw_lower or (set(topic.split()) & kw_words):
+                if set(topic.split()) & kw_words:
                     return True
             # Matches top target keywords?
             for tkw in target_kws_lower:

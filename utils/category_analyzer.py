@@ -504,12 +504,36 @@ def audit_category_content(
 
     # Filter keywords to only those relevant to this page's topic
     # Prevents "dildo" showing as missing on /sexleksaker-for-man
+    # BUT: pillar pages (/sexleksaker) should include child-page keywords
     raw_keywords = list(set((cluster_keywords or []) + (gsc_queries or [])))
 
     # Extract topic words from URL slug
     from urllib.parse import urlparse as _urlparse
-    slug_parts = set(_urlparse(url).path.lower().replace("-", " ").replace("/", " ").split())
+    page_path = _urlparse(url).path.lower().rstrip("/")
+    slug_parts = set(page_path.replace("-", " ").replace("/", " ").split())
     slug_parts.discard("")
+
+    # Detect if this is a PILLAR page (has child pages in the URL hierarchy)
+    # e.g. /sexleksaker is pillar for /sexleksaker/vibratorer, /sexleksaker/dildos
+    child_slug_words = set()
+    if topic_clusters:
+        all_urls = list(topic_clusters.get("page_topics", {}).keys())
+    elif gsc_queries:
+        # Fallback: use GSC pages
+        all_urls = []
+    else:
+        all_urls = []
+
+    for other_url in all_urls:
+        other_path = _urlparse(other_url).path.lower().rstrip("/")
+        # other_path starts with page_path + "/" → it's a child page
+        if other_path != page_path and other_path.startswith(page_path + "/"):
+            # Add child page slug words as relevant
+            child_part = other_path[len(page_path):].replace("-", " ").replace("/", " ")
+            child_slug_words.update(child_part.split())
+    child_slug_words.discard("")
+
+    is_pillar = len(child_slug_words) > 0
 
     # Get page's cluster topic names
     _page_topics = set()
@@ -524,6 +548,9 @@ def audit_category_content(
         kw_words = set(kw.lower().split())
         # Matches URL slug?
         if kw_words & slug_parts:
+            return True
+        # Pillar page: matches child page slugs?
+        if is_pillar and kw_words & child_slug_words:
             return True
         # Matches cluster topics?
         for topic in _page_topics:

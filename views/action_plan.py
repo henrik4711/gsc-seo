@@ -136,11 +136,21 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         coverage_pct = kw_cov.get("coverage_pct", 100)
 
         # Filter missing keywords: only keep those RELEVANT to this page
-        # A keyword is relevant if it relates to the page's topic (from URL slug
-        # or cluster), not just because GSC shows the page ranking for it
+        # Pillar pages (e.g. /sexleksaker) also get child-page keywords
         from urllib.parse import urlparse as _urlparse
-        slug_parts = set(_urlparse(url).path.lower().replace("-", " ").replace("/", " ").split())
+        page_path = _urlparse(url).path.lower().rstrip("/")
+        slug_parts = set(page_path.replace("-", " ").replace("/", " ").split())
         slug_parts.discard("")
+
+        # Detect pillar: find child page slugs
+        child_slug_words = set()
+        if topic_clusters:
+            for other_url in topic_clusters.get("page_topics", {}).keys():
+                other_path = _urlparse(other_url).path.lower().rstrip("/")
+                if other_path != page_path and other_path.startswith(page_path + "/"):
+                    child_part = other_path[len(page_path):].replace("-", " ").replace("/", " ")
+                    child_slug_words.update(child_part.split())
+        child_slug_words.discard("")
 
         # Get this page's cluster topics
         page_cluster_topics = set()
@@ -150,22 +160,20 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
 
         def _is_relevant_keyword(kw):
             kw_lower = kw.lower()
-            # Check if keyword shares words with URL slug
             kw_words = set(kw_lower.split())
+            # Matches URL slug?
             if kw_words & slug_parts:
                 return True
-            # Check if keyword matches page's cluster topics
+            # Pillar page: matches child page slugs?
+            if child_slug_words and kw_words & child_slug_words:
+                return True
+            # Matches cluster topics?
             for topic in page_cluster_topics:
-                if kw_lower in topic or topic in kw_lower:
+                if set(topic.split()) & kw_words:
                     return True
-                # Share any significant word
-                topic_words = set(topic.split())
-                if kw_words & topic_words:
-                    return True
-            # Check if primary keyword words overlap
+            # Matches primary keyword?
             if primary_keyword:
-                primary_words = set(primary_keyword.lower().split())
-                if kw_words & primary_words:
+                if set(primary_keyword.lower().split()) & kw_words:
                     return True
             return False
 
