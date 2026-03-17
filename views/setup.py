@@ -257,6 +257,52 @@ def render():
 
         if gsc_connected:
             df = st.session_state["gsc_data"]
+
+            # Check if data was loaded from cache
+            from utils.persistence import _volume_available, _file_path
+            cached_path = _file_path("gsc_data", "dataframe") if _volume_available() else ""
+            if cached_path and os.path.exists(cached_path):
+                import datetime
+                mod_time = os.path.getmtime(cached_path)
+                cache_date = datetime.datetime.fromtimestamp(mod_time).strftime("%Y-%m-%d %H:%M")
+                st.markdown(
+                    f"<div style='font-size:0.72rem; color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace; margin:0.5rem 0;'>"
+                    f"GSC data cached: {cache_date}</div>",
+                    unsafe_allow_html=True,
+                )
+
+            if st.button("Refresh GSC Data", key="btn_refresh_gsc"):
+                service = st.session_state.get("gsc_service")
+                site = st.session_state.get("gsc_site", "")
+                if service and site:
+                    with st.spinner("Fetching fresh GSC data..."):
+                        try:
+                            from utils.gsc_client import fetch_gsc_data
+                            fresh_df = fetch_gsc_data(service, site)
+                            st.session_state["gsc_data"] = fresh_df
+                            from utils.persistence import save_key
+                            save_key("gsc_data")
+                            st.success(f"Refreshed: {len(fresh_df):,} rows")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                elif st.session_state.get("gsc_credentials") and site:
+                    with st.spinner("Reconnecting + fetching..."):
+                        try:
+                            from utils.gsc_client import build_gsc_service, fetch_gsc_data
+                            service = build_gsc_service(st.session_state["gsc_credentials"])
+                            st.session_state["gsc_service"] = service
+                            fresh_df = fetch_gsc_data(service, site)
+                            st.session_state["gsc_data"] = fresh_df
+                            from utils.persistence import save_key
+                            save_key("gsc_data")
+                            st.success(f"Refreshed: {len(fresh_df):,} rows")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                else:
+                    st.warning("No GSC service available. Re-enter credentials above.")
+
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("#### GSC Data Summary")
 
