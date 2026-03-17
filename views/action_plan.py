@@ -132,8 +132,44 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
             total_time += 2
 
         # ── STEP: Add missing keywords ────────────────────────
-        missing_kws = kw_cov.get("missing", [])
+        missing_kws_raw = kw_cov.get("missing", [])
         coverage_pct = kw_cov.get("coverage_pct", 100)
+
+        # Filter missing keywords: only keep those RELEVANT to this page
+        # A keyword is relevant if it relates to the page's topic (from URL slug
+        # or cluster), not just because GSC shows the page ranking for it
+        from urllib.parse import urlparse as _urlparse
+        slug_parts = set(_urlparse(url).path.lower().replace("-", " ").replace("/", " ").split())
+        slug_parts.discard("")
+
+        # Get this page's cluster topics
+        page_cluster_topics = set()
+        if topic_clusters:
+            for t in topic_clusters.get("page_topics", {}).get(url, []):
+                page_cluster_topics.add(t.get("topic", "").lower())
+
+        def _is_relevant_keyword(kw):
+            kw_lower = kw.lower()
+            # Check if keyword shares words with URL slug
+            kw_words = set(kw_lower.split())
+            if kw_words & slug_parts:
+                return True
+            # Check if keyword matches page's cluster topics
+            for topic in page_cluster_topics:
+                if kw_lower in topic or topic in kw_lower:
+                    return True
+                # Share any significant word
+                topic_words = set(topic.split())
+                if kw_words & topic_words:
+                    return True
+            # Check if primary keyword words overlap
+            if primary_keyword:
+                primary_words = set(primary_keyword.lower().split())
+                if kw_words & primary_words:
+                    return True
+            return False
+
+        missing_kws = [kw for kw in missing_kws_raw if _is_relevant_keyword(kw)]
 
         if missing_kws:
             kw_list = ", ".join(missing_kws[:8])

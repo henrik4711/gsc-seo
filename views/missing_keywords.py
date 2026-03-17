@@ -22,8 +22,40 @@ def _build_action_list(audit_results):
         recommendations = content_audit.get("recommendations") or []
         issues = content_audit.get("issues") or []
 
-        missing_kws = kw_cov.get("missing", [])
+        missing_kws_raw = kw_cov.get("missing", [])
         coverage_pct = kw_cov.get("coverage_pct", 100)
+
+        # Filter missing keywords: only keep those RELEVANT to this page's topic
+        # Prevents showing "dildo" as missing on /sexleksaker-for-man
+        from urllib.parse import urlparse as _urlparse
+        slug_parts = set(_urlparse(url).path.lower().replace("-", " ").replace("/", " ").split())
+        slug_parts.discard("")
+
+        page_cluster_topics = set()
+        tc = st.session_state.get("topic_clusters", {})
+        if tc:
+            for t in tc.get("page_topics", {}).get(url, []):
+                page_cluster_topics.add(t.get("topic", "").lower())
+
+        target_kws_lower = set(kw.lower() for kw in r.get("target_keywords", [])[:3])
+
+        def _is_relevant(kw):
+            kw_lower = kw.lower()
+            kw_words = set(kw_lower.split())
+            # Matches URL slug?
+            if kw_words & slug_parts:
+                return True
+            # Matches cluster topics?
+            for topic in page_cluster_topics:
+                if kw_lower in topic or topic in kw_lower or (set(topic.split()) & kw_words):
+                    return True
+            # Matches top target keywords?
+            for tkw in target_kws_lower:
+                if set(tkw.split()) & kw_words:
+                    return True
+            return False
+
+        missing_kws = [kw for kw in missing_kws_raw if _is_relevant(kw)]
 
         # Missing/partial subtopics
         missing_subtopics = [
