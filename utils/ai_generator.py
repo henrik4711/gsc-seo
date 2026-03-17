@@ -165,6 +165,76 @@ Return ONLY JSON (no markdown):
     return json.loads(raw)
 
 
+def assess_content_quality(
+    client: anthropic.Anthropic,
+    url: str,
+    body_text: str,
+    page_type: str,
+    target_keywords: list,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Assess existing page text quality for both users and Google."""
+    import json
+
+    prompt = f"""You are a senior SEO content strategist and UX copywriter. Evaluate this page's EXISTING text quality — not just keyword presence, but whether the text is actually good.
+
+## PAGE
+URL: {url}
+Page type: {page_type}
+Site context: {site_context}
+Target keywords: {', '.join(target_keywords[:10])}
+
+## EXISTING TEXT
+{body_text[:3000]}
+
+## EVALUATE THESE DIMENSIONS (score each 1-10):
+
+1. **User value**: Does the text actually HELP the customer? Does it answer their questions, guide their decision, or provide useful information? Or is it generic filler?
+2. **Readability**: Is it well-written, clear, and easy to scan? Or is it a wall of text, awkward phrasing, or robot-generated?
+3. **Conversion support**: Does it build trust, address objections, and guide toward action? Or does it just exist without purpose?
+4. **Google quality (E-E-A-T)**: Does it demonstrate expertise, experience, authority? Does it have depth, specificity, and unique insights? Or is it thin/generic content that any site could have?
+5. **SEO integration**: Are keywords used naturally, or do they feel forced? Is keyword density reasonable?
+6. **Structure**: Are headings logical? Is the content well-organized with clear sections?
+
+## OUTPUT FORMAT (JSON only, no markdown):
+{{
+  "verdict": "KEEP|IMPROVE|REWRITE",
+  "verdict_reason": "One clear sentence explaining the verdict",
+  "overall_score": 0,
+  "scores": {{
+    "user_value": {{"score": 0, "comment": "..."}},
+    "readability": {{"score": 0, "comment": "..."}},
+    "conversion": {{"score": 0, "comment": "..."}},
+    "google_quality": {{"score": 0, "comment": "..."}},
+    "seo_integration": {{"score": 0, "comment": "..."}},
+    "structure": {{"score": 0, "comment": "..."}}
+  }},
+  "biggest_problems": ["Problem 1", "Problem 2", "Problem 3"],
+  "specific_fixes": [
+    "Exact fix 1: what to change and where",
+    "Exact fix 2: what to change and where"
+  ],
+  "rewrite_sections": ["Section/paragraph that should be rewritten and why"]
+}}
+
+IMPORTANT:
+- VERDICT = KEEP means text is good (score >= 7), no major changes needed
+- VERDICT = IMPROVE means text has value but needs specific fixes (score 4-6)
+- VERDICT = REWRITE means text is poor quality and should be replaced (score <= 3)
+- Be honest and specific — generic feedback is useless
+- Language of analysis: English. Language of the content being analyzed: {language}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
 def generate_landing_page_text(
     client: anthropic.Anthropic,
     page_data: dict,

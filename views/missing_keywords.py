@@ -31,7 +31,10 @@ def _build_action_list(audit_results):
             if s.get("status") in ("missing", "partial")
         ]
 
-        if not missing_kws and not missing_subtopics:
+        has_keyword_gaps = bool(missing_kws or missing_subtopics)
+
+        # Include ALL pages — even those with good coverage may have bad text quality
+        if not has_keyword_gaps and not (r.get("body_text") or r.get("intro_text")):
             continue
 
         # Build specific instructions from the audit recommendations + issues
@@ -80,6 +83,7 @@ def _build_action_list(audit_results):
             "url": url,
             "page_type": r.get("page_type", "unknown"),
             "priority": priority,
+            "has_keyword_gaps": has_keyword_gaps,
             "impressions": impressions,
             "lost_clicks": lost_clicks,
             "coverage_pct": coverage_pct,
@@ -87,7 +91,9 @@ def _build_action_list(audit_results):
             "missing_subtopics": missing_subtopics,
             "instructions": instruction_parts,
             "audit_actions": specific_actions,
+            "body_text": (r.get("body_text") or r.get("full_body_text") or r.get("intro_text") or ""),
             "body_text_snippet": (r.get("body_text") or r.get("intro_text") or "")[:800],
+            "target_keywords": r.get("target_keywords", []),
             "in_h1": kw_cov.get("in_h1", 0),
             "in_h2": kw_cov.get("in_h2", 0),
             "in_intro": kw_cov.get("in_intro", 0),
@@ -102,10 +108,11 @@ def _build_action_list(audit_results):
 
 
 def render():
-    st.markdown("## Missing Keywords — Action List")
+    st.markdown("## Missing Keywords & Content Quality")
     st.markdown(
         "<p style='color:#6b6b8a; margin-bottom:1.5rem;'>"
-        "Every card = one page with keyword gaps. Follow the instructions, or click an AI button to generate the text.</p>",
+        "Every card = one page to review. Check keyword gaps AND text quality — "
+        "click <strong>Review existing text quality</strong> to see if the text is worth keeping or needs rewriting.</p>",
         unsafe_allow_html=True,
     )
 
@@ -224,6 +231,105 @@ def render():
                         f"<span style='font-size:0.72rem; color:#6b6b8a;'>Queries: {queries}</span></div>",
                         unsafe_allow_html=True,
                     )
+
+            st.markdown("---")
+
+            # ── Content quality review ─────────────────────────
+            st.markdown("#### Content quality review")
+            res_quality_key = f"quality_{idx}"
+            if st.button("Review existing text quality", key=f"btn_quality_{idx}"):
+                with st.spinner("AI reviewing content quality..."):
+                    try:
+                        from utils.ai_generator import get_client, assess_content_quality
+                        client = get_client(get_anthropic_key())
+                        result = assess_content_quality(
+                            client, url, a["body_text"][:3000],
+                            a["page_type"], a["target_keywords"],
+                            site_context, language,
+                        )
+                        st.session_state[res_quality_key] = result
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+            if res_quality_key in st.session_state:
+                qr = st.session_state[res_quality_key]
+                verdict = qr.get("verdict", "?")
+                verdict_color = {"KEEP": "#33dd88", "IMPROVE": "#ffaa33", "REWRITE": "#ff4455"}.get(verdict, "#6b6b8a")
+                overall = qr.get("overall_score", 0)
+
+                # Verdict banner
+                st.markdown(
+                    f"<div style='background:#0d0d15; border:2px solid {verdict_color}; border-radius:8px; padding:1rem; margin:0.5rem 0;'>"
+                    f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
+                    f"<div>"
+                    f"<span style='font-family:\"Syne\",sans-serif; font-size:1.5rem; font-weight:800; color:{verdict_color};'>{verdict}</span>"
+                    f"<span style='font-size:0.85rem; color:#e8e8f0; margin-left:1rem;'>{qr.get('verdict_reason', '')}</span>"
+                    f"</div>"
+                    f"<span style='font-family:\"Syne\",sans-serif; font-size:2rem; font-weight:800; color:{verdict_color};'>{overall}/10</span>"
+                    f"</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+                # Score breakdown
+                scores = qr.get("scores", {})
+                score_cols = st.columns(6)
+                score_labels = [
+                    ("user_value", "User Value"),
+                    ("readability", "Readability"),
+                    ("conversion", "Conversion"),
+                    ("google_quality", "Google/E-E-A-T"),
+                    ("seo_integration", "SEO Integration"),
+                    ("structure", "Structure"),
+                ]
+                for col, (key, label) in zip(score_cols, score_labels):
+                    s = scores.get(key, {})
+                    sc = s.get("score", 0)
+                    sc_color = "#33dd88" if sc >= 7 else "#ffaa33" if sc >= 4 else "#ff4455"
+                    with col:
+                        st.markdown(
+                            f"<div style='text-align:center; background:#12121f; border-radius:6px; padding:0.5rem;'>"
+                            f"<div style='font-size:1.2rem; font-weight:700; color:{sc_color};'>{sc}</div>"
+                            f"<div style='font-size:0.6rem; color:#6b6b8a; text-transform:uppercase;'>{label}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                # Detailed comments
+                with st.expander("Detailed score comments"):
+                    for key, label in score_labels:
+                        s = scores.get(key, {})
+                        st.markdown(f"**{label}** ({s.get('score', 0)}/10): {s.get('comment', '')}")
+
+                # Biggest problems
+                problems = qr.get("biggest_problems", [])
+                if problems:
+                    st.markdown("**Biggest problems:**")
+                    for p in problems:
+                        st.markdown(
+                            f"<div style='color:#ff4455; font-size:0.85rem; padding:2px 0;'>✗ {p}</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                # Specific fixes
+                fixes = qr.get("specific_fixes", [])
+                if fixes:
+                    st.markdown("**What to fix:**")
+                    for i, fix in enumerate(fixes, 1):
+                        st.markdown(
+                            f"<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.4rem 0.8rem; "
+                            f"border-radius:0 4px 4px 0; margin-bottom:0.3rem;'>"
+                            f"<span style='color:#5533ff; font-weight:700;'>{i}.</span> "
+                            f"<span style='color:#e8e8f0; font-size:0.85rem;'>{fix}</span></div>",
+                            unsafe_allow_html=True,
+                        )
+
+                # Sections to rewrite
+                rewrite = qr.get("rewrite_sections", [])
+                if rewrite:
+                    st.markdown("**Sections to rewrite:**")
+                    for rw in rewrite:
+                        st.markdown(f"<div style='color:#ffaa33; font-size:0.85rem; padding:2px 0;'>→ {rw}</div>", unsafe_allow_html=True)
 
             st.markdown("---")
 
