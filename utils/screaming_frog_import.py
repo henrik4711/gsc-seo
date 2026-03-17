@@ -28,8 +28,20 @@ def _read_csv_flexible(file_content) -> pd.DataFrame:
             else:
                 sep = ","
 
-            df = pd.read_csv(io.StringIO(text), sep=sep, on_bad_lines="skip")
-            df.columns = [c.strip().strip('"').strip() for c in df.columns]
+            df = pd.read_csv(io.StringIO(text), sep=sep, on_bad_lines="skip", header=0)
+            # Handle duplicate column names by appending suffix
+            cols = list(df.columns)
+            seen = {}
+            new_cols = []
+            for c in cols:
+                c = c.strip().strip('"').strip()
+                if c in seen:
+                    seen[c] += 1
+                    new_cols.append(f"{c}_{seen[c]}")
+                else:
+                    seen[c] = 0
+                    new_cols.append(c)
+            df.columns = new_cols
             if len(df.columns) > 1:
                 return df
         except (UnicodeDecodeError, pd.errors.ParserError, LookupError):
