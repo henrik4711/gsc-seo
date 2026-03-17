@@ -55,10 +55,18 @@ def render():
         key="art_pri_filter",
     )
     filtered = [a for a in articles if a.get("priority", "medium") in pri_filter]
-    st.markdown(f"**Showing {len(filtered)} of {len(articles)} articles**")
+
+    # Pagination
+    ART_PER_PAGE = 10
+    art_total = len(filtered)
+    art_max_pg = max(1, (art_total + ART_PER_PAGE - 1) // ART_PER_PAGE)
+    art_pg = st.number_input("Page", min_value=1, max_value=art_max_pg, value=1, key="new_art_page")
+    art_start = (art_pg - 1) * ART_PER_PAGE
+    visible_articles = filtered[art_start:art_start + ART_PER_PAGE]
+    st.markdown(f"**Showing {art_start+1}-{min(art_start+ART_PER_PAGE, art_total)} of {art_total} articles**")
 
     # ── Article cards ─────────────────────────────────────────────
-    for idx, article in enumerate(filtered):
+    for idx, article in enumerate(visible_articles):
         # Use index in the ORIGINAL (unfiltered) list for stable session keys
         orig_idx = articles.index(article) if article in articles else idx
         title = article.get("suggested_title", f"Article {orig_idx+1}")

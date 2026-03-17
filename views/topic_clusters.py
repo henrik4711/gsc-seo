@@ -104,8 +104,16 @@ def _render_clusters(clusters):
         total_impr = sum(c["total_impressions"] for c in clusters)
         st.metric("Total Impressions", f"{total_impr:,}")
 
-    # Cluster list
-    for i, cluster in enumerate(clusters[:30]):
+    # Cluster list — paginated
+    TC_PER_PAGE = 15
+    tc_total = len(clusters)
+    tc_max_pg = max(1, (tc_total + TC_PER_PAGE - 1) // TC_PER_PAGE)
+    tc_pg = st.number_input("Page", min_value=1, max_value=tc_max_pg, value=1, key="tc_cluster_page")
+    tc_start = (tc_pg - 1) * TC_PER_PAGE
+    visible_clusters = clusters[tc_start:tc_start + TC_PER_PAGE]
+    st.markdown(f"**Showing {tc_start+1}-{min(tc_start+TC_PER_PAGE, tc_total)} of {tc_total} clusters**")
+
+    for i, cluster in enumerate(visible_clusters):
         split_warn = " [SPLIT]" if cluster["is_split"] else ""
         color = "#ffaa33" if cluster["is_split"] else "#9b9bb8"
 
@@ -291,7 +299,7 @@ def _render_content_roadmap(topic_result: dict):
             unsafe_allow_html=True,
         )
 
-        for i, article in enumerate(articles[:15]):
+        for i, article in enumerate(articles[:10]):
             pri = article.get("priority", "medium").upper()
             pri_color = "#ff4455" if pri == "HIGH" else "#ffaa33" if pri == "MEDIUM" else "#6b6b8a"
             ct = article.get("content_type", "guide")

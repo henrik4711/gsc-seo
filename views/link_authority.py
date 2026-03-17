@@ -423,7 +423,7 @@ def _render_risk_map():
             unsafe_allow_html=True,
         )
 
-        for _, row in pages.iterrows():
+        for _, row in pages.head(20).iterrows():
             rd = row.get("referring_domains", 0)
             score = row.get("authority_score", 0)
             page = row["page"]
