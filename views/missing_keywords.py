@@ -166,6 +166,8 @@ def render():
 
     # ── Action cards ──────────────────────────────────────────────
     for idx, a in enumerate(filtered):
+        # Use a stable key based on URL hash, not filtered index
+        url_hash = hash(a["url"]) & 0xFFFFFF  # 6-digit stable ID
         url = a["url"]
         pri = a["priority"]
         pri_color = {"high": "#ff4455", "medium": "#ffaa33", "low": "#33dd88"}[pri]
@@ -244,8 +246,8 @@ def render():
 
             # ── Content quality review ─────────────────────────
             st.markdown("#### Content quality review")
-            res_quality_key = f"quality_{idx}"
-            if st.button("Review existing text quality", key=f"btn_quality_{idx}"):
+            res_quality_key = f"quality_{url_hash}"
+            if st.button("Review existing text quality", key=f"btn_quality_{url_hash}"):
                 with st.spinner("AI reviewing content quality..."):
                     try:
                         from utils.ai_generator import get_client, assess_content_quality
@@ -346,8 +348,8 @@ def render():
             col_a, col_b, col_c = st.columns(3)
 
             with col_a:
-                res_text_key = f"kw_text_{idx}"
-                if st.button("Write optimized text", key=f"btn_kw_text_{idx}", type="primary"):
+                res_text_key = f"kw_text_{url_hash}"
+                if st.button("Write optimized text", key=f"btn_kw_text_{url_hash}", type="primary"):
                     with st.spinner("AI writing keyword-optimized text..."):
                         try:
                             from utils.ai_generator import get_client, generate_keyword_text
@@ -361,23 +363,23 @@ def render():
                             st.error(f"Error: {e}")
 
             with col_b:
-                res_intro_key = f"kw_intro_{idx}"
-                if st.button("Rewrite intro", key=f"btn_kw_intro_{idx}"):
+                res_intro_key = f"kw_intro_{url_hash}"
+                if st.button("Rewrite intro", key=f"btn_kw_intro_{url_hash}"):
                     with st.spinner("AI rewriting intro with keywords..."):
                         try:
-                            from utils.ai_generator import get_client, generate_keyword_text
+                            from utils.ai_generator import get_client, generate_intro_rewrite
                             client = get_client(get_anthropic_key())
-                            result = generate_keyword_text(
+                            result = generate_intro_rewrite(
                                 client, a["missing_keywords"], a["body_text_snippet"],
-                                a["page_type"], site_context, language,
+                                a["page_type"], a["url"], site_context, language,
                             )
                             st.session_state[res_intro_key] = result
                         except Exception as e:
                             st.error(f"Error: {e}")
 
             with col_c:
-                res_faq_key = f"kw_faq_{idx}"
-                if a["missing_subtopics"] and st.button("Generate FAQ", key=f"btn_kw_faq_{idx}"):
+                res_faq_key = f"kw_faq_{url_hash}"
+                if a["missing_subtopics"] and st.button("Generate FAQ", key=f"btn_kw_faq_{url_hash}"):
                     with st.spinner("AI generating FAQ..."):
                         try:
                             from utils.ai_generator import get_client, generate_keyword_faq
@@ -392,7 +394,7 @@ def render():
                             st.error(f"Error: {e}")
 
             # ── AI results ────────────────────────────────────
-            for rkey, label in [(f"kw_text_{idx}", "Optimized Text"), (f"kw_intro_{idx}", "Rewritten Intro")]:
+            for rkey, label in [(f"kw_text_{url_hash}", "Optimized Text"), (f"kw_intro_{url_hash}", "Rewritten Intro")]:
                 if rkey in st.session_state:
                     res = st.session_state[rkey]
                     st.markdown(
@@ -412,8 +414,8 @@ def render():
                         )
                     st.code(res.get("optimized_text", ""), language="text")
 
-            if f"kw_faq_{idx}" in st.session_state:
-                res = st.session_state[f"kw_faq_{idx}"]
+            if f"kw_faq_{url_hash}" in st.session_state:
+                res = st.session_state[f"kw_faq_{url_hash}"]
                 st.markdown(
                     "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88; "
                     "margin:0.5rem 0 0.3rem 0;'>COPY THIS — FAQ SECTION</div>",

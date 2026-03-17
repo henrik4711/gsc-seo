@@ -4,9 +4,33 @@ Uses Claude claude-sonnet-4-20250514 via Anthropic API
 """
 
 import os
+import json
 import anthropic
 import streamlit as st
 from typing import Optional
+
+
+def _parse_ai_json(message) -> dict:
+    """Safely parse JSON from an AI response. Returns dict or raises with clear error."""
+    if not message.content:
+        raise ValueError("AI returned an empty response — try again.")
+    raw = message.content[0].text.strip()
+    # Strip markdown code fences if present
+    raw = raw.replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # Try to extract JSON from mixed text
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            try:
+                return json.loads(raw[start:end])
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(
+            f"AI returned invalid JSON. First 200 chars: {raw[:200]}..."
+        )
 
 
 def get_client(api_key: str = "") -> anthropic.Anthropic:
@@ -100,12 +124,7 @@ Generate {n_variants} variants of improved meta title + description.
         messages=[{"role": "user", "content": prompt}]
     )
     
-    import json
-    raw = message.content[0].text.strip()
-    # Strip markdown code fences if present
-    raw = raw.replace("```json", "").replace("```", "").strip()
-    
-    result = json.loads(raw)
+    result = _parse_ai_json(message)
     # Fill in char counts if model didn't
     for v in result.get("variants", []):
         v["title_chars"] = len(v.get("title", ""))
@@ -160,9 +179,7 @@ Return ONLY JSON (no markdown):
         messages=[{"role": "user", "content": prompt}]
     )
     
-    import json
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)
 
 
 def assess_content_quality(
@@ -175,8 +192,6 @@ def assess_content_quality(
     language: str = "Swedish",
 ) -> dict:
     """Assess existing page text quality for both users and Google."""
-    import json
-
     prompt = f"""You are a senior SEO content strategist and UX copywriter. Evaluate this page's EXISTING text quality — not just keyword presence, but whether the text is actually good.
 
 ## PAGE
@@ -231,8 +246,7 @@ IMPORTANT:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)
 
 
 def generate_landing_page_text(
@@ -327,9 +341,7 @@ Return ONLY JSON:
         messages=[{"role": "user", "content": prompt}]
     )
     
-    import json
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)
 
 
 def generate_link_text(
@@ -343,8 +355,6 @@ def generate_link_text(
     language: str = "Swedish",
 ) -> dict:
     """Generate a natural paragraph containing an internal link with proper anchor text."""
-    import json
-
     prompt = f"""You are a senior SEO copywriter. Write a short, natural paragraph (2-3 sentences) that can be inserted into an existing page to create an internal link.
 
 ## CONTEXT
@@ -374,8 +384,7 @@ Language: {language}
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)
 
 
 def generate_keyword_text(
@@ -387,12 +396,19 @@ def generate_keyword_text(
     language: str = "Swedish",
 ) -> dict:
     """Generate optimized text paragraphs that naturally integrate missing keywords."""
-    import json
+    # Page-type specific guidance
+    type_guide = ""
+    if page_type == "category":
+        type_guide = "\nThis is a CATEGORY page (product listing). Text should help customers browse and choose, NOT describe individual products."
+    elif page_type == "product":
+        type_guide = "\nThis is a PRODUCT page. Text should focus on features, benefits, and use cases for this specific product."
+    elif page_type == "blog":
+        type_guide = "\nThis is a BLOG/GUIDE page. Text should be informational, in-depth, and demonstrate expertise."
 
     prompt = f"""You are a senior SEO copywriter. Rewrite or extend the following text to naturally integrate missing keywords.
 
 ## CONTEXT
-Page type: {page_type}
+Page type: {page_type}{type_guide}
 Site context: {site_context}
 Language: {language}
 
@@ -421,8 +437,63 @@ Current text (excerpt):
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)
+
+
+def generate_intro_rewrite(
+    client: anthropic.Anthropic,
+    missing_keywords: list,
+    existing_intro: str,
+    page_type: str,
+    url: str = "",
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Rewrite ONLY the intro/first paragraph to include missing keywords."""
+    type_guide = ""
+    if page_type == "category":
+        type_guide = "This is a CATEGORY page. The intro sits ABOVE the product grid and should explain the category in 80-150 words."
+    elif page_type == "product":
+        type_guide = "This is a PRODUCT page. The intro should hook the buyer with the product's key benefit."
+    elif page_type == "blog":
+        type_guide = "This is a BLOG/GUIDE page. The intro should state the problem and promise a solution."
+
+    prompt = f"""You are a senior SEO copywriter. Rewrite ONLY the intro paragraph of this page.
+
+## CONTEXT
+URL: {url}
+Page type: {page_type}
+{type_guide}
+Site context: {site_context}
+Language: {language}
+
+Keywords that MUST appear in the intro: {', '.join(missing_keywords[:8])}
+
+Current intro text:
+{existing_intro[:1000]}
+
+## REQUIREMENTS
+- Rewrite ONLY the intro paragraph (80-150 words)
+- The PRIMARY keyword must appear in the first sentence
+- Include as many missing keywords as naturally possible
+- Make it engaging — this is the first thing the customer reads
+- Do NOT be spammy. The text must sound natural and helpful.
+- Write in {language}
+
+## OUTPUT FORMAT (JSON only, no markdown wrapping):
+{{
+  "optimized_text": "The rewritten intro paragraph",
+  "keywords_integrated": ["list", "of", "keywords", "integrated"],
+  "word_count": 0
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    return _parse_ai_json(message)
 
 
 def generate_keyword_faq(
@@ -433,8 +504,6 @@ def generate_keyword_faq(
     language: str = "Swedish",
 ) -> dict:
     """Generate FAQ Q&A pairs targeting uncovered subtopics."""
-    import json
-
     n_items = min(max(len(missing_subtopics), 3), 8)
 
     prompt = f"""You are a senior SEO content specialist. Generate FAQ items targeting subtopics that are missing or poorly covered on the page.
@@ -466,8 +535,7 @@ Related keywords to include: {', '.join(keywords[:15])}
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)
 
 
 def generate_article_outline(
@@ -480,8 +548,6 @@ def generate_article_outline(
     language: str = "Swedish",
 ) -> dict:
     """Generate a detailed article outline with H2/H3 structure and word targets."""
-    import json
-
     prompt = f"""You are a senior SEO content strategist. Create a detailed article outline.
 
 ## ARTICLE DETAILS
@@ -521,8 +587,7 @@ Language: {language}
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)
 
 
 def generate_article_full(
@@ -535,8 +600,6 @@ def generate_article_full(
     language: str = "Swedish",
 ) -> dict:
     """Generate a complete article in markdown."""
-    import json
-
     outline_text = ""
     if outline:
         outline_text = f"\n\nFollow this outline:\n{json.dumps(outline, ensure_ascii=False, indent=2)}"
@@ -574,8 +637,7 @@ Language: {language}
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)
 
 
 def generate_article_meta(
@@ -586,8 +648,6 @@ def generate_article_meta(
     language: str = "Swedish",
 ) -> dict:
     """Generate optimized meta title and description for a new article."""
-    import json
-
     prompt = f"""You are a senior SEO specialist. Generate an optimized meta title and description for a new article.
 
 ## ARTICLE
@@ -613,8 +673,7 @@ Write in {language}
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)
 
 
 def generate_action_plan(
@@ -626,8 +685,6 @@ def generate_action_plan(
     Generate prioritized action plan from all audit results
     """
     # Build summary of issues - convert numpy types to native Python
-    import json
-
     def _to_native(val):
         if hasattr(val, 'item'):
             return val.item()
@@ -675,5 +732,4 @@ Return ONLY JSON:
         messages=[{"role": "user", "content": prompt}]
     )
     
-    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return _parse_ai_json(message)

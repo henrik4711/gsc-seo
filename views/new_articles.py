@@ -59,7 +59,9 @@ def render():
 
     # ── Article cards ─────────────────────────────────────────────
     for idx, article in enumerate(filtered):
-        title = article.get("suggested_title", f"Article {idx+1}")
+        # Use index in the ORIGINAL (unfiltered) list for stable session keys
+        orig_idx = articles.index(article) if article in articles else idx
+        title = article.get("suggested_title", f"Article {orig_idx+1}")
         priority = article.get("priority", "medium")
         content_type = article.get("content_type", "article")
         est_impressions = article.get("estimated_impressions", 0)
@@ -159,8 +161,8 @@ def render():
             col_a, col_b, col_c = st.columns(3)
 
             with col_a:
-                res_outline_key = f"art_outline_{idx}"
-                if st.button("1. Generate outline", key=f"btn_outline_{idx}", type="primary"):
+                res_outline_key = f"art_outline_{orig_idx}"
+                if st.button("1. Generate outline", key=f"btn_outline_{orig_idx}", type="primary"):
                     with st.spinner("AI creating outline..."):
                         try:
                             from utils.ai_generator import get_client, generate_article_outline
@@ -174,8 +176,8 @@ def render():
                             st.error(f"Error: {e}")
 
             with col_b:
-                res_full_key = f"art_full_{idx}"
-                if st.button("2. Generate full article", key=f"btn_full_{idx}"):
+                res_full_key = f"art_full_{orig_idx}"
+                if st.button("2. Generate full article", key=f"btn_full_{orig_idx}"):
                     with st.spinner("AI writing full article... (~60 sec)"):
                         try:
                             from utils.ai_generator import get_client, generate_article_full
@@ -190,8 +192,8 @@ def render():
                             st.error(f"Error: {e}")
 
             with col_c:
-                res_meta_key = f"art_meta_{idx}"
-                if st.button("3. Generate meta tags", key=f"btn_meta_{idx}"):
+                res_meta_key = f"art_meta_{orig_idx}"
+                if st.button("3. Generate meta tags", key=f"btn_meta_{orig_idx}"):
                     with st.spinner("AI generating meta..."):
                         try:
                             from utils.ai_generator import get_client, generate_article_meta
@@ -261,7 +263,7 @@ def render():
                         md.encode("utf-8"),
                         f"article_{idx+1}_{content_type}.md",
                         "text/markdown",
-                        key=f"dl_art_{idx}",
+                        key=f"dl_art_{orig_idx}",
                     )
                 with col_dl2:
                     st.code(md, language="markdown")
