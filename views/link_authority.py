@@ -141,6 +141,10 @@ def _render_upload():
                 st.session_state["gsc_data"] = enriched
 
             st.success(f"Authority calculated for {len(authority)} pages")
+
+            from utils.persistence import save_all
+            save_all()
+
             st.rerun()
 
     # ── Screaming Frog uploads ────────────────────────────────────
@@ -220,6 +224,11 @@ def _render_upload():
             st.session_state["sf_crawl_issues"] = issues
             total = sum(len(v) for v in issues.values())
             st.success(f"Analysis complete — {total} issues found")
+
+            # Auto-save all imported data to volume
+            from utils.persistence import save_all
+            save_all()
+
             st.rerun()
 
     # Status

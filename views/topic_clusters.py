@@ -45,6 +45,11 @@ def render():
                 )
                 st.session_state["content_roadmap"] = roadmap
 
+                # Auto-save to volume
+                from utils.persistence import save_key
+                save_key("topic_clusters")
+                save_key("content_roadmap")
+
     if "topic_clusters" not in st.session_state:
         st.info("Click 'Build Topic Clusters' to start")
         return

@@ -278,6 +278,10 @@ def render():
         else:
             st.session_state["audit_results"] = audit_results
 
+        # Auto-save to volume
+        from utils.persistence import save_key
+        save_key("audit_results")
+
         status_text.empty()
         progress.empty()
         st.success(f"Audit complete for {len(audit_results)} pages")

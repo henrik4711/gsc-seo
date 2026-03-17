@@ -1,5 +1,6 @@
 import streamlit as st
 from config import init_from_env
+from utils.persistence import load_all, save_all, get_storage_info
 
 st.set_page_config(
     page_title="SEO Intelligence Platform",
@@ -251,6 +252,9 @@ hr {
 # Load environment variables (Railway) into session state
 init_from_env()
 
+# Load persisted data from volume (audit results, SF data, Ahrefs, etc.)
+load_all()
+
 # Header
 st.markdown("""
 <div style="padding: 2rem 0 1rem 0; border-bottom: 1px solid #1e1e2e; margin-bottom: 2rem;">
@@ -342,6 +346,17 @@ with st.sidebar:
         <div style="margin-top:1rem; padding:0.8rem; background:#12121f; border:1px solid #2a2a40; border-radius:6px;">
             <div style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#5533ff; margin-bottom:0.3rem;">NEXT STEP</div>
             <div style="font-size:0.8rem; color:#c8b4ff;">{hint}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Volume storage info
+    storage = get_storage_info()
+    if storage.get("available") and storage.get("files"):
+        st.markdown(f"""
+        <div style="margin-top:1rem; padding:0.5rem; background:#0d0d15; border:1px solid #1e1e2e; border-radius:6px;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.55rem; color:#33dd88; letter-spacing:0.1em;">
+                CACHED ON DISK · {storage['total_mb']:.1f} MB · {len(storage['files'])} datasets
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
