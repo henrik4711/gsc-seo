@@ -217,10 +217,20 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         link_fixes = linking.get("link_fix_suggestions") or []
         missing_crosslinks = linking.get("missing_crosslinks") or []
 
-        # Also check topic cluster overlap
+        # Also check topic cluster overlap — but filter out junk topics
         if topic_clusters:
             page_topics = topic_clusters.get("page_topics", {})
-            my_topics = set(t.get("topic", "") for t in page_topics.get(url, []))
+
+            # Filter junk topics (appear on 30%+ of pages = brand/generic)
+            _topic_counts = {}
+            for _url_t, _tlist in page_topics.items():
+                for _t in _tlist:
+                    _tn = _t.get("topic", "")
+                    _topic_counts[_tn] = _topic_counts.get(_tn, 0) + 1
+            _total = len(page_topics)
+            _junk = {tn for tn, c in _topic_counts.items() if c >= _total * 0.3}
+
+            my_topics = set(t.get("topic", "") for t in page_topics.get(url, [])) - _junk
 
             # Find pages we share topics with but don't link to
             linked_urls = set()
@@ -239,7 +249,7 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
             for other_url, other_topics in page_topics.items():
                 if other_url.rstrip("/").lower() == url.rstrip("/").lower():
                     continue
-                other_names = set(t.get("topic", "") for t in other_topics)
+                other_names = set(t.get("topic", "") for t in other_topics) - _junk
                 shared = my_topics & other_names
                 if shared and other_url.rstrip("/").lower() not in linked_urls:
                     cluster_links.append({

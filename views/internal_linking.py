@@ -121,13 +121,23 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
         page_topics = topic_clusters.get("page_topics", {})
         overlap = topic_clusters.get("overlap_matrix", [])
 
+        # Filter out "junk" topics that appear on too many pages (brand topics)
+        # These create false overlap between unrelated pages
+        topic_page_count = {}
+        for url_t, topics_list in page_topics.items():
+            for t in topics_list:
+                tn = t.get("topic", "")
+                topic_page_count[tn] = topic_page_count.get(tn, 0) + 1
+        total_topic_pages = len(page_topics)
+        junk_topics = {tn for tn, cnt in topic_page_count.items() if cnt >= total_topic_pages * 0.3}
+
         # Also build overlap from page_topics if overlap_matrix is empty
         if not overlap:
             urls_with_topics = list(page_topics.keys())
             for i, url_a in enumerate(urls_with_topics):
-                topics_a = set(t.get("topic", "") for t in page_topics[url_a])
+                topics_a = set(t.get("topic", "") for t in page_topics[url_a]) - junk_topics
                 for url_b in urls_with_topics[i+1:]:
-                    topics_b = set(t.get("topic", "") for t in page_topics[url_b])
+                    topics_b = set(t.get("topic", "") for t in page_topics[url_b]) - junk_topics
                     shared = topics_a & topics_b
                     if shared:
                         overlap.append({
@@ -136,6 +146,19 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
                             "shared_topics": len(shared),
                             "topic_names": list(shared),
                         })
+
+        # Filter overlap_matrix too — remove junk topic overlap
+        if junk_topics:
+            filtered_overlap = []
+            for ov in overlap:
+                clean_topics = [t for t in ov.get("topic_names", []) if t not in junk_topics]
+                if clean_topics:
+                    filtered_overlap.append({
+                        **ov,
+                        "shared_topics": len(clean_topics),
+                        "topic_names": clean_topics,
+                    })
+            overlap = filtered_overlap
 
         # Deduplicate: track which (source, target) pairs we already have
         existing_pairs = set()
