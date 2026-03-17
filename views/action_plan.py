@@ -316,6 +316,65 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
             })
             total_time += 20
 
+        # ── STEP: Add missing schema markup ───────────────────
+        schema_types = r.get("schema_types", [])
+        missing_schemas = []
+        if "BreadcrumbList" not in schema_types:
+            missing_schemas.append("BreadcrumbList")
+        if page_type in ("category", "blog") and "FAQPage" not in schema_types and has_faq:
+            missing_schemas.append("FAQPage")
+        trust = content_audit.get("trust") or {}
+        if not trust.get("has_org_schema", False) and url.rstrip("/").count("/") <= 3:
+            missing_schemas.append("Organization")
+
+        if missing_schemas:
+            steps.append({
+                "action": f"Add schema markup: {', '.join(missing_schemas)}",
+                "time": 10,
+                "detail": f"Missing structured data: **{', '.join(missing_schemas)}**. Schema helps Google show rich results (FAQ dropdowns, breadcrumbs in SERP).",
+                "what_to_do": (
+                    f"Add JSON-LD `<script>` tags to `<head>` of **{url}**. "
+                    f"Click the button below to generate the exact code."
+                ),
+                "ai_type": "schema",
+                "missing_schemas": missing_schemas,
+            })
+            total_time += 10
+
+        # ── STEP: Spoke → Hub link ────────────────────────────
+        # Check if this page links back to its parent/hub page
+        from urllib.parse import urlparse as _up2
+        page_path = _up2(url).path.lower().rstrip("/")
+        path_parts = page_path.strip("/").split("/")
+        if len(path_parts) >= 2:
+            parent_path = "/" + "/".join(path_parts[:-1])
+            # Check if we link to parent
+            linked_paths = set()
+            il = r.get("internal_links", [])
+            if isinstance(il, list):
+                for l in il:
+                    linked_paths.add(_up2(l.get("url", "")).path.lower().rstrip("/"))
+            sf_lm = st.session_state.get("sf_link_map")
+            if sf_lm:
+                for sl in sf_lm.get("links_from", {}).get(url, []):
+                    linked_paths.add(_up2(sl.get("target", "")).path.lower().rstrip("/"))
+
+            if parent_path not in linked_paths and parent_path != "":
+                # Find parent URL
+                parent_url = url[:url.lower().find(path_parts[-1])].rstrip("/")
+                steps.append({
+                    "action": f"Add link back to hub page {parent_path}",
+                    "time": 5,
+                    "detail": f"This spoke page does NOT link back to its hub/pillar **{parent_path}**. Google requires bidirectional hub↔spoke links for topic authority.",
+                    "what_to_do": (
+                        f"Open **{url}** in CMS. Add a link to **{parent_url or parent_path}** "
+                        f"in the intro or bottom text. Use descriptive anchor text like the hub page's main topic."
+                    ),
+                    "ai_type": "links",
+                    "link_actions": [f"Add link to `{parent_url or parent_path}` with anchor **\"{path_parts[-2].replace('-', ' ')}\"**"],
+                })
+                total_time += 5
+
         if not steps:
             continue
 
@@ -522,6 +581,33 @@ def render():
                             except Exception as e:
                                 st.error(f"Error: {e}")
 
+                elif ai_type == "schema":
+                    if st.button(f"Generate schema markup", key=f"btn_impl_schema_{url_hash}_{step_idx}"):
+                        try:
+                            from utils.ai_generator import generate_schema_markup
+                            # Find page data
+                            page_r = next((ar for ar in audit_results if ar["url"] == url), {})
+                            faq_items_for_schema = None
+                            # Check if we have generated FAQ in session
+                            for sk, sv in st.session_state.items():
+                                if sk.startswith(f"impl_{url_hash}_") and isinstance(sv, dict) and "faq_items" in sv:
+                                    faq_items_for_schema = sv["faq_items"]
+                                    break
+
+                            result = generate_schema_markup(
+                                page_type=plan["page_type"],
+                                url=url,
+                                title=page_r.get("title", ""),
+                                description=page_r.get("meta_description", ""),
+                                h1=page_r.get("h1", ""),
+                                faq_items=faq_items_for_schema,
+                                site_name=st.session_state.get("site_context", ""),
+                                site_url=st.session_state.get("gsc_site", ""),
+                            )
+                            st.session_state[result_key] = result
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
                 elif ai_type == "faq" and has_anthropic_key():
                     if st.button(f"AI: Generate FAQ section", key=f"btn_impl_faq_{url_hash}_{step_idx}"):
                         with st.spinner("Generating FAQ..."):
@@ -567,6 +653,10 @@ def render():
                                 unsafe_allow_html=True,
                             )
                             st.code(lr.get("html", ""), language="html")
+
+                    elif ai_type == "schema" and isinstance(res, dict):
+                        st.markdown(f"**Schema types:** {', '.join(res.get('types', []))}")
+                        st.code(res.get("json_ld", ""), language="html")
 
                     elif ai_type == "faq" and isinstance(res, dict):
                         faq_text = ""

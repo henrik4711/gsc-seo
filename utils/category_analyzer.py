@@ -567,13 +567,38 @@ def audit_category_content(
         all_keywords = cluster_keywords[:15]
 
     # ═══════════════════════════════════════════════════════════
-    # A. EDITORIAL CONTENT VOLUME
+    # A. EDITORIAL CONTENT VOLUME (Google 2026 best practices)
+    # Pillar pages: 3000-5000 words, Cluster/category: 1500-3000,
+    # Product: 300+, Blog: 1500-3000
     # ═══════════════════════════════════════════════════════════
-    if page_type == "category":
+    word_count = page_data.get("word_count", 0) or len(full_text.split())
+
+    if is_pillar:
+        # Pillar pages need comprehensive content
+        if word_count < 500:
+            issues.append({
+                "severity": "critical", "area": "content_volume",
+                "msg": f"PILLAR page has only {word_count} words. Pillar pages should have 3,000-5,000 words to establish topical authority.",
+            })
+            score -= 30
+            recommendations.append("This is a PILLAR page (has sub-pages). Google expects 3,000-5,000 words covering all subtopics comprehensively.")
+        elif word_count < 1500:
+            issues.append({
+                "severity": "warn", "area": "content_volume",
+                "msg": f"PILLAR page has {word_count} words — aim for 3,000-5,000 to fully cover the topic.",
+            })
+            score -= 15
+        elif word_count < 3000:
+            issues.append({
+                "severity": "info", "area": "content_volume",
+                "msg": f"PILLAR page has {word_count} words — good, but 3,000+ is optimal for topical authority.",
+            })
+            score -= 5
+    elif page_type == "category":
         if total_editorial < 50:
             issues.append({
                 "severity": "critical", "area": "content_volume",
-                "msg": f"Almost no editorial text ({total_editorial} words). Category pages MUST have intro + bottom text.",
+                "msg": f"Almost no editorial text ({total_editorial} words). Category pages need 1,500-3,000 words.",
             })
             score -= 30
             recommendations.append("Add 150-300 words of intro text ABOVE the product grid")
@@ -581,15 +606,28 @@ def audit_category_content(
         elif total_editorial < 150:
             issues.append({
                 "severity": "warn", "area": "content_volume",
-                "msg": f"Too little editorial text ({total_editorial} words). Recommended: 300-800 words total.",
+                "msg": f"Too little editorial text ({total_editorial} words). Category pages should have 1,500-3,000 words total.",
             })
             score -= 15
         elif total_editorial < 300:
             issues.append({
                 "severity": "info", "area": "content_volume",
-                "msg": f"Acceptable content ({total_editorial} words) but could be deeper.",
+                "msg": f"Acceptable content ({total_editorial} words) but aim for 1,500+ for full topic coverage.",
             })
             score -= 5
+    elif page_type == "blog":
+        if word_count < 300:
+            issues.append({
+                "severity": "critical", "area": "content_volume",
+                "msg": f"Blog/guide has only {word_count} words. Aim for 1,500-3,000 words for ranking potential.",
+            })
+            score -= 20
+        elif word_count < 1500:
+            issues.append({
+                "severity": "warn", "area": "content_volume",
+                "msg": f"Blog/guide has {word_count} words — 1,500-3,000 words is the sweet spot for cluster content.",
+            })
+            score -= 10
 
         if intro_words < 30:
             issues.append({
@@ -910,6 +948,37 @@ def _audit_internal_linking(
         })
         penalty += 5
         recommendations.append("Add links to related categories in the bottom text (e.g. 'See also: [related category]')")
+
+    # ── Spoke → Hub link check (Google 2026 requirement) ──────
+    # Every spoke/cluster page MUST link back to its pillar/hub page
+    if topic_clusters and isinstance(internal_links, list):
+        from urllib.parse import urlparse as _up
+        page_path = _up(url).path.lower().rstrip("/")
+        linked_paths = set()
+        for l in internal_links:
+            u = l.get("url", "")
+            linked_paths.add(_up(u).path.lower().rstrip("/"))
+
+        # Find this page's parent/hub by URL hierarchy
+        path_parts = page_path.strip("/").split("/")
+        if len(path_parts) >= 2:
+            # Try progressively shorter parent paths
+            for depth in range(len(path_parts) - 1, 0, -1):
+                parent_path = "/" + "/".join(path_parts[:depth])
+                if parent_path in linked_paths:
+                    break  # Found link to parent — good
+            else:
+                # No link to any parent page found
+                parent_path = "/" + "/".join(path_parts[:len(path_parts) - 1])
+                issues.append({
+                    "severity": "warn", "area": "hub_link_missing",
+                    "msg": f"This page does NOT link back to its hub/pillar page ({parent_path}). Google requires spoke→hub links for topic cluster authority.",
+                })
+                penalty += 5
+                recommendations.append(
+                    f"Add a link back to the hub page {parent_path} — this is critical for topic cluster SEO. "
+                    f"Place it in the intro or bottom text with descriptive anchor text."
+                )
 
     # Anchor text quality
     if isinstance(internal_links, list) and internal_links:

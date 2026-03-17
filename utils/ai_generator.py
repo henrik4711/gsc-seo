@@ -676,6 +676,113 @@ Write in {language}
     return _parse_ai_json(message)
 
 
+def generate_schema_markup(
+    page_type: str,
+    url: str,
+    title: str = "",
+    description: str = "",
+    h1: str = "",
+    faq_items: list = None,
+    breadcrumb_items: list = None,
+    site_name: str = "",
+    site_url: str = "",
+) -> dict:
+    """Generate JSON-LD schema markup based on page type and content."""
+    schemas = []
+
+    # BreadcrumbList — always recommended
+    if breadcrumb_items:
+        bc_items = []
+        for i, item in enumerate(breadcrumb_items, 1):
+            bc_items.append({
+                "@type": "ListItem",
+                "position": i,
+                "name": item.get("name", ""),
+                "item": item.get("url", ""),
+            })
+        schemas.append({
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            "itemListElement": bc_items,
+        })
+    else:
+        # Auto-generate from URL path
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        parts = [p for p in parsed.path.strip("/").split("/") if p]
+        if parts:
+            bc_items = [{
+                "@type": "ListItem",
+                "position": 1,
+                "name": "Home",
+                "item": f"{parsed.scheme}://{parsed.netloc}/",
+            }]
+            for i, part in enumerate(parts, 2):
+                name = part.replace("-", " ").replace("_", " ").title()
+                path = "/".join(parts[:i-1])
+                bc_items.append({
+                    "@type": "ListItem",
+                    "position": i,
+                    "name": name,
+                    "item": f"{parsed.scheme}://{parsed.netloc}/{path}/",
+                })
+            schemas.append({
+                "@context": "https://schema.org",
+                "@type": "BreadcrumbList",
+                "itemListElement": bc_items,
+            })
+
+    # FAQPage — if FAQ items exist
+    if faq_items:
+        faq_entities = []
+        for faq in faq_items:
+            q = faq.get("question", "")
+            a = faq.get("answer", "")
+            if q and a:
+                faq_entities.append({
+                    "@type": "Question",
+                    "name": q,
+                    "acceptedAnswer": {
+                        "@type": "Answer",
+                        "text": a,
+                    }
+                })
+        if faq_entities:
+            schemas.append({
+                "@context": "https://schema.org",
+                "@type": "FAQPage",
+                "mainEntity": faq_entities,
+            })
+
+    # Organization — for homepage
+    if page_type == "homepage" or url.rstrip("/").count("/") <= 3:
+        if site_name:
+            schemas.append({
+                "@context": "https://schema.org",
+                "@type": "Organization",
+                "name": site_name,
+                "url": site_url or url,
+            })
+
+    # WebPage — general
+    schemas.append({
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "name": title or h1,
+        "description": description,
+        "url": url,
+    })
+
+    return {
+        "schemas": schemas,
+        "json_ld": "\n".join([
+            f'<script type="application/ld+json">\n{json.dumps(s, ensure_ascii=False, indent=2)}\n</script>'
+            for s in schemas
+        ]),
+        "types": [s["@type"] for s in schemas],
+    }
+
+
 def generate_action_plan(
     client: anthropic.Anthropic,
     audit_results: list,
