@@ -175,11 +175,15 @@ def render():
         return
 
     # ── Run Audit ─────────────────────────────────────────────────
+    # Place progress elements at the TOP of the page using a container
+    audit_progress_container = st.container()
+
     if run_audit:
         audit_results = []
         total_urls = len(urls)
-        progress = st.progress(0)
-        status_box = st.empty()
+        with audit_progress_container:
+            status_box = st.empty()
+            progress = st.progress(0)
 
         for i, url in enumerate(urls):
             elapsed_pages = i
