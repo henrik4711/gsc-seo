@@ -187,8 +187,26 @@ def render():
             )
 
             # Get keywords for this page from GSC
+            # Filter out brand keywords that appear on every page — they're not
+            # the page's actual topic keywords
             page_queries = df[df["page"] == url].sort_values("impressions", ascending=False)
-            target_keywords = page_queries["query"].head(show_keywords).tolist()
+
+            # Detect brand terms: keywords that appear on 50%+ of all pages
+            if "_brand_keywords" not in st.session_state:
+                total_pages = df["page"].nunique()
+                kw_page_counts = df.groupby("query")["page"].nunique()
+                brand_kws = set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
+                st.session_state["_brand_keywords"] = brand_kws
+            brand_kws = st.session_state["_brand_keywords"]
+
+            # Prioritize: non-brand keywords first, then brand keywords
+            non_brand = page_queries[~page_queries["query"].isin(brand_kws)]
+            brand_only = page_queries[page_queries["query"].isin(brand_kws)]
+
+            target_keywords = (
+                non_brand["query"].head(show_keywords).tolist()
+                + brand_only["query"].head(2).tolist()
+            )[:show_keywords]
 
             # Also get cluster keywords for deeper validation
             cluster_keywords = _get_cluster_keywords(url)

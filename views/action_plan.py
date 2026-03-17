@@ -28,6 +28,24 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         issues = r.get("issues", [])
         meta_eval = r.get("meta_eval") or {}
 
+        # Determine the REAL primary keyword — not brand terms
+        # Brand keywords (appear on many pages) should not be primary
+        brand_kws = st.session_state.get("_brand_keywords", set())
+        primary_keyword = ""
+        for kw in target_keywords:
+            if kw.lower() not in {b.lower() for b in brand_kws}:
+                primary_keyword = kw
+                break
+        if not primary_keyword and target_keywords:
+            # Fallback: try to extract from URL slug
+            from urllib.parse import urlparse
+            slug = urlparse(url).path.strip("/").split("/")[-1]
+            slug_words = slug.replace("-", " ").replace("_", " ")
+            if slug_words:
+                primary_keyword = slug_words
+            else:
+                primary_keyword = target_keywords[0]
+
         steps = []
         total_time = 0  # minutes
 
@@ -41,7 +59,7 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
                 "action": "Shorten meta title",
                 "time": 2,
                 "detail": f"Current: \"{title}\" ({title_len} chars) — must be under 60 chars",
-                "what_to_do": f"Open **{url}** in CMS → Edit SEO title → Shorten to max 60 chars. Keep primary keyword **{target_keywords[0] if target_keywords else '?'}** first.",
+                "what_to_do": f"Open **{url}** in CMS → Edit SEO title → Shorten to max 60 chars. Keep primary keyword **{primary_keyword}** first.",
                 "ai_type": "meta",
             })
             total_time += 2
@@ -56,14 +74,13 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
             total_time += 2
 
         # Title missing primary keyword
-        if target_keywords and title:
-            primary = target_keywords[0].lower()
-            if primary not in title.lower():
+        if primary_keyword and title:
+            if primary_keyword.lower() not in title.lower():
                 steps.append({
                     "action": f"Add primary keyword to title",
                     "time": 2,
-                    "detail": f"Primary keyword **\"{target_keywords[0]}\"** is NOT in the title",
-                    "what_to_do": f"Edit title to start with or contain **\"{target_keywords[0]}\"**. Current: \"{title}\"",
+                    "detail": f"Primary keyword **\"{primary_keyword}\"** is NOT in the title",
+                    "what_to_do": f"Edit title to start with or contain **\"{primary_keyword}\"**. Current: \"{title}\"",
                     "ai_type": "meta",
                 })
                 total_time += 2
@@ -77,7 +94,7 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
                 "action": "Add meta description",
                 "time": 3,
                 "detail": "No meta description — Google will auto-generate one (usually bad)",
-                "what_to_do": f"Open **{url}** in CMS → Add meta description with **{target_keywords[0] if target_keywords else 'primary keyword'}**, 140-160 chars, include CTA.",
+                "what_to_do": f"Open **{url}** in CMS → Add meta description with **{primary_keyword}**, 140-160 chars, include CTA.",
                 "ai_type": "meta",
             })
             total_time += 3
@@ -104,12 +121,12 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         h1 = r.get("h1") or ""
         kw_cov = content_audit.get("keyword_coverage") or {}
 
-        if kw_cov.get("in_h1", 0) == 0 and target_keywords:
+        if kw_cov.get("in_h1", 0) == 0 and primary_keyword:
             steps.append({
                 "action": f"Add primary keyword to H1",
                 "time": 2,
-                "detail": f"H1 is \"{h1 or '(empty)'}\" — does NOT contain \"{target_keywords[0]}\"",
-                "what_to_do": f"Open **{url}** in CMS → Change H1 to include **\"{target_keywords[0]}\"**. H1 should match search intent.",
+                "detail": f"H1 is \"{h1 or '(empty)'}\" — does NOT contain \"{primary_keyword}\"",
+                "what_to_do": f"Open **{url}** in CMS → Change H1 to include **\"{primary_keyword}\"**. H1 should match search intent.",
                 "ai_type": None,
             })
             total_time += 2
