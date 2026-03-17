@@ -24,7 +24,7 @@ STEP_ORDER = [
     ("new_articles",      "9. New Articles",       "Plan and generate new articles"),
     ("generated_content", "10. Content Generator",  "Select a page and generate AI-optimized content"),
     ("tasks_viewed",      "11. All Tasks",           "Review unified task list across all analyses"),
-    ("action_plan",       "12. Action Plan",         "Click 'Generate AI Action Plan' for prioritized actions"),
+    ("action_plan",       "12. Implementation",      "Step-by-step fix guide for every page"),
 ]
 
 

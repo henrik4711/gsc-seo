@@ -283,7 +283,7 @@ STEPS = [
     ("9. New Articles",       "articles",     "new_articles",      "Plan new content"),
     ("10. Content Generator", "content",      "generated_content", "AI-generated content"),
     ("11. All Tasks",         "tasks",        "tasks_viewed",      "Unified priority list"),
-    ("12. Action Plan",       "action",       "action_plan",       "Prioritized action plan"),
+    ("12. Implementation",    "action",       "action_plan",       "Step-by-step fix guide"),
 ]
 
 # Figure out which step the user should be on

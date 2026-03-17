@@ -1,6 +1,7 @@
 """
-Action Plan page
-Generates and displays prioritized SEO action list
+Action Plan — Implementation Guide
+Per-page step-by-step instructions with AI buttons for every fix.
+Combines data from: audit, topic clusters, internal linking, CTR gaps.
 """
 
 import streamlit as st
@@ -9,167 +10,510 @@ from config import get_anthropic_key, has_anthropic_key
 from utils.ui_helpers import shorten_url
 
 
+def _build_page_plans(audit_results, gsc_data, topic_clusters):
+    """Build a detailed implementation plan per page from ALL data sources."""
+    plans = []
+
+    df = gsc_data
+
+    for r in audit_results:
+        url = r.get("url", "")
+        impressions = r.get("impressions", 0)
+        lost_clicks = r.get("lost_clicks_estimate", 0)
+        meta_score = r.get("meta_score")
+        content_score = r.get("content_score")
+        page_type = r.get("page_type", "unknown")
+        target_keywords = r.get("target_keywords", [])
+        content_audit = r.get("content_audit") or {}
+        issues = r.get("issues", [])
+        meta_eval = r.get("meta_eval") or {}
+
+        steps = []
+        total_time = 0  # minutes
+
+        # ── STEP: Fix meta title ──────────────────────────────
+        title = r.get("title", "")
+        title_len = r.get("title_length", len(title))
+        title_issues = [i for i in issues if isinstance(i, dict) and i.get("field") in ("title", "title_length")]
+
+        if title_len > 60:
+            steps.append({
+                "action": "Shorten meta title",
+                "time": 2,
+                "detail": f"Current: \"{title}\" ({title_len} chars) — must be under 60 chars",
+                "what_to_do": f"Open **{url}** in CMS → Edit SEO title → Shorten to max 60 chars. Keep primary keyword **{target_keywords[0] if target_keywords else '?'}** first.",
+                "ai_type": "meta",
+            })
+            total_time += 2
+        elif title_len < 30 and title_len > 0:
+            steps.append({
+                "action": "Extend meta title",
+                "time": 2,
+                "detail": f"Current: \"{title}\" ({title_len} chars) — too short, aim for 50-60 chars",
+                "what_to_do": f"Open **{url}** in CMS → Edit SEO title → Add USP/benefit to reach 50-60 chars.",
+                "ai_type": "meta",
+            })
+            total_time += 2
+
+        # Title missing primary keyword
+        if target_keywords and title:
+            primary = target_keywords[0].lower()
+            if primary not in title.lower():
+                steps.append({
+                    "action": f"Add primary keyword to title",
+                    "time": 2,
+                    "detail": f"Primary keyword **\"{target_keywords[0]}\"** is NOT in the title",
+                    "what_to_do": f"Edit title to start with or contain **\"{target_keywords[0]}\"**. Current: \"{title}\"",
+                    "ai_type": "meta",
+                })
+                total_time += 2
+
+        # ── STEP: Fix meta description ────────────────────────
+        desc = r.get("meta_description", "")
+        desc_len = r.get("description_length", len(desc))
+
+        if not desc or desc_len < 10:
+            steps.append({
+                "action": "Add meta description",
+                "time": 3,
+                "detail": "No meta description — Google will auto-generate one (usually bad)",
+                "what_to_do": f"Open **{url}** in CMS → Add meta description with **{target_keywords[0] if target_keywords else 'primary keyword'}**, 140-160 chars, include CTA.",
+                "ai_type": "meta",
+            })
+            total_time += 3
+        elif desc_len < 120:
+            steps.append({
+                "action": "Extend meta description",
+                "time": 2,
+                "detail": f"Only {desc_len} chars — extend to 140-160 for full SERP display",
+                "what_to_do": f"Open **{url}** in CMS → Extend meta description to 140-160 chars. Add benefits, CTA, or USP.",
+                "ai_type": "meta",
+            })
+            total_time += 2
+        elif desc_len > 165:
+            steps.append({
+                "action": "Shorten meta description",
+                "time": 2,
+                "detail": f"Currently {desc_len} chars — Google truncates at ~160",
+                "what_to_do": f"Open **{url}** in CMS → Shorten meta description to max 160 chars.",
+                "ai_type": "meta",
+            })
+            total_time += 2
+
+        # ── STEP: Fix H1 ─────────────────────────────────────
+        h1 = r.get("h1", "")
+        kw_cov = content_audit.get("keyword_coverage") or {}
+
+        if kw_cov.get("in_h1", 0) == 0 and target_keywords:
+            steps.append({
+                "action": f"Add primary keyword to H1",
+                "time": 2,
+                "detail": f"H1 is \"{h1 or '(empty)'}\" — does NOT contain \"{target_keywords[0]}\"",
+                "what_to_do": f"Open **{url}** in CMS → Change H1 to include **\"{target_keywords[0]}\"**. H1 should match search intent.",
+                "ai_type": None,
+            })
+            total_time += 2
+
+        # ── STEP: Add missing keywords ────────────────────────
+        missing_kws = kw_cov.get("missing", [])
+        coverage_pct = kw_cov.get("coverage_pct", 100)
+
+        if missing_kws:
+            kw_list = ", ".join(missing_kws[:8])
+            remaining = len(missing_kws) - 8 if len(missing_kws) > 8 else 0
+            steps.append({
+                "action": f"Add {len(missing_kws)} missing keywords to page text",
+                "time": 30,
+                "detail": f"Coverage: {coverage_pct:.0f}% — missing: **{kw_list}**{f' (+{remaining} more)' if remaining else ''}",
+                "what_to_do": (
+                    f"Open **{url}** in CMS. Integrate these keywords naturally into existing text or new paragraphs. "
+                    f"Don't keyword-stuff — write for the customer first. "
+                    f"Focus on intro paragraph and H2 sections."
+                ),
+                "ai_type": "keywords",
+                "missing_keywords": missing_kws,
+            })
+            total_time += 30
+
+        # ── STEP: Add missing topic sections ──────────────────
+        topic_cov = content_audit.get("topic_coverage") or {}
+        missing_subtopics = [
+            s for s in (topic_cov.get("subtopics") or [])
+            if s.get("status") in ("missing", "partial")
+        ]
+
+        if missing_subtopics:
+            topic_names = [s["topic"] for s in missing_subtopics]
+            steps.append({
+                "action": f"Add {len(missing_subtopics)} missing topic sections",
+                "time": 45,
+                "detail": "Missing H2 sections for: **" + "**, **".join(topic_names[:5]) + "**",
+                "what_to_do": (
+                    f"Open **{url}** in CMS. Add a new H2 section for each missing topic. "
+                    f"Each section should be 80-150 words. "
+                    f"Use the topic name as H2 heading."
+                ),
+                "ai_type": "keywords",
+                "missing_keywords": [q for s in missing_subtopics for q in s.get("queries", [])[:3]],
+                "subtopics": topic_names,
+            })
+            total_time += 45
+
+        # ── STEP: Fix internal links ──────────────────────────
+        linking = content_audit.get("linking") or {}
+        link_fixes = linking.get("link_fix_suggestions") or []
+        missing_crosslinks = linking.get("missing_crosslinks") or []
+
+        # Also check topic cluster overlap
+        if topic_clusters:
+            page_topics = topic_clusters.get("page_topics", {})
+            my_topics = set(t.get("topic", "") for t in page_topics.get(url, []))
+
+            # Find pages we share topics with but don't link to
+            linked_urls = set()
+            internal_links = r.get("internal_links", [])
+            if isinstance(internal_links, list):
+                for l in internal_links:
+                    u = l.get("url", "")
+                    linked_urls.add(u.rstrip("/").lower())
+
+            sf_link_map = st.session_state.get("sf_link_map")
+            if sf_link_map:
+                for sl in sf_link_map.get("links_from", {}).get(url, []):
+                    linked_urls.add(sl.get("target", "").rstrip("/").lower())
+
+            cluster_links = []
+            for other_url, other_topics in page_topics.items():
+                if other_url.rstrip("/").lower() == url.rstrip("/").lower():
+                    continue
+                other_names = set(t.get("topic", "") for t in other_topics)
+                shared = my_topics & other_names
+                if shared and other_url.rstrip("/").lower() not in linked_urls:
+                    cluster_links.append({
+                        "target": other_url,
+                        "shared_topics": list(shared)[:3],
+                        "anchor": list(shared)[0] if shared else "",
+                    })
+            cluster_links.sort(key=lambda x: -len(x["shared_topics"]))
+            cluster_links = cluster_links[:5]
+        else:
+            cluster_links = []
+
+        all_link_actions = []
+        for fix in link_fixes:
+            all_link_actions.append(f"Add link to `{fix.get('target_url','')}` with anchor **\"{fix.get('suggested_anchor','')}\"** in {fix.get('placement','page text')}")
+        for cl in cluster_links:
+            all_link_actions.append(f"Add link to `{cl['target']}` with anchor **\"{cl['anchor']}\"** (shared topics: {', '.join(cl['shared_topics'])})")
+
+        if all_link_actions:
+            link_detail = "\n".join([f"  → {la}" for la in all_link_actions[:8]])
+            steps.append({
+                "action": f"Add {len(all_link_actions)} internal links",
+                "time": 10,
+                "detail": f"Missing links to related pages:\n{link_detail}",
+                "what_to_do": (
+                    f"Open **{url}** in CMS. Add each link in a natural context — "
+                    f"intro, bottom text, or a relevant H2 section. "
+                    f"Use the suggested anchor text, not 'click here'."
+                ),
+                "ai_type": "links",
+                "link_actions": all_link_actions,
+            })
+            total_time += 10
+
+        # ── STEP: Content quality ─────────────────────────────
+        word_count = r.get("word_count", 0)
+        if word_count and word_count < 100 and page_type != "product":
+            steps.append({
+                "action": "Add content — page is too thin",
+                "time": 60,
+                "detail": f"Only {word_count} words — Google considers this thin content. Aim for 300+ words for categories, 500+ for guides.",
+                "what_to_do": f"Open **{url}** in CMS. Add intro text, buying guide, FAQ, or descriptive sections.",
+                "ai_type": "keywords",
+            })
+            total_time += 60
+
+        # ── STEP: Add FAQ schema ──────────────────────────────
+        has_faq = r.get("has_faq", False) or (content_audit.get("content_stats") or {}).get("has_faq", False)
+        if not has_faq and page_type in ("category", "blog"):
+            steps.append({
+                "action": "Add FAQ section with schema",
+                "time": 20,
+                "detail": "No FAQ found — FAQ schema can earn rich results in Google (extra visibility)",
+                "what_to_do": f"Open **{url}** in CMS. Add 3-5 FAQ questions targeting missing subtopics. Add FAQPage schema markup.",
+                "ai_type": "faq",
+            })
+            total_time += 20
+
+        if not steps:
+            continue
+
+        plans.append({
+            "url": url,
+            "page_type": page_type,
+            "impressions": impressions,
+            "lost_clicks": lost_clicks,
+            "meta_score": meta_score,
+            "content_score": content_score,
+            "steps": steps,
+            "total_time": total_time,
+            "target_keywords": target_keywords,
+            "body_text_snippet": (r.get("body_text") or r.get("intro_text") or "")[:800],
+        })
+
+    # Sort by lost clicks descending
+    plans.sort(key=lambda p: -p["lost_clicks"])
+    return plans
+
+
 def render():
-    st.markdown("## 📋 Action Plan")
+    st.markdown("## Implementation Guide")
     st.markdown(
-        "<p style='color:#6b6b8a; margin-bottom:2rem;'>Prioritized action plan based on CTR gaps and audit results</p>",
-        unsafe_allow_html=True
+        "<p style='color:#6b6b8a; margin-bottom:1.5rem;'>"
+        "Step-by-step instructions for every page. Work from the top — highest impact first. "
+        "Click AI buttons to generate the exact text to paste into your CMS.</p>",
+        unsafe_allow_html=True,
     )
 
     has_audit = "audit_results" in st.session_state and st.session_state["audit_results"]
     has_gaps = "ctr_gaps" in st.session_state
+    gsc_data = st.session_state.get("gsc_data")
 
-    if not has_audit and not has_gaps:
-        st.warning("⚠️ Run CTR Analysis and/or Page Auditor to generate an action plan")
+    if not has_audit:
+        st.warning("Run **6. Page Auditor** first (bulk audit recommended for full picture)")
+        if has_gaps:
+            _show_ctr_only_plan()
         return
 
-    # ── Manual quick plan from CTR gaps ──────────────────────────
-    if has_gaps and not has_audit:
-        st.info("Only CTR data available. Run Page Auditor for a more precise plan.")
-        _show_ctr_only_plan()
+    audit_results = st.session_state["audit_results"]
+    topic_clusters = st.session_state.get("topic_clusters", {})
+    site_context = st.session_state.get("site_context", "")
+    language = st.session_state.get("content_language", "Swedish")
+
+    plans = _build_page_plans(audit_results, gsc_data, topic_clusters)
+
+    if not plans:
+        st.success("All audited pages look good — no issues found!")
         return
 
-    # ── AI Action Plan ────────────────────────────────────────────
-    audit_results = st.session_state.get("audit_results", [])
-    site_url = st.session_state.get("gsc_site", "your webshop")
+    # ── Summary ───────────────────────────────────────────────────
+    total_lost = sum(p["lost_clicks"] for p in plans)
+    total_steps = sum(len(p["steps"]) for p in plans)
+    total_time = sum(p["total_time"] for p in plans)
 
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        if st.button("🤖 Generate AI Action Plan", type="primary", use_container_width=True):
-            if not has_anthropic_key():
-                st.error("Add Anthropic API key in Setup or set ANTHROPIC_API_KEY env var")
-            else:
-                with st.spinner("Claude is analyzing all results and prioritizing..."):
-                    try:
-                        from utils.ai_generator import get_client, generate_action_plan
-                        client = get_client(get_anthropic_key())
-                        result = generate_action_plan(client, audit_results, site_url)
-                        st.session_state["action_plan"] = result
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Pages to fix", len(plans))
+    c2.metric("Total steps", total_steps)
+    c3.metric("Est. time", f"{total_time // 60}h {total_time % 60}m")
+    c4.metric("Lost clicks recoverable", f"{total_lost:,.0f}")
 
-                        from utils.persistence import save_key
-                        save_key("action_plan")
-                    except Exception as e:
-                        st.error(f"❌ Error: {e}")
+    st.markdown("---")
 
-    # ── Display action plan ───────────────────────────────────────
-    action_plan = st.session_state.get("action_plan")
+    # ── Page cards ────────────────────────────────────────────────
+    for plan_idx, plan in enumerate(plans):
+        url = plan["url"]
+        ptype = plan["page_type"].upper()
+        lost = plan["lost_clicks"]
+        impr = plan["impressions"]
+        meta_s = plan["meta_score"]
+        content_s = plan["content_score"]
+        n_steps = len(plan["steps"])
+        est_time = plan["total_time"]
 
-    if action_plan:
-        # Executive summary
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #12121f 0%, #0f0f1a 100%);
-                    border:1px solid #5533ff; border-radius:10px; padding:1.5rem; margin-bottom:2rem;">
-            <div style="font-family:'IBM Plex Mono',monospace; font-size:0.65rem; color:#5533ff;
-                        text-transform:uppercase; letter-spacing:0.15em; margin-bottom:0.5rem;">
-                EXECUTIVE SUMMARY
-            </div>
-            <div style="font-size:0.95rem; color:#e8e8f0; line-height:1.7;">
-                {action_plan.get('executive_summary', '')}
-            </div>
-            <div style="margin-top:1rem; font-family:'Syne',sans-serif; font-size:1.5rem; font-weight:700; color:#33dd88;">
-                +{action_plan.get('estimated_monthly_clicks_gain', 0):,} clicks/mo
-            </div>
-            <div style="font-size:0.75rem; color:#6b6b8a; font-family:'IBM Plex Mono',monospace;">
-                ESTIMATED MONTHLY CLICK GAIN
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Determine card border color
+        if lost > 1000:
+            border = "#ff4455"
+        elif lost > 200:
+            border = "#ffaa33"
+        else:
+            border = "#2a2a40"
 
-        # Quick wins
-        quick_wins = action_plan.get("quick_wins", [])
-        if quick_wins:
-            st.markdown("### ⚡ Quick Wins (under 30 min)")
-            for win in quick_wins:
-                st.markdown(
-                    f"<div style='padding:6px 0; color:#33dd88; font-size:0.85rem;'>✅ {win}</div>",
-                    unsafe_allow_html=True
-                )
-            st.markdown("---")
-
-        # Priority actions
-        st.markdown("### 🎯 Priority Actions")
-
-        actions = action_plan.get("priority_actions", [])
-
-        # Type filter
-        type_filter = st.multiselect(
-            "Filter by type",
-            ["meta", "content", "technical"],
-            default=["meta", "content", "technical"],
+        # Card header
+        st.markdown(
+            f"<div style='background:#12121f; border:1px solid {border}; border-left:4px solid {border}; "
+            f"border-radius:6px; padding:1rem; margin-bottom:0.3rem;'>"
+            f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;'>"
+            f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:{border}; "
+            f"text-transform:uppercase;'>{ptype} · {n_steps} steps · ~{est_time} min</span>"
+            f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#6b6b8a;'>"
+            f"{impr:,} impr · {lost:,.0f} lost clicks</span>"
+            f"</div>"
+            f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600;'>{url}</div>"
+            f"<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.2rem;'>"
+            f"Meta: {meta_s if meta_s is not None else '?'}/100 · Content: {content_s if content_s is not None else '?'}/100 · "
+            f"Primary KW: {plan['target_keywords'][0] if plan['target_keywords'] else '?'}"
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True,
         )
 
-        filtered_actions = [a for a in actions if a.get("type", "meta") in type_filter]
+        url_hash = hash(url) & 0xFFFFFF
 
-        for action in filtered_actions:
-            priority = action.get("priority", "?")
-            effort = action.get("effort", "Medium")
-            a_type = action.get("type", "meta")
-            impact = action.get("estimated_impact", "")
-            url = action.get("url", "")
+        with st.expander(f"Open implementation plan for {shorten_url(url)}", expanded=(plan_idx == 0)):
 
-            effort_colors = {
-                "Low": "#33dd88",
-                "Medium": "#ffaa33",
-                "High": "#ff4455",
-            }
-            type_icons = {"meta": "🏷️", "content": "📝", "technical": "⚙️"}
-            effort_color = effort_colors.get(effort, "#6b6b8a")
-            type_icon = type_icons.get(a_type, "📌")
+            for step_idx, step in enumerate(plan["steps"], 1):
+                time_str = f"{step['time']} min" if step['time'] < 60 else f"{step['time'] // 60}h {step['time'] % 60}m"
 
-            url_short = shorten_url(url) if url else ""
+                # Step card
+                st.markdown(
+                    f"<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.7rem 1rem; "
+                    f"border-radius:0 6px 6px 0; margin-bottom:0.6rem;'>"
+                    f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem;'>"
+                    f"<span style='color:#5533ff; font-weight:700; font-size:0.95rem;'>Step {step_idx}: {step['action']}</span>"
+                    f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#6b6b8a;'>~{time_str}</span>"
+                    f"</div>"
+                    f"<div style='font-size:0.82rem; color:#9b9bb8; margin-bottom:0.4rem;'>{step['detail']}</div>"
+                    f"<div style='font-size:0.85rem; color:#c8b4ff; line-height:1.5;'>{step['what_to_do']}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
-            st.markdown(f"""
-            <div style="background:#12121f; border:1px solid #1e1e2e; border-radius:8px;
-                        padding:1rem; margin-bottom:0.75rem;
-                        border-left:4px solid {'#5533ff' if priority <= 3 else '#2a2a4a'};">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
-                    <div style="display:flex; align-items:center; gap:0.5rem;">
-                        <span style="font-family:'Syne',sans-serif; font-weight:800; font-size:1.1rem;
-                                     color:{'#c8b4ff' if priority <= 3 else '#6b6b8a'};">#{priority}</span>
-                        <span style="font-size:1rem;">{type_icon}</span>
-                        <span style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#6b6b8a;">
-                            {url_short[:50]}
-                        </span>
-                    </div>
-                    <div style="display:flex; gap:0.5rem; align-items:center;">
-                        <span style="font-family:'IBM Plex Mono',monospace; font-size:0.65rem;
-                                     color:{effort_color}; border:1px solid {effort_color};
-                                     border-radius:3px; padding:1px 6px;">
-                            EFFORT: {effort.upper()}
-                        </span>
-                        <span style="font-family:'IBM Plex Mono',monospace; font-size:0.65rem;
-                                     color:#33dd88;">
-                            {impact}
-                        </span>
-                    </div>
-                </div>
-                <div style="font-size:0.9rem; color:#e8e8f0; font-weight:500; margin-bottom:0.3rem;">
-                    {action.get('action', '')}
-                </div>
-                <div style="font-size:0.8rem; color:#6b6b8a;">
-                    {action.get('reason', '')}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+                # AI buttons per step type
+                ai_type = step.get("ai_type")
+                result_key = f"impl_{url_hash}_{step_idx}"
 
-        # Strategic recommendations
-        strategic = action_plan.get("strategic_recommendations", [])
-        if strategic:
-            st.markdown("---")
-            st.markdown("### 🔭 Strategic Recommendations (1-3 months)")
-            for rec in strategic:
-                st.markdown(f"<div style='padding:6px 0; color:#c8b4ff; font-size:0.85rem;'>→ {rec}</div>", unsafe_allow_html=True)
+                if ai_type == "meta" and has_anthropic_key():
+                    if st.button(f"AI: Generate meta for this page", key=f"btn_impl_meta_{url_hash}_{step_idx}"):
+                        with st.spinner("Generating meta..."):
+                            try:
+                                from utils.ai_generator import get_client, generate_meta_suggestions
+                                client = get_client(get_anthropic_key())
+                                page_data = dict(
+                                    url=url, title=plan.get("title", ""),
+                                    meta_description=plan.get("meta_description", ""),
+                                    h1=plan.get("h1", ""), page_type=plan["page_type"],
+                                )
+                                # Find page_data from audit
+                                for ar in audit_results:
+                                    if ar["url"] == url:
+                                        page_data = ar
+                                        break
+                                result = generate_meta_suggestions(
+                                    client, page_data, plan["target_keywords"],
+                                    site_context, language, 2,
+                                )
+                                st.session_state[result_key] = result
+                            except Exception as e:
+                                st.error(f"Error: {e}")
 
-        # Export
-        st.markdown("---")
-        if st.button("⬇️ Export Action Plan (CSV)"):
-            actions_df = pd.DataFrame(actions)
-            csv = actions_df.to_csv(index=False).encode("utf-8")
-            st.download_button("Download CSV", csv, "action_plan.csv", "text/csv")
+                elif ai_type == "keywords" and has_anthropic_key():
+                    if st.button(f"AI: Generate text with keywords", key=f"btn_impl_kw_{url_hash}_{step_idx}"):
+                        with st.spinner("Generating keyword-optimized text..."):
+                            try:
+                                from utils.ai_generator import get_client, generate_keyword_text
+                                client = get_client(get_anthropic_key())
+                                missing = step.get("missing_keywords", plan.get("target_keywords", []))
+                                result = generate_keyword_text(
+                                    client, missing, plan["body_text_snippet"],
+                                    plan["page_type"], site_context, language,
+                                )
+                                st.session_state[result_key] = result
+                            except Exception as e:
+                                st.error(f"Error: {e}")
 
-    else:
-        # Fallback: show audit summary without AI
-        _show_audit_summary(audit_results)
+                elif ai_type == "links" and has_anthropic_key():
+                    if st.button(f"AI: Generate link paragraphs", key=f"btn_impl_link_{url_hash}_{step_idx}"):
+                        with st.spinner("Generating link text..."):
+                            try:
+                                from utils.ai_generator import get_client, generate_link_text
+                                client = get_client(get_anthropic_key())
+                                # Generate for first link action
+                                link_actions = step.get("link_actions", [])
+                                results = []
+                                for la in link_actions[:3]:
+                                    # Extract target URL from action text
+                                    import re
+                                    target_match = re.search(r'`([^`]+)`', la)
+                                    anchor_match = re.search(r'\*\*"([^"]+)"\*\*', la)
+                                    if target_match and anchor_match:
+                                        r = generate_link_text(
+                                            client, url, target_match.group(1),
+                                            anchor_match.group(1), "page text",
+                                            plan["target_keywords"], site_context, language,
+                                        )
+                                        results.append(r)
+                                st.session_state[result_key] = results
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+
+                elif ai_type == "faq" and has_anthropic_key():
+                    if st.button(f"AI: Generate FAQ section", key=f"btn_impl_faq_{url_hash}_{step_idx}"):
+                        with st.spinner("Generating FAQ..."):
+                            try:
+                                from utils.ai_generator import get_client, generate_keyword_faq
+                                client = get_client(get_anthropic_key())
+                                subtopics = step.get("subtopics", plan["target_keywords"][:5])
+                                result = generate_keyword_faq(
+                                    client, subtopics, plan["target_keywords"],
+                                    site_context, language,
+                                )
+                                st.session_state[result_key] = result
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+
+                # Display AI results
+                if result_key in st.session_state:
+                    res = st.session_state[result_key]
+                    st.markdown(
+                        "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
+                        "margin:0.3rem 0;'>COPY THIS INTO YOUR CMS</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    if ai_type == "meta" and isinstance(res, dict):
+                        for i, v in enumerate(res.get("variants", []), 1):
+                            st.markdown(f"**Variant {i}:**")
+                            st.code(f"Title: {v.get('title','')}\nDescription: {v.get('description','')}", language="text")
+
+                    elif ai_type == "keywords" and isinstance(res, dict):
+                        st.markdown(
+                            f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
+                            f"border-radius:0 4px 4px 0;'>{res.get('optimized_text', '')}</div>",
+                            unsafe_allow_html=True,
+                        )
+                        st.code(res.get("optimized_text", ""), language="text")
+
+                    elif ai_type == "links" and isinstance(res, list):
+                        for lr in res:
+                            st.markdown(
+                                f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
+                                f"border-radius:0 4px 4px 0; margin-bottom:0.3rem;'>{lr.get('paragraph', '')}</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.code(lr.get("html", ""), language="html")
+
+                    elif ai_type == "faq" and isinstance(res, dict):
+                        faq_text = ""
+                        for faq in res.get("faq_items", []):
+                            st.markdown(f"**Q: {faq.get('question', '')}**")
+                            st.markdown(faq.get("answer", ""))
+                            faq_text += f"Q: {faq.get('question','')}\nA: {faq.get('answer','')}\n\n"
+                        st.code(faq_text, language="text")
+
+    # ── Download full plan ────────────────────────────────────────
+    st.markdown("---")
+    export = []
+    for plan in plans:
+        for step in plan["steps"]:
+            export.append({
+                "url": plan["url"],
+                "page_type": plan["page_type"],
+                "lost_clicks": plan["lost_clicks"],
+                "step": step["action"],
+                "time_minutes": step["time"],
+                "detail": step["detail"],
+                "what_to_do": step["what_to_do"],
+            })
+
+    import json
+    st.download_button(
+        "Download full implementation plan (JSON)",
+        json.dumps(export, ensure_ascii=False, indent=2).encode("utf-8"),
+        "implementation_plan.json",
+        "application/json",
+    )
+
+    st.session_state["action_plan"] = True
 
 
 def _show_ctr_only_plan():
@@ -189,21 +533,22 @@ def _show_ctr_only_plan():
         .head(20)
     )
 
-    st.markdown("### Top Pages with CTR Gap (without audit)")
+    st.markdown("### Top Pages with CTR Gap (run Page Auditor for full implementation plan)")
 
     for _, row in page_summary.iterrows():
         url_short = shorten_url(row["page"])
-        priority = "🔴 CRITICAL" if row["lost_clicks"] > 50 else "🟡 MEDIUM" if row["lost_clicks"] > 20 else "🟢 LOW"
+        priority = "CRITICAL" if row["lost_clicks"] > 50 else "MEDIUM" if row["lost_clicks"] > 20 else "LOW"
+        pri_color = {"CRITICAL": "#ff4455", "MEDIUM": "#ffaa33", "LOW": "#33dd88"}[priority]
 
         st.markdown(f"""
-        <div style="background:#12121f; border:1px solid #1e1e2e; border-radius:8px; padding:1rem; margin-bottom:0.5rem;">
+        <div style="background:#12121f; border-left:3px solid {pri_color}; border-radius:6px; padding:0.8rem; margin-bottom:0.5rem;">
             <div style="display:flex; justify-content:space-between;">
                 <div>
-                    <span style="font-size:0.85rem; color:#c8b4ff; font-weight:500;">{url_short}</span><br>
+                    <span style="font-size:0.85rem; color:#e8e8f0; font-weight:500;">{url_short}</span><br>
                     <span style="font-size:0.75rem; color:#6b6b8a; font-family:'IBM Plex Mono',monospace;">Keywords: {row['top_kws']}</span>
                 </div>
                 <div style="text-align:right;">
-                    <div style="font-size:0.75rem; color:#e8e8f0;">{priority}</div>
+                    <div style="font-size:0.7rem; color:{pri_color}; font-weight:600;">{priority}</div>
                     <div style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#ff4455;">
                         -{row['lost_clicks']:.0f} clicks/mo
                     </div>
@@ -212,23 +557,3 @@ def _show_ctr_only_plan():
             </div>
         </div>
         """, unsafe_allow_html=True)
-
-
-def _show_audit_summary(audit_results: list):
-    """Show audit results as action table"""
-    if not audit_results:
-        return
-
-    st.markdown("### Audit-based prioritization (click 'Generate AI Action Plan' for full analysis)")
-
-    rows = []
-    for r in sorted(audit_results, key=lambda x: x.get("lost_clicks_estimate", 0), reverse=True):
-        rows.append({
-            "Page": shorten_url(r["url"]),
-            "Meta Score": r.get("meta_score"),
-            "Lost Clicks": r.get("lost_clicks_estimate", 0),
-            "Issues": len(r.get("issues", [])),
-            "Top Keywords": ", ".join(r.get("target_keywords", [])[:2]),
-        })
-
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
