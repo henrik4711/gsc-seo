@@ -137,58 +137,66 @@ def parse_all_pages(file_content) -> pd.DataFrame:
     if df.empty:
         return df
 
+    # Map SF columns to standard names — only first match per target name
     col_map = {}
+    used_targets = set()
+
+    def _map(col_name, target):
+        if target not in used_targets:
+            col_map[col_name] = target
+            used_targets.add(target)
+
     for col in df.columns:
         cl = col.lower().strip()
         if cl in ("address", "url", "page url"):
-            col_map[col] = "url"
+            _map(col, "url")
         elif cl in ("status code", "http status code"):
-            col_map[col] = "status_code"
+            _map(col, "status_code")
         elif cl in ("title 1", "title"):
-            col_map[col] = "title"
+            _map(col, "title")
         elif cl in ("title 1 length", "title length"):
-            col_map[col] = "title_length"
+            _map(col, "title_length")
         elif cl in ("meta description 1", "meta description"):
-            col_map[col] = "meta_description"
+            _map(col, "meta_description")
         elif cl in ("meta description 1 length", "meta description length"):
-            col_map[col] = "meta_description_length"
+            _map(col, "meta_description_length")
         elif cl in ("h1-1", "h1", "h1 1"):
-            col_map[col] = "h1"
+            _map(col, "h1")
         elif cl in ("word count"):
-            col_map[col] = "word_count"
+            _map(col, "word_count")
         elif cl in ("crawl depth"):
-            col_map[col] = "crawl_depth"
+            _map(col, "crawl_depth")
         elif cl in ("inlinks"):
-            col_map[col] = "inlinks"
+            _map(col, "inlinks")
         elif cl in ("outlinks"):
-            col_map[col] = "outlinks"
+            _map(col, "outlinks")
         elif cl in ("unique inlinks"):
-            col_map[col] = "unique_inlinks"
+            _map(col, "unique_inlinks")
         elif cl in ("unique outlinks"):
-            col_map[col] = "unique_outlinks"
+            _map(col, "unique_outlinks")
         elif cl in ("indexability"):
-            col_map[col] = "indexability"
+            _map(col, "indexability")
         elif cl in ("indexability status"):
-            col_map[col] = "indexability_status"
+            _map(col, "indexability_status")
         elif cl in ("canonical link element 1", "canonical"):
-            col_map[col] = "canonical"
+            _map(col, "canonical")
         elif cl in ("redirect url", "redirect uri"):
-            col_map[col] = "redirect_url"
+            _map(col, "redirect_url")
         elif cl in ("content type", "content"):
-            col_map.setdefault(col, "content_type")
+            _map(col, "content_type")
         elif cl in ("size (bytes)", "size"):
-            col_map.setdefault(col, "size_bytes")
+            _map(col, "size_bytes")
         elif cl in ("response time"):
-            col_map.setdefault(col, "response_time")
-        # Fuzzy
+            _map(col, "response_time")
+        # Fuzzy fallbacks — only if not already mapped
         elif "canonical" in cl:
-            col_map.setdefault(col, "canonical")
+            _map(col, "canonical")
         elif "redirect" in cl and "url" in cl:
-            col_map.setdefault(col, "redirect_url")
+            _map(col, "redirect_url")
         elif "word" in cl and "count" in cl:
-            col_map.setdefault(col, "word_count")
+            _map(col, "word_count")
         elif "crawl" in cl and "depth" in cl:
-            col_map.setdefault(col, "crawl_depth")
+            _map(col, "crawl_depth")
 
     df = df.rename(columns=col_map)
 
