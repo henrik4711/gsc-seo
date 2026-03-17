@@ -111,13 +111,21 @@ def render():
     already_audited = set(r["url"] for r in st.session_state.get("audit_results", []))
     not_audited = [p for p in all_pages if p not in already_audited]
 
-    with st.expander(f"Bulk audit ALL pages ({len(all_pages)} total, {len(not_audited)} not yet audited)", expanded=False):
-        st.markdown(
-            f"<p style='color:#9b9bb8; font-size:0.85rem;'>"
-            f"Audit every page from GSC data. This gives Internal Linking, Missing Keywords, and Content Quality "
-            f"full data for your entire site. Takes ~1 second per page.</p>",
-            unsafe_allow_html=True,
-        )
+    st.markdown("---")
+    st.markdown(
+        f"<div style='background:#0d0d15; border:2px solid #5533ff; border-radius:8px; padding:1rem; margin-bottom:1rem;'>"
+        f"<div style='font-family:\"Syne\",sans-serif; font-size:1.1rem; font-weight:700; color:#c8b4ff; margin-bottom:0.5rem;'>"
+        f"Bulk Audit — {len(all_pages)} pages in GSC, {len(not_audited)} not yet audited</div>"
+        f"<div style='font-size:0.85rem; color:#9b9bb8;'>"
+        f"Scrapes ALL pages from GSC and extracts title, meta, body text, links, headings, word count. "
+        f"This data powers Internal Linking, Missing Keywords, Content Quality, and the Unified Task List. "
+        f"Takes ~1 second per page.</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("Bulk audit settings", expanded=True):
+        st.empty()
 
         bulk_col1, bulk_col2 = st.columns(2)
         with bulk_col1:
