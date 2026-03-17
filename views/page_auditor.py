@@ -138,8 +138,8 @@ def render():
         with bulk_col2:
             max_pages_bulk = st.number_input(
                 "Max pages to audit",
-                min_value=10, max_value=2000, value=500,
-                help="Cap the number of pages (sorted by impressions, but 0-traffic pages included too)",
+                min_value=10, max_value=5000, value=2000,
+                help="All pages from GSC — takes ~1 sec per page. 2000 pages ≈ 33 min.",
                 key="bulk_max_pages",
             )
 
