@@ -1,27 +1,54 @@
 """
 Internal Linking — action-first view
-Every item = one clear task: what to change, where, and AI to write it for you
+Every item = one clear task: what to change, where, and AI to write it for you.
+Generates linking recommendations from BOTH audit data AND topic cluster overlap.
 """
 
 import streamlit as st
 import json
+from urllib.parse import urlparse
 from config import get_anthropic_key, has_anthropic_key
 
 
 def _build_action_list(audit_results, topic_clusters):
-    """Flatten all linking issues into a single prioritized action list."""
+    """
+    Build linking actions from two sources:
+    1. Audit data (link_fix_suggestions, anchor_mismatches, missing_crosslinks)
+    2. Topic cluster overlap — find pages sharing topics but not linking to each other
+    """
     actions = []
     action_id = 0
 
+    # Index: which URLs each page already links to (from audit scrape data)
+    known_links_by_page = {}
+    page_impressions = {}
+    page_keywords = {}
+    page_types = {}
+    audited_urls = set()
+
     for r in audit_results:
         url = r.get("url", "")
-        impressions = r.get("impressions", 0)
-        lost_clicks = r.get("lost_clicks_estimate", 0)
+        audited_urls.add(url)
+        page_impressions[url] = r.get("impressions", 0)
+        page_keywords[url] = r.get("target_keywords", [])
+        page_types[url] = r.get("page_type", "unknown")
+
+        # Build set of URLs this page already links to
+        internal_links = r.get("internal_links", r.get("content_audit", {}).get("linking", {}).get("total_internal", 0))
+        linked_urls = set()
+        if isinstance(internal_links, list):
+            for l in internal_links:
+                u = l.get("url", "")
+                if u.startswith("/"):
+                    domain = urlparse(url).netloc
+                    u = f"https://{domain}{u}"
+                linked_urls.add(u.rstrip("/").lower())
+        known_links_by_page[url] = linked_urls
+
+        # Source 1: Existing audit link_fix_suggestions
         content_audit = r.get("content_audit") or {}
         linking = content_audit.get("linking") or {}
-        keywords = r.get("target_keywords", [])
 
-        # 1. Link fix suggestions → "ADD LINK" actions
         for fix in (linking.get("link_fix_suggestions") or []):
             target = fix.get("target_url", "")
             anchor = fix.get("suggested_anchor", "")
@@ -42,27 +69,29 @@ def _build_action_list(audit_results, topic_clusters):
             actions.append({
                 "id": action_id,
                 "type": "add_link",
+                "source": "audit",
                 "priority": priority,
                 "page_url": url,
-                "impressions": impressions,
+                "impressions": page_impressions.get(url, 0),
                 "action_title": f"Add link to {target}",
                 "instruction": f"Open **{url}** in your CMS. Go to **{where}**. Add a link to `{target}` with anchor text **\"{anchor}\"**.",
                 "why": reason or f"These pages share topics ({', '.join(shared[:3])}), but there is no link between them.",
                 "target_url": target,
                 "anchor_text": anchor,
                 "placement": where,
-                "keywords": keywords,
+                "keywords": page_keywords.get(url, []),
             })
             action_id += 1
 
-        # 2. Anchor mismatches → "FIX ANCHOR" actions
+        # Source 1b: Anchor mismatches
         for am in ((linking.get("semantic_validation") or {}).get("anchor_mismatches") or []):
             actions.append({
                 "id": action_id,
                 "type": "fix_anchor",
+                "source": "audit",
                 "priority": "medium",
                 "page_url": url,
-                "impressions": impressions,
+                "impressions": page_impressions.get(url, 0),
                 "action_title": f"Fix anchor text for link to {am.get('url', '')}",
                 "instruction": (
                     f"Open **{url}** in your CMS. Find the link to `{am.get('url', '')}`. "
@@ -73,33 +102,137 @@ def _build_action_list(audit_results, topic_clusters):
                 "anchor_text": am.get("suggested_anchor", ""),
                 "old_anchor": am.get("current_anchor", ""),
                 "placement": "",
-                "keywords": keywords,
+                "keywords": page_keywords.get(url, []),
             })
             action_id += 1
 
-        # 3. Missing crosslinks → "ADD CROSSLINK" actions
-        for cl in (linking.get("missing_crosslinks") or []):
-            shared = cl.get("shared_topics", [])
-            actions.append({
-                "id": action_id,
-                "type": "add_crosslink",
-                "priority": "low" if cl.get("shared_count", 0) < 3 else "medium",
-                "page_url": url,
-                "impressions": impressions,
-                "action_title": f"Add crosslink to {cl.get('url', '')}",
-                "instruction": (
-                    f"Open **{url}** in your CMS. Add a link to `{cl.get('url', '')}` "
-                    f"somewhere in the page content. Suggested anchor: one of the shared topics below."
-                ),
-                "why": f"These pages share {cl.get('shared_count', 0)} topics ({', '.join(shared[:4])}) but are not linked.",
-                "target_url": cl.get("url", ""),
-                "anchor_text": shared[0] if shared else "",
-                "placement": "bottom text or a related section",
-                "keywords": keywords,
-            })
-            action_id += 1
+    # ── Source 2: Topic cluster overlap analysis ──────────────────
+    # Find pages that share topics but DON'T link to each other
+    # This works for ALL pages, not just deep-scraped categories
+    if topic_clusters:
+        page_topics = topic_clusters.get("page_topics", {})
+        overlap = topic_clusters.get("overlap_matrix", [])
 
-    # Sort: high first, then by impressions descending
+        # Also build overlap from page_topics if overlap_matrix is empty
+        if not overlap:
+            urls_with_topics = list(page_topics.keys())
+            for i, url_a in enumerate(urls_with_topics):
+                topics_a = set(t.get("topic", "") for t in page_topics[url_a])
+                for url_b in urls_with_topics[i+1:]:
+                    topics_b = set(t.get("topic", "") for t in page_topics[url_b])
+                    shared = topics_a & topics_b
+                    if shared:
+                        overlap.append({
+                            "page_1": url_a,
+                            "page_2": url_b,
+                            "shared_topics": len(shared),
+                            "topic_names": list(shared),
+                        })
+
+        # Deduplicate: track which (source, target) pairs we already have
+        existing_pairs = set()
+        for a in actions:
+            existing_pairs.add((a["page_url"].rstrip("/").lower(), a.get("target_url", "").rstrip("/").lower()))
+
+        for ov in overlap:
+            p1 = ov.get("page_1", "")
+            p2 = ov.get("page_2", "")
+            shared_count = ov.get("shared_topics", 0)
+            topic_names = ov.get("topic_names", [])
+
+            if shared_count < 1:
+                continue
+
+            # Only include if at least one page was audited
+            if p1 not in audited_urls and p2 not in audited_urls:
+                continue
+
+            # Check both directions
+            for source_url, target_url in [(p1, p2), (p2, p1)]:
+                if source_url not in audited_urls:
+                    continue
+
+                pair_key = (source_url.rstrip("/").lower(), target_url.rstrip("/").lower())
+                if pair_key in existing_pairs:
+                    continue
+
+                # Check if we KNOW the page already links there
+                known = known_links_by_page.get(source_url, set())
+                if target_url.rstrip("/").lower() in known:
+                    continue
+
+                # Determine priority from shared topic count + impressions
+                impr = page_impressions.get(source_url, 0)
+                if shared_count >= 3 or impr > 1000:
+                    priority = "high"
+                elif shared_count >= 2 or impr > 500:
+                    priority = "medium"
+                else:
+                    priority = "low"
+
+                # Suggest anchor from shared topics
+                suggested_anchor = topic_names[0] if topic_names else ""
+
+                actions.append({
+                    "id": action_id,
+                    "type": "add_link",
+                    "source": "cluster_overlap",
+                    "priority": priority,
+                    "page_url": source_url,
+                    "impressions": impr,
+                    "action_title": f"Add link to {target_url}",
+                    "instruction": (
+                        f"Open **{source_url}** in your CMS. "
+                        f"Add a link to `{target_url}` with anchor text **\"{suggested_anchor}\"**. "
+                        f"Place it in the intro, bottom text, or a relevant section."
+                    ),
+                    "why": (
+                        f"These pages share {shared_count} topic(s): {', '.join(topic_names[:4])}. "
+                        f"Linking them helps Google understand your topic authority and helps users navigate."
+                    ),
+                    "target_url": target_url,
+                    "anchor_text": suggested_anchor,
+                    "placement": "intro, bottom text, or a relevant H2 section",
+                    "keywords": page_keywords.get(source_url, []),
+                })
+                existing_pairs.add(pair_key)
+                action_id += 1
+
+    # ── Source 3: Pages with very few internal links ──────────────
+    for r in audit_results:
+        url = r.get("url", "")
+        internal_links = r.get("internal_links", 0)
+        link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
+        content_audit = r.get("content_audit") or {}
+        linking = content_audit.get("linking") or {}
+        total = linking.get("total_internal", link_count)
+
+        if total < 3 and r.get("impressions", 0) > 100:
+            # Check we haven't already flagged this page
+            already_has_actions = any(a["page_url"] == url for a in actions)
+            if not already_has_actions:
+                actions.append({
+                    "id": action_id,
+                    "type": "low_links",
+                    "source": "link_count",
+                    "priority": "medium",
+                    "page_url": url,
+                    "impressions": r.get("impressions", 0),
+                    "action_title": f"Page has only {total} internal links — add more",
+                    "instruction": (
+                        f"Open **{url}** in your CMS. This page only has **{total} internal links**. "
+                        f"Add links to related pages to help Google discover and understand your content structure. "
+                        f"Aim for at least 5-10 internal links per page."
+                    ),
+                    "why": "Pages with very few internal links are harder for Google to crawl and rank. They also provide a poor user experience.",
+                    "target_url": "",
+                    "anchor_text": "",
+                    "placement": "throughout the page",
+                    "keywords": page_keywords.get(url, []),
+                })
+                action_id += 1
+
+    # Sort: high first, then by impressions
     pri_order = {"high": 0, "medium": 1, "low": 2}
     actions.sort(key=lambda a: (pri_order.get(a["priority"], 1), -a["impressions"]))
     return actions
@@ -136,44 +269,44 @@ def render():
     # ── Summary ───────────────────────────────────────────────────
     high = sum(1 for a in actions if a["priority"] == "high")
     med = sum(1 for a in actions if a["priority"] == "medium")
-    add_links = sum(1 for a in actions if a["type"] in ("add_link", "add_crosslink"))
-    fix_anchors = sum(1 for a in actions if a["type"] == "fix_anchor")
+    from_audit = sum(1 for a in actions if a["source"] == "audit")
+    from_clusters = sum(1 for a in actions if a["source"] == "cluster_overlap")
+    from_count = sum(1 for a in actions if a["source"] == "link_count")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total actions", len(actions))
     c2.metric("High priority", high)
-    c3.metric("Links to add", add_links)
-    c4.metric("Anchors to fix", fix_anchors)
+    c3.metric("From topic analysis", from_clusters)
+    c4.metric("From audit", from_audit + from_count)
 
     st.markdown("---")
 
     # ── Filter ────────────────────────────────────────────────────
     filter_col1, filter_col2 = st.columns(2)
     with filter_col1:
-        type_filter = st.multiselect(
-            "Filter by type",
-            ["add_link", "fix_anchor", "add_crosslink"],
-            default=["add_link", "fix_anchor", "add_crosslink"],
-            format_func=lambda x: {"add_link": "Add link", "fix_anchor": "Fix anchor", "add_crosslink": "Add crosslink"}[x],
-        )
-    with filter_col2:
         pri_filter = st.multiselect(
             "Filter by priority",
             ["high", "medium", "low"],
             default=["high", "medium"],
         )
+    with filter_col2:
+        source_filter = st.multiselect(
+            "Filter by source",
+            ["audit", "cluster_overlap", "link_count"],
+            default=["audit", "cluster_overlap", "link_count"],
+            format_func=lambda x: {"audit": "Page audit", "cluster_overlap": "Topic cluster overlap", "link_count": "Low link count"}[x],
+        )
 
-    filtered = [a for a in actions if a["type"] in type_filter and a["priority"] in pri_filter]
-
+    filtered = [a for a in actions if a["priority"] in pri_filter and a["source"] in source_filter]
     st.markdown(f"**Showing {len(filtered)} of {len(actions)} actions**")
 
     # ── Action cards ──────────────────────────────────────────────
     for a in filtered:
         pri = a["priority"]
         pri_color = {"high": "#ff4455", "medium": "#ffaa33", "low": "#33dd88"}[pri]
-        type_label = {"add_link": "ADD LINK", "fix_anchor": "FIX ANCHOR", "add_crosslink": "ADD CROSSLINK"}[a["type"]]
-        type_icon = {"add_link": "+", "fix_anchor": "~", "add_crosslink": "+"}[a["type"]]
         border_color = {"high": "#ff4455", "medium": "#2a2a40", "low": "#1e1e2e"}[pri]
+        type_label = {"add_link": "ADD LINK", "fix_anchor": "FIX ANCHOR", "low_links": "ADD MORE LINKS"}[a["type"]]
+        source_label = {"audit": "PAGE AUDIT", "cluster_overlap": "TOPIC OVERLAP", "link_count": "LINK COUNT"}[a["source"]]
 
         st.markdown(
             f"<div style='background:#12121f; border:1px solid {border_color}; border-left:4px solid {pri_color}; "
@@ -183,11 +316,11 @@ def render():
             f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:{pri_color}; "
             f"text-transform:uppercase; letter-spacing:0.1em;'>{type_label} · {pri.upper()}</span>"
             f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#6b6b8a;'>"
-            f"{a['impressions']:,} impressions</span>"
+            f"{source_label} · {a['impressions']:,} impressions</span>"
             f"</div>"
             # Action title
             f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600; margin-bottom:0.6rem;'>"
-            f"{type_icon} {a['action_title']}</div>"
+            f"{a['action_title']}</div>"
             # Instruction
             f"<div style='font-size:0.85rem; color:#c8b4ff; background:#0d0d15; padding:0.6rem; "
             f"border-radius:4px; margin-bottom:0.5rem; line-height:1.5;'>"
@@ -199,9 +332,9 @@ def render():
         )
 
         # ── AI Generate button ────────────────────────────────
-        if a["type"] in ("add_link", "add_crosslink"):
+        if a["type"] in ("add_link",) and a.get("target_url"):
             result_key = f"link_ai_{a['id']}"
-            if st.button(f"Generate link paragraph for AI", key=f"btn_link_{a['id']}", type="primary"):
+            if st.button(f"Generate link paragraph", key=f"btn_link_{a['id']}", type="primary"):
                 with st.spinner("AI writing paragraph with link..."):
                     try:
                         from utils.ai_generator import get_client, generate_link_text
@@ -235,10 +368,11 @@ def render():
     export_data = [{
         "action": a["instruction"],
         "page": a["page_url"],
-        "target": a["target_url"],
-        "anchor": a["anchor_text"],
+        "target": a.get("target_url", ""),
+        "anchor": a.get("anchor_text", ""),
         "priority": a["priority"],
         "type": a["type"],
+        "source": a["source"],
     } for a in actions]
     st.download_button(
         "Download action list (JSON)",
