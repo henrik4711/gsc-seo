@@ -176,21 +176,26 @@ def _render_upload():
             key="upload_sf_inlinks",
             help="Complete internal link map — source, destination, anchor text"
         )
-        if inlinks_file:
+        if inlinks_file and "sf_inlinks" not in st.session_state:
             try:
-                from utils.screaming_frog_import import parse_all_inlinks, build_complete_link_map
-                df = parse_all_inlinks(inlinks_file.read())
-                if not df.empty:
-                    st.session_state["sf_inlinks"] = df
-                    link_map = build_complete_link_map(df)
-                    st.session_state["sf_link_map"] = link_map
-                    from utils.persistence import save_key
-                    save_key("sf_inlinks")
-                    save_key("sf_link_map")
-                    st.success(f"{len(df):,} internal links imported ({link_map['unique_pages']:,} unique pages)")
-                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+                file_bytes = inlinks_file.read()
+                if not file_bytes:
+                    st.error("File appears empty — try re-selecting it.")
                 else:
-                    st.error("No data found. Check that it is a Screaming Frog All Inlinks CSV.")
+                    with st.spinner(f"Parsing {len(file_bytes) // 1024:,} KB..."):
+                        from utils.screaming_frog_import import parse_all_inlinks, build_complete_link_map
+                        df = parse_all_inlinks(file_bytes)
+                    if not df.empty:
+                        st.session_state["sf_inlinks"] = df
+                        link_map = build_complete_link_map(df)
+                        st.session_state["sf_link_map"] = link_map
+                        from utils.persistence import save_key
+                        save_key("sf_inlinks")
+                        save_key("sf_link_map")
+                        st.success(f"{len(df):,} internal links imported ({link_map['unique_pages']:,} unique pages)")
+                        st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+                    else:
+                        st.error("No data found. Check that it is a Screaming Frog All Inlinks CSV.")
             except Exception as e:
                 st.error(f"Error parsing: {e}")
 
@@ -202,24 +207,42 @@ def _render_upload():
             key="upload_sf_pages",
             help="Page-level data — status codes, word count, crawl depth, meta"
         )
-        if pages_file:
+        if pages_file and "sf_pages" not in st.session_state:
             try:
-                from utils.screaming_frog_import import parse_all_pages
-                df = parse_all_pages(pages_file.read())
-                if not df.empty:
-                    st.session_state["sf_pages"] = df
-                    from utils.persistence import save_key
-                    save_key("sf_pages")
-                    st.success(f"{len(df):,} pages imported")
-                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+                file_bytes = pages_file.read()
+                if not file_bytes:
+                    st.error("File appears empty — try re-selecting it.")
                 else:
-                    st.error("No data found. Check that it is a Screaming Frog Internal/All Pages CSV.")
+                    with st.spinner(f"Parsing {len(file_bytes) // 1024:,} KB..."):
+                        from utils.screaming_frog_import import parse_all_pages
+                        df = parse_all_pages(file_bytes)
+                    if not df.empty:
+                        st.session_state["sf_pages"] = df
+                        from utils.persistence import save_key
+                        save_key("sf_pages")
+                        st.success(f"{len(df):,} pages imported")
+                        st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+                    else:
+                        st.error("No data found. Check that it is a Screaming Frog Internal/All Pages CSV.")
             except Exception as e:
                 st.error(f"Error parsing: {e}")
 
-    # Analyze crawl data
+    # Show loaded SF data status + clear button
     has_sf_pages = "sf_pages" in st.session_state
     has_sf_inlinks = "sf_inlinks" in st.session_state
+
+    if has_sf_pages or has_sf_inlinks:
+        sf_status = []
+        if has_sf_pages:
+            sf_status.append(f"All Pages: {len(st.session_state['sf_pages']):,} rows")
+        if has_sf_inlinks:
+            sf_status.append(f"All Inlinks: {len(st.session_state['sf_inlinks']):,} rows")
+        st.markdown(f"**Loaded:** {' · '.join(sf_status)}")
+
+        if st.button("Clear SF data (re-upload)", key="btn_clear_sf"):
+            for k in ["sf_pages", "sf_inlinks", "sf_link_map", "sf_crawl_issues"]:
+                st.session_state.pop(k, None)
+            st.rerun()
 
     if has_sf_pages or has_sf_inlinks:
         if st.button("Analyze Crawl Data", type="primary", key="btn_analyze_sf"):
