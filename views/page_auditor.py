@@ -106,7 +106,63 @@ def render():
 
     urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
 
-    if not urls:
+    # ── Bulk audit ALL pages ──────────────────────────────────────
+    all_pages = df["page"].unique().tolist()
+    already_audited = set(r["url"] for r in st.session_state.get("audit_results", []))
+    not_audited = [p for p in all_pages if p not in already_audited]
+
+    with st.expander(f"Bulk audit ALL pages ({len(all_pages)} total, {len(not_audited)} not yet audited)", expanded=False):
+        st.markdown(
+            f"<p style='color:#9b9bb8; font-size:0.85rem;'>"
+            f"Audit every page from GSC data. This gives Internal Linking, Missing Keywords, and Content Quality "
+            f"full data for your entire site. Takes ~1 second per page.</p>",
+            unsafe_allow_html=True,
+        )
+
+        bulk_col1, bulk_col2 = st.columns(2)
+        with bulk_col1:
+            min_impressions_bulk = st.number_input(
+                "Min impressions per page",
+                min_value=0, max_value=10000, value=50,
+                help="Skip low-traffic pages to save time",
+                key="bulk_min_impr",
+            )
+        with bulk_col2:
+            max_pages_bulk = st.number_input(
+                "Max pages to audit",
+                min_value=10, max_value=500, value=100,
+                help="Cap the number of pages (sorted by impressions)",
+                key="bulk_max_pages",
+            )
+
+        # Filter + sort by impressions
+        page_impressions = df.groupby("page")["impressions"].sum().sort_values(ascending=False)
+        bulk_pages = page_impressions[page_impressions >= min_impressions_bulk].head(max_pages_bulk).index.tolist()
+        bulk_new = [p for p in bulk_pages if p not in already_audited]
+
+        st.markdown(
+            f"**{len(bulk_pages)} pages** match filters, **{len(bulk_new)} new** to audit "
+            f"(~{len(bulk_new)} seconds estimated)"
+        )
+
+        audit_new_only = st.toggle(
+            "Only audit new pages (keep existing results)",
+            value=True,
+            key="bulk_new_only",
+        )
+
+        run_bulk = st.button("Run Bulk Audit", type="primary", key="btn_bulk_audit")
+
+        if run_bulk:
+            pages_to_audit = bulk_new if audit_new_only else bulk_pages
+            if not pages_to_audit:
+                st.success("All pages already audited!")
+            else:
+                # Inject into urls and trigger audit
+                urls = pages_to_audit
+                run_audit = True
+
+    if not urls and not run_audit:
         st.info("Enter URLs above to start audit")
         return
 
@@ -203,7 +259,17 @@ def render():
             progress.progress((i + 1) / len(urls))
             time.sleep(0.3)
 
-        st.session_state["audit_results"] = audit_results
+        # Merge with existing results if bulk audit with "keep existing"
+        if st.session_state.get("bulk_new_only", False) and "audit_results" in st.session_state:
+            existing = st.session_state["audit_results"]
+            existing_urls = set(r["url"] for r in existing)
+            for new_r in audit_results:
+                if new_r["url"] not in existing_urls:
+                    existing.append(new_r)
+            st.session_state["audit_results"] = existing
+        else:
+            st.session_state["audit_results"] = audit_results
+
         status_text.empty()
         progress.empty()
         st.success(f"Audit complete for {len(audit_results)} pages")
