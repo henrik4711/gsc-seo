@@ -353,10 +353,19 @@ def render():
 
     st.markdown("---")
 
-    # Detailed per-page view
+    # Detailed per-page view with pagination
     st.markdown("### Detailed Audit")
 
-    for r in results:
+    AUDIT_PER_PAGE = 10
+    total_audit_pages = max(1, (len(results) + AUDIT_PER_PAGE - 1) // AUDIT_PER_PAGE)
+    audit_page = st.number_input(
+        "Page", min_value=1, max_value=total_audit_pages, value=1, key="audit_detail_page"
+    )
+    start_idx = (audit_page - 1) * AUDIT_PER_PAGE
+    visible_results = results[start_idx:start_idx + AUDIT_PER_PAGE]
+    st.markdown(f"**Showing {start_idx+1}-{min(start_idx+AUDIT_PER_PAGE, len(results))} of {len(results)} pages**")
+
+    for r in visible_results:
         url_short = r["url"].replace("https://", "").replace("http://", "")
         meta_score = r.get("meta_score")
         content_score = r.get("content_score")
