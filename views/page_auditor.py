@@ -123,15 +123,15 @@ def render():
         with bulk_col1:
             min_impressions_bulk = st.number_input(
                 "Min impressions per page",
-                min_value=0, max_value=10000, value=50,
-                help="Skip low-traffic pages to save time",
+                min_value=0, max_value=10000, value=0,
+                help="Set to 0 to include ALL pages — low-traffic pages matter for topic clusters and internal linking",
                 key="bulk_min_impr",
             )
         with bulk_col2:
             max_pages_bulk = st.number_input(
                 "Max pages to audit",
-                min_value=10, max_value=500, value=100,
-                help="Cap the number of pages (sorted by impressions)",
+                min_value=10, max_value=2000, value=500,
+                help="Cap the number of pages (sorted by impressions, but 0-traffic pages included too)",
                 key="bulk_max_pages",
             )
 
