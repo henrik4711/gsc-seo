@@ -23,7 +23,8 @@ STEP_ORDER = [
     ("keyword_fixes",     "8. Missing Keywords",   "Fill keyword gaps with AI-generated text"),
     ("new_articles",      "9. New Articles",       "Plan and generate new articles"),
     ("generated_content", "10. Content Generator",  "Select a page and generate AI-optimized content"),
-    ("action_plan",       "11. Action Plan",        "Click 'Generate AI Action Plan' for prioritized actions"),
+    ("tasks_viewed",      "11. All Tasks",           "Review unified task list across all analyses"),
+    ("action_plan",       "12. Action Plan",         "Click 'Generate AI Action Plan' for prioritized actions"),
 ]
 
 

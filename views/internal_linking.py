@@ -10,11 +10,12 @@ from urllib.parse import urlparse
 from config import get_anthropic_key, has_anthropic_key
 
 
-def _build_action_list(audit_results, topic_clusters):
+def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
     """
-    Build linking actions from two sources:
+    Build linking actions from multiple sources:
     1. Audit data (link_fix_suggestions, anchor_mismatches, missing_crosslinks)
     2. Topic cluster overlap — find pages sharing topics but not linking to each other
+    3. Screaming Frog link map (if available) — complete internal link data
     """
     actions = []
     action_id = 0
@@ -43,6 +44,13 @@ def _build_action_list(audit_results, topic_clusters):
                     domain = urlparse(url).netloc
                     u = f"https://{domain}{u}"
                 linked_urls.add(u.rstrip("/").lower())
+        # Enrich with SF link map if available
+        if sf_link_map:
+            sf_links = sf_link_map.get("links_from", {}).get(url, [])
+            for sl in sf_links:
+                t = sl.get("target", "")
+                linked_urls.add(t.rstrip("/").lower())
+
         known_links_by_page[url] = linked_urls
 
         # Source 1: Existing audit link_fix_suggestions
@@ -259,7 +267,8 @@ def render():
     site_context = st.session_state.get("site_context", "")
     language = st.session_state.get("content_language", "Swedish")
 
-    actions = _build_action_list(audit_results, topic_clusters)
+    sf_link_map = st.session_state.get("sf_link_map")
+    actions = _build_action_list(audit_results, topic_clusters, sf_link_map)
 
     if not actions:
         st.success("No linking issues found. Internal linking looks good!")

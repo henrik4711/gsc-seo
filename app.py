@@ -278,7 +278,8 @@ STEPS = [
     ("8. Missing Keywords",   "keywords",     "keyword_fixes",     "Fill keyword gaps"),
     ("9. New Articles",       "articles",     "new_articles",      "Plan new content"),
     ("10. Content Generator", "content",      "generated_content", "AI-generated content"),
-    ("11. Action Plan",       "action",       "action_plan",       "Prioritized action plan"),
+    ("11. All Tasks",         "tasks",        "tasks_viewed",      "Unified priority list"),
+    ("12. Action Plan",       "action",       "action_plan",       "Prioritized action plan"),
 ]
 
 # Figure out which step the user should be on
@@ -376,6 +377,9 @@ elif "New Articles" in selected:
 elif "Content" in selected:
     from views import content_generator
     content_generator.render()
+elif "All Tasks" in selected:
+    from views import unified_tasks
+    unified_tasks.render()
 elif "Action" in selected:
     from views import action_plan
     action_plan.render()

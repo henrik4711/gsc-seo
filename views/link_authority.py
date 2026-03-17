@@ -15,11 +15,12 @@ def render():
         unsafe_allow_html=True
     )
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "Upload Ahrefs Data",
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Upload Data",
         "Page Authority",
         "Backlink Overview",
         "Risk Map",
+        "Crawl Data (SF)",
     ])
 
     with tab1:
@@ -33,6 +34,9 @@ def render():
 
     with tab4:
         _render_risk_map()
+
+    with tab5:
+        _render_crawl_data()
 
 
 def _render_upload():
@@ -139,19 +143,105 @@ def _render_upload():
             st.success(f"Authority calculated for {len(authority)} pages")
             st.rerun()
 
+    # ── Screaming Frog uploads ────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Screaming Frog Crawl Data")
+    st.markdown("""
+    <div style="background:#12121f; border:1px solid #2a2a40; border-radius:8px; padding:1rem; margin-bottom:1.5rem; color:#c0c0d8;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#5533ff; margin-bottom:0.5rem;">HOW TO EXPORT FROM SCREAMING FROG</div>
+        <div style="font-size:0.85rem; line-height:1.8;">
+            <strong>1. All Inlinks</strong> (most important): Bulk Export &rarr; All Inlinks &rarr; Save as CSV<br>
+            <strong>2. All Pages</strong>: Internal tab &rarr; Filter: HTML &rarr; Export as CSV
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    sf_col1, sf_col2 = st.columns(2)
+
+    with sf_col1:
+        st.markdown("#### All Inlinks")
+        inlinks_file = st.file_uploader(
+            "Upload All Inlinks CSV",
+            type=["csv", "tsv"],
+            key="upload_sf_inlinks",
+            help="Complete internal link map — source, destination, anchor text"
+        )
+        if inlinks_file:
+            try:
+                from utils.screaming_frog_import import parse_all_inlinks, build_complete_link_map
+                df = parse_all_inlinks(inlinks_file.read())
+                if not df.empty:
+                    st.session_state["sf_inlinks"] = df
+                    link_map = build_complete_link_map(df)
+                    st.session_state["sf_link_map"] = link_map
+                    st.success(f"{len(df):,} internal links imported ({link_map['unique_pages']:,} unique pages)")
+                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+                else:
+                    st.error("No data found. Check that it is a Screaming Frog All Inlinks CSV.")
+            except Exception as e:
+                st.error(f"Error parsing: {e}")
+
+    with sf_col2:
+        st.markdown("#### All Pages")
+        pages_file = st.file_uploader(
+            "Upload All Pages / Internal HTML CSV",
+            type=["csv", "tsv"],
+            key="upload_sf_pages",
+            help="Page-level data — status codes, word count, crawl depth, meta"
+        )
+        if pages_file:
+            try:
+                from utils.screaming_frog_import import parse_all_pages
+                df = parse_all_pages(pages_file.read())
+                if not df.empty:
+                    st.session_state["sf_pages"] = df
+                    st.success(f"{len(df):,} pages imported")
+                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+                else:
+                    st.error("No data found. Check that it is a Screaming Frog Internal/All Pages CSV.")
+            except Exception as e:
+                st.error(f"Error parsing: {e}")
+
+    # Analyze crawl data
+    has_sf_pages = "sf_pages" in st.session_state
+    has_sf_inlinks = "sf_inlinks" in st.session_state
+
+    if has_sf_pages or has_sf_inlinks:
+        if st.button("Analyze Crawl Data", type="primary", key="btn_analyze_sf"):
+            from utils.screaming_frog_import import analyze_crawl_data
+            site_domain = ""
+            if "gsc_site" in st.session_state:
+                site_domain = st.session_state["gsc_site"].replace("https://", "").replace("http://", "").rstrip("/")
+            issues = analyze_crawl_data(
+                st.session_state.get("sf_pages", pd.DataFrame()),
+                st.session_state.get("sf_inlinks", pd.DataFrame()),
+                site_domain,
+            )
+            st.session_state["sf_crawl_issues"] = issues
+            total = sum(len(v) for v in issues.values())
+            st.success(f"Analysis complete — {total} issues found")
+            st.rerun()
+
     # Status
     st.markdown("---")
     st.markdown("### Import Status")
     datasets = {
-        "Best by Links": "ahrefs_best_by_links",
-        "Backlinks": "ahrefs_backlinks",
-        "Organic Keywords": "ahrefs_organic_keywords",
+        "Best by Links (Ahrefs)": "ahrefs_best_by_links",
+        "Backlinks (Ahrefs)": "ahrefs_backlinks",
+        "Organic Keywords (Ahrefs)": "ahrefs_organic_keywords",
         "Page Authority": "page_authority",
+        "All Inlinks (SF)": "sf_inlinks",
+        "All Pages (SF)": "sf_pages",
+        "Link Map (SF)": "sf_link_map",
+        "Crawl Issues (SF)": "sf_crawl_issues",
     }
     for name, key in datasets.items():
         data = st.session_state.get(key)
         if data is not None and hasattr(data, '__len__') and not hasattr(data, 'read'):
             st.markdown(f"+ **{name}**: {len(data):,} rows loaded")
+        elif data is not None and isinstance(data, dict):
+            total = sum(len(v) for v in data.values() if isinstance(v, list))
+            st.markdown(f"+ **{name}**: {total} items")
         else:
             st.markdown(f"X **{name}**: Not loaded")
 
@@ -313,3 +403,89 @@ def _render_risk_map():
                 f"</div>",
                 unsafe_allow_html=True,
             )
+
+
+def _render_crawl_data():
+    """Display Screaming Frog crawl analysis results."""
+    issues = st.session_state.get("sf_crawl_issues")
+
+    if not issues:
+        st.info("Upload Screaming Frog data in the **Upload Data** tab and click **Analyze Crawl Data**.")
+        return
+
+    st.markdown("### Technical SEO Issues from Crawl Data")
+
+    # Summary metrics
+    broken = len(issues.get("broken_links", []))
+    redirects = len(issues.get("redirect_chains", []))
+    orphans = len(issues.get("orphan_pages", []))
+    deep = len(issues.get("deep_pages", []))
+    thin = len(issues.get("thin_pages", []))
+    missing = len(issues.get("missing_meta", []))
+    non_idx = len(issues.get("non_indexable", []))
+    slow = len(issues.get("slow_pages", []))
+    total = broken + redirects + orphans + deep + thin + missing + non_idx + slow
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total issues", total)
+    c2.metric("Broken links", broken)
+    c3.metric("Orphan pages", orphans)
+    c4.metric("Deep pages", deep)
+
+    st.markdown("---")
+
+    # Issue sections
+    issue_types = [
+        ("broken_links", "Broken Links (4xx/5xx)", "#ff4455",
+         "These pages return errors. Fix or redirect them."),
+        ("orphan_pages", "Orphan Pages (0 inlinks)", "#ff4455",
+         "No internal links point to these pages. Google can't discover them."),
+        ("redirect_chains", "Redirects", "#ffaa33",
+         "Update internal links to point directly to the final URL."),
+        ("deep_pages", "Deep Pages (>3 clicks from home)", "#ffaa33",
+         "Move these closer to the homepage by adding links from higher-level pages."),
+        ("thin_pages", "Thin Pages (<100 words)", "#ffaa33",
+         "Add content or noindex pages with no SEO value."),
+        ("missing_meta", "Missing Title / Description", "#ffaa33",
+         "Add meta tags to improve click-through rate."),
+        ("non_indexable", "Non-Indexable Pages", "#6b6b8a",
+         "These pages are blocked from indexing. Verify this is intentional."),
+        ("slow_pages", "Slow Pages (>2s response)", "#ffaa33",
+         "Optimize server response time for better user experience and rankings."),
+    ]
+
+    for key, title, color, description in issue_types:
+        items = issues.get(key, [])
+        if not items:
+            continue
+
+        with st.expander(f"{title} ({len(items)} issues)", expanded=(key in ("broken_links", "orphan_pages"))):
+            st.markdown(f"<p style='color:#9b9bb8; font-size:0.8rem;'>{description}</p>", unsafe_allow_html=True)
+
+            for item in items[:50]:  # Cap display at 50
+                url = item.get("url", "")
+                action = item.get("action", "")
+                extra = ""
+                if "status_code" in item:
+                    extra += f" | Status: {item['status_code']}"
+                if "crawl_depth" in item:
+                    extra += f" | Depth: {item['crawl_depth']}"
+                if "word_count" in item:
+                    extra += f" | Words: {item['word_count']}"
+                if "response_time" in item:
+                    extra += f" | Response: {item['response_time']}s"
+                if "redirect_to" in item and item["redirect_to"]:
+                    extra += f" | Redirects to: {item['redirect_to']}"
+
+                st.markdown(
+                    f"<div style='background:#12121f; border-left:3px solid {color}; padding:0.5rem 0.8rem; "
+                    f"border-radius:0 4px 4px 0; margin-bottom:0.4rem;'>"
+                    f"<div style='font-size:0.85rem; color:#e8e8f0;'>{url}</div>"
+                    f"<div style='font-size:0.78rem; color:#c8b4ff;'>{action}</div>"
+                    f"{'<div style=\"font-size:0.68rem; color:#6b6b8a;\">' + extra.lstrip(' |') + '</div>' if extra else ''}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+            if len(items) > 50:
+                st.markdown(f"<div style='color:#6b6b8a; font-size:0.8rem;'>...and {len(items) - 50} more</div>", unsafe_allow_html=True)
