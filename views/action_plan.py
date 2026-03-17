@@ -32,8 +32,8 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         total_time = 0  # minutes
 
         # ── STEP: Fix meta title ──────────────────────────────
-        title = r.get("title", "")
-        title_len = r.get("title_length", len(title))
+        title = r.get("title") or ""
+        title_len = r.get("title_length") or len(title)
         title_issues = [i for i in issues if isinstance(i, dict) and i.get("field") in ("title", "title_length")]
 
         if title_len > 60:
@@ -69,8 +69,8 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
                 total_time += 2
 
         # ── STEP: Fix meta description ────────────────────────
-        desc = r.get("meta_description", "")
-        desc_len = r.get("description_length", len(desc))
+        desc = r.get("meta_description") or ""
+        desc_len = r.get("description_length") or len(desc)
 
         if not desc or desc_len < 10:
             steps.append({
@@ -101,7 +101,7 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
             total_time += 2
 
         # ── STEP: Fix H1 ─────────────────────────────────────
-        h1 = r.get("h1", "")
+        h1 = r.get("h1") or ""
         kw_cov = content_audit.get("keyword_coverage") or {}
 
         if kw_cov.get("in_h1", 0) == 0 and target_keywords:
