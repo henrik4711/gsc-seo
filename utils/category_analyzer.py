@@ -502,7 +502,42 @@ def audit_category_content(
     full_text = page_data.get("full_body_text", "").lower()
     editorial_text = (intro_text + " " + bottom_text).lower()
 
-    all_keywords = list(set((cluster_keywords or []) + (gsc_queries or [])))
+    # Filter keywords to only those relevant to this page's topic
+    # Prevents "dildo" showing as missing on /sexleksaker-for-man
+    raw_keywords = list(set((cluster_keywords or []) + (gsc_queries or [])))
+
+    # Extract topic words from URL slug
+    from urllib.parse import urlparse as _urlparse
+    slug_parts = set(_urlparse(url).path.lower().replace("-", " ").replace("/", " ").split())
+    slug_parts.discard("")
+
+    # Get page's cluster topic names
+    _page_topics = set()
+    if topic_clusters:
+        for t in topic_clusters.get("page_topics", {}).get(url, []):
+            _page_topics.add(t.get("topic", "").lower())
+
+    # H1 words as relevance signal
+    h1_words = set(h1.lower().split()) if h1 else set()
+
+    def _keyword_relevant(kw):
+        kw_words = set(kw.lower().split())
+        # Matches URL slug?
+        if kw_words & slug_parts:
+            return True
+        # Matches cluster topics?
+        for topic in _page_topics:
+            if set(topic.split()) & kw_words:
+                return True
+        # Matches H1?
+        if kw_words & h1_words:
+            return True
+        return False
+
+    all_keywords = [kw for kw in raw_keywords if _keyword_relevant(kw)]
+    # If filtering removed everything, keep cluster keywords at minimum
+    if not all_keywords and cluster_keywords:
+        all_keywords = cluster_keywords[:15]
 
     # ═══════════════════════════════════════════════════════════
     # A. EDITORIAL CONTENT VOLUME

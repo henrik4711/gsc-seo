@@ -85,9 +85,18 @@ def render():
                     unsafe_allow_html=True
                 )
 
-    # Keywords for selected URL
+    # Keywords for selected URL — filter out brand keywords
     page_queries = df[df["page"] == selected_url].sort_values("impressions", ascending=False)
-    auto_keywords = page_queries["query"].head(10).tolist()
+
+    # Detect brand keywords (appear on 30%+ of pages)
+    if "_brand_keywords" not in st.session_state:
+        total_pages = df["page"].nunique()
+        kw_page_counts = df.groupby("query")["page"].nunique()
+        st.session_state["_brand_keywords"] = set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
+    brand_kws = st.session_state["_brand_keywords"]
+
+    non_brand = page_queries[~page_queries["query"].isin(brand_kws)]
+    auto_keywords = non_brand["query"].head(10).tolist()
 
     # GSC keyword display
     if auto_keywords:

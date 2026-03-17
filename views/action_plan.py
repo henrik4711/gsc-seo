@@ -311,6 +311,7 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
             "steps": steps,
             "total_time": total_time,
             "target_keywords": target_keywords,
+            "primary_keyword": primary_keyword,
             "body_text_snippet": (r.get("body_text") or r.get("intro_text") or "")[:800],
         })
 
@@ -408,7 +409,7 @@ def render():
             f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600;'>{url}</div>"
             f"<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.2rem;'>"
             f"Meta: {meta_s if meta_s is not None else '?'}/100 · Content: {content_s if content_s is not None else '?'}/100 · "
-            f"Primary KW: {plan['target_keywords'][0] if plan['target_keywords'] else '?'}"
+            f"Primary KW: {plan.get('primary_keyword', plan['target_keywords'][0] if plan['target_keywords'] else '?')}"
             f"</div>"
             f"</div>",
             unsafe_allow_html=True,
