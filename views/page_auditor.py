@@ -175,153 +175,128 @@ def render():
         return
 
     # ── Run Audit ─────────────────────────────────────────────────
-    # Place progress elements at the TOP of the page using a container
-    audit_progress_container = st.container()
-
     if run_audit:
         audit_results = []
         total_urls = len(urls)
-        with audit_progress_container:
-            status_box = st.empty()
+
+        with st.status(f"Auditing {total_urls} pages...", expanded=True) as status:
             progress = st.progress(0)
+            log = st.empty()
 
-        for i, url in enumerate(urls):
-            elapsed_pages = i
-            est_remaining = (total_urls - i) * 1  # ~1 sec per page
-            mins = est_remaining // 60
-            secs = est_remaining % 60
+            for i, url in enumerate(urls):
+                remaining = (total_urls - i)
+                mins = remaining // 60
+                secs = remaining % 60
+                log.write(f"[{i+1}/{total_urls}] {url}  (~{mins}m {secs}s left)")
+                progress.progress((i) / total_urls)
 
-            status_box.markdown(
-                f"<div style='background:#12121f; border:2px solid #5533ff; border-radius:8px; padding:1rem; margin-bottom:1rem;'>"
-                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:#5533ff; "
-                f"text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.5rem;'>BULK AUDIT RUNNING</div>"
-                f"<div style='font-size:1.2rem; color:#e8e8f0; font-weight:700; margin-bottom:0.3rem;'>"
-                f"Page {i+1} of {total_urls}</div>"
-                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.8rem; color:#c8b4ff; "
-                f"margin-bottom:0.3rem;'>{url}</div>"
-                f"<div style='font-size:0.75rem; color:#6b6b8a;'>"
-                f"~{mins}m {secs}s remaining · {elapsed_pages} done</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+                # Get keywords for this page from GSC
+                # Filter out brand keywords that appear on every page
+                page_queries = df[df["page"] == url].sort_values("impressions", ascending=False)
 
-            # Get keywords for this page from GSC
-            # Filter out brand keywords that appear on every page — they're not
-            # the page's actual topic keywords
-            page_queries = df[df["page"] == url].sort_values("impressions", ascending=False)
+                # Detect brand terms: keywords that appear on 30%+ of all pages
+                if "_brand_keywords" not in st.session_state:
+                    total_pages = df["page"].nunique()
+                    kw_page_counts = df.groupby("query")["page"].nunique()
+                    brand_kws = set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
+                    st.session_state["_brand_keywords"] = brand_kws
+                brand_kws = st.session_state["_brand_keywords"]
 
-            # Detect brand terms: keywords that appear on 50%+ of all pages
-            if "_brand_keywords" not in st.session_state:
-                total_pages = df["page"].nunique()
-                kw_page_counts = df.groupby("query")["page"].nunique()
-                brand_kws = set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
-                st.session_state["_brand_keywords"] = brand_kws
-            brand_kws = st.session_state["_brand_keywords"]
+                # Prioritize: non-brand keywords first, then brand keywords
+                non_brand = page_queries[~page_queries["query"].isin(brand_kws)]
+                brand_only = page_queries[page_queries["query"].isin(brand_kws)]
 
-            # Prioritize: non-brand keywords first, then brand keywords
-            non_brand = page_queries[~page_queries["query"].isin(brand_kws)]
-            brand_only = page_queries[page_queries["query"].isin(brand_kws)]
+                target_keywords = (
+                    non_brand["query"].head(show_keywords).tolist()
+                    + brand_only["query"].head(2).tolist()
+                )[:show_keywords]
 
-            target_keywords = (
-                non_brand["query"].head(show_keywords).tolist()
-                + brand_only["query"].head(2).tolist()
-            )[:show_keywords]
+                # Also get cluster keywords for deeper validation
+                cluster_keywords = _get_cluster_keywords(url)
 
-            # Also get cluster keywords for deeper validation
-            cluster_keywords = _get_cluster_keywords(url)
+                result = {
+                    "url": url,
+                    "target_keywords": target_keywords,
+                    "cluster_keywords": cluster_keywords,
+                    "lost_clicks_estimate": page_queries["lost_clicks_estimate"].sum() if "lost_clicks_estimate" in page_queries.columns else 0,
+                    "position": page_queries["position"].mean() if len(page_queries) > 0 else None,
+                    "ctr_gap_pct": page_queries["ctr_gap_pct"].mean() if "ctr_gap_pct" in page_queries.columns and len(page_queries) > 0 else 0,
+                    "impressions": page_queries["impressions"].sum(),
+                    "clicks": page_queries["clicks"].sum(),
+                }
 
-            result = {
-                "url": url,
-                "target_keywords": target_keywords,
-                "cluster_keywords": cluster_keywords,
-                "lost_clicks_estimate": page_queries["lost_clicks_estimate"].sum() if "lost_clicks_estimate" in page_queries.columns else 0,
-                "position": page_queries["position"].mean() if len(page_queries) > 0 else None,
-                "ctr_gap_pct": page_queries["ctr_gap_pct"].mean() if "ctr_gap_pct" in page_queries.columns and len(page_queries) > 0 else 0,
-                "impressions": page_queries["impressions"].sum(),
-                "clicks": page_queries["clicks"].sum(),
-            }
+                if scrape_live:
+                    from utils.page_scraper import scrape_page, evaluate_meta
+                    from utils.category_analyzer import classify_page_type, deep_scrape_category, audit_category_content
 
-            if scrape_live:
-                from utils.page_scraper import scrape_page, evaluate_meta
-                from utils.category_analyzer import classify_page_type, deep_scrape_category, audit_category_content
+                    quick_class = classify_page_type(url)
+                    is_likely_category = quick_class["page_type"] == "category"
 
-                # Step 1: Quick classify from URL
-                quick_class = classify_page_type(url)
-                is_likely_category = quick_class["page_type"] == "category"
+                    if deep_category and is_likely_category:
+                        page_data = deep_scrape_category(url)
+                        result.update(page_data)
+                        result["body_text"] = page_data.get("full_body_text", "")
+                        result["word_count"] = len(result["body_text"].split()) if result["body_text"] else 0
+                        result["title_length"] = len(page_data.get("title") or "")
+                        result["description_length"] = len(page_data.get("meta_description") or "")
+                        result["internal_links"] = page_data.get("internal_link_count", 0)
+                        result["images_without_alt"] = page_data.get("images_without_alt", 0)
+                    else:
+                        page_data = scrape_page(url)
+                        result.update(page_data)
+                        classification = classify_page_type(url, page_data)
+                        result["page_type"] = classification["page_type"]
 
-                # Step 2: Scrape (deep for categories, basic for others)
-                if deep_category and is_likely_category:
-                    page_data = deep_scrape_category(url)
-                    result.update(page_data)
-                    # Map fields for compatibility
-                    result["body_text"] = page_data.get("full_body_text", "")
-                    result["word_count"] = len(result["body_text"].split()) if result["body_text"] else 0
-                    result["title_length"] = len(page_data.get("title") or "")
-                    result["description_length"] = len(page_data.get("meta_description") or "")
-                    result["internal_links"] = page_data.get("internal_link_count", 0)
-                    result["images_without_alt"] = page_data.get("images_without_alt", 0)
+                    if result.get("success", page_data.get("success")):
+                        meta_eval = evaluate_meta(result, target_keywords)
+                        result["meta_score"] = meta_eval["score"]
+                        result["issues"] = meta_eval["issues"]
+                        result["meta_eval"] = meta_eval
+
+                        cat_audit = audit_category_content(
+                            result, cluster_keywords, target_keywords,
+                            topic_clusters=st.session_state.get("topic_clusters"),
+                            page_authority=st.session_state.get("page_authority"),
+                        )
+                        result["content_score"] = cat_audit["score"]
+                        result["content_audit"] = cat_audit
+                        for issue in cat_audit.get("issues", []):
+                            result["issues"].append({
+                                "type": issue["severity"],
+                                "field": issue["area"],
+                                "msg": issue["msg"],
+                            })
+                    else:
+                        result["meta_score"] = None
+                        result["issues"] = [{"type": "critical", "field": "url", "msg": f"Could not fetch the page: {result.get('error', page_data.get('error'))}"}]
                 else:
-                    page_data = scrape_page(url)
-                    result.update(page_data)
-                    # Classify with page data
-                    classification = classify_page_type(url, page_data)
-                    result["page_type"] = classification["page_type"]
-
-                if result.get("success", page_data.get("success")):
-                    # Meta evaluation (always)
-                    meta_eval = evaluate_meta(result, target_keywords)
-                    result["meta_score"] = meta_eval["score"]
-                    result["issues"] = meta_eval["issues"]
-                    result["meta_eval"] = meta_eval
-
-                    # Content audit (deep for categories, standard for all page types)
-                    cat_audit = audit_category_content(
-                        result, cluster_keywords, target_keywords,
-                        topic_clusters=st.session_state.get("topic_clusters"),
-                        page_authority=st.session_state.get("page_authority"),
-                    )
-                    result["content_score"] = cat_audit["score"]
-                    result["content_audit"] = cat_audit
-                    # Merge content issues into main issues
-                    for issue in cat_audit.get("issues", []):
-                        result["issues"].append({
-                            "type": issue["severity"],
-                            "field": issue["area"],
-                            "msg": issue["msg"],
-                        })
-                else:
+                    result["success"] = True
+                    result["title"] = "(not fetched - scraping disabled)"
+                    result["meta_description"] = "(not fetched)"
                     result["meta_score"] = None
-                    result["issues"] = [{"type": "critical", "field": "url", "msg": f"Could not fetch the page: {result.get('error', page_data.get('error'))}"}]
+                    result["page_type"] = "unknown"
+                    result["issues"] = []
+
+                audit_results.append(result)
+                progress.progress((i + 1) / total_urls)
+                time.sleep(0.3)
+
+            # Merge with existing results if bulk audit with "keep existing"
+            if st.session_state.get("bulk_new_only", False) and "audit_results" in st.session_state:
+                existing = st.session_state["audit_results"]
+                existing_urls = set(r["url"] for r in existing)
+                for new_r in audit_results:
+                    if new_r["url"] not in existing_urls:
+                        existing.append(new_r)
+                st.session_state["audit_results"] = existing
             else:
-                result["success"] = True
-                result["title"] = "(not fetched - scraping disabled)"
-                result["meta_description"] = "(not fetched)"
-                result["meta_score"] = None
-                result["page_type"] = "unknown"
-                result["issues"] = []
+                st.session_state["audit_results"] = audit_results
 
-            audit_results.append(result)
-            progress.progress((i + 1) / len(urls))
-            time.sleep(0.3)
+            # Auto-save to volume
+            from utils.persistence import save_key
+            save_key("audit_results")
 
-        # Merge with existing results if bulk audit with "keep existing"
-        if st.session_state.get("bulk_new_only", False) and "audit_results" in st.session_state:
-            existing = st.session_state["audit_results"]
-            existing_urls = set(r["url"] for r in existing)
-            for new_r in audit_results:
-                if new_r["url"] not in existing_urls:
-                    existing.append(new_r)
-            st.session_state["audit_results"] = existing
-        else:
-            st.session_state["audit_results"] = audit_results
-
-        # Auto-save to volume
-        from utils.persistence import save_key
-        save_key("audit_results")
-
-        status_box.empty()
-        progress.empty()
-        st.success(f"Audit complete for {len(audit_results)} pages")
+            status.update(label=f"Audit complete — {len(audit_results)} pages", state="complete", expanded=False)
 
     # ── Display Results ───────────────────────────────────────────
     if "audit_results" not in st.session_state:
