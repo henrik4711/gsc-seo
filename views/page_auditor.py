@@ -177,13 +177,28 @@ def render():
     # ── Run Audit ─────────────────────────────────────────────────
     if run_audit:
         audit_results = []
+        total_urls = len(urls)
         progress = st.progress(0)
-        status_text = st.empty()
+        status_box = st.empty()
 
         for i, url in enumerate(urls):
-            status_text.markdown(
-                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.8rem; color:#c8b4ff;'>Analyzing: {url}</div>",
-                unsafe_allow_html=True
+            elapsed_pages = i
+            est_remaining = (total_urls - i) * 1  # ~1 sec per page
+            mins = est_remaining // 60
+            secs = est_remaining % 60
+
+            status_box.markdown(
+                f"<div style='background:#12121f; border:2px solid #5533ff; border-radius:8px; padding:1rem; margin-bottom:1rem;'>"
+                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:#5533ff; "
+                f"text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.5rem;'>BULK AUDIT RUNNING</div>"
+                f"<div style='font-size:1.2rem; color:#e8e8f0; font-weight:700; margin-bottom:0.3rem;'>"
+                f"Page {i+1} of {total_urls}</div>"
+                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.8rem; color:#c8b4ff; "
+                f"margin-bottom:0.3rem;'>{url}</div>"
+                f"<div style='font-size:0.75rem; color:#6b6b8a;'>"
+                f"~{mins}m {secs}s remaining · {elapsed_pages} done</div>"
+                f"</div>",
+                unsafe_allow_html=True,
             )
 
             # Get keywords for this page from GSC
@@ -300,7 +315,7 @@ def render():
         from utils.persistence import save_key
         save_key("audit_results")
 
-        status_text.empty()
+        status_box.empty()
         progress.empty()
         st.success(f"Audit complete for {len(audit_results)} pages")
 
