@@ -7,6 +7,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import json
+import ssl
+import time
 
 try:
     from google.oauth2 import service_account
@@ -14,6 +16,25 @@ try:
     GOOGLE_AVAILABLE = True
 except ImportError:
     GOOGLE_AVAILABLE = False
+
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
+
+
+def _execute_with_retry(request):
+    """Execute a Google API request with retry on SSL/transient errors."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            return request.execute()
+        except (ssl.SSLError, OSError, ConnectionError) as e:
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY * (attempt + 1))
+            else:
+                raise RuntimeError(
+                    f"Google API SSL error after {MAX_RETRIES} retries. "
+                    f"This is usually a temporary network issue — try again in a minute. "
+                    f"Original error: {e}"
+                ) from e
 
 
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
@@ -61,7 +82,7 @@ def build_gsc_service(credentials_json: dict):
     """Build GSC API service from service account credentials dict"""
     if not GOOGLE_AVAILABLE:
         raise ImportError("google-auth and google-api-python-client are required")
-    
+
     credentials = service_account.Credentials.from_service_account_info(
         credentials_json, scopes=SCOPES
     )
@@ -71,7 +92,7 @@ def build_gsc_service(credentials_json: dict):
 
 def list_properties(service) -> list:
     """List all verified GSC properties"""
-    result = service.sites().list().execute()
+    result = _execute_with_retry(service.sites().list())
     return [s["siteUrl"] for s in result.get("siteEntry", [])]
 
 
@@ -98,7 +119,7 @@ def fetch_gsc_data(
         "dataState": "final",
     }
     
-    response = service.searchanalytics().query(siteUrl=site_url, body=request).execute()
+    response = _execute_with_retry(service.searchanalytics().query(siteUrl=site_url, body=request))
     rows = response.get("rows", [])
     
     if not rows:
@@ -153,7 +174,7 @@ def fetch_page_level_summary(
         "dataState": "final",
     }
     
-    response = service.searchanalytics().query(siteUrl=site_url, body=request).execute()
+    response = _execute_with_retry(service.searchanalytics().query(siteUrl=site_url, body=request))
     rows = response.get("rows", [])
     
     if not rows:
