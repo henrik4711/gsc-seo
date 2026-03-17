@@ -27,7 +27,7 @@ def render():
     with col2:
         if st.button("Build Topic Clusters", type="primary", use_container_width=True):
             with st.spinner("Analyzing keyword topics..."):
-                from utils.topic_clusters import build_topic_clusters, identify_content_gaps
+                from utils.topic_clusters import build_topic_clusters, identify_content_gaps, generate_content_roadmap
                 result = build_topic_clusters(df, min_cluster_size=min_cluster)
                 st.session_state["topic_clusters"] = result
 
@@ -35,6 +35,15 @@ def render():
                 auth = st.session_state.get("page_authority")
                 gaps = identify_content_gaps(result["clusters"], auth)
                 st.session_state["content_gaps"] = gaps
+
+                # Content roadmap (auto-generate)
+                roadmap = generate_content_roadmap(
+                    clusters=result["clusters"],
+                    page_topics=result["page_topics"],
+                    gsc_data=df,
+                    authority_data=auth,
+                )
+                st.session_state["content_roadmap"] = roadmap
 
     if "topic_clusters" not in st.session_state:
         st.info("Click 'Build Topic Clusters' to start")

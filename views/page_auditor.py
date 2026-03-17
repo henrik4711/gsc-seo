@@ -173,22 +173,21 @@ def render():
                     result["issues"] = meta_eval["issues"]
                     result["meta_eval"] = meta_eval
 
-                    # Category content audit (when applicable)
-                    if result.get("page_type") == "category" and deep_category:
-                        cat_audit = audit_category_content(
-                            result, cluster_keywords, target_keywords,
-                            topic_clusters=st.session_state.get("topic_clusters"),
-                            page_authority=st.session_state.get("page_authority"),
-                        )
-                        result["content_score"] = cat_audit["score"]
-                        result["content_audit"] = cat_audit
-                        # Merge category issues into main issues
-                        for issue in cat_audit.get("issues", []):
-                            result["issues"].append({
-                                "type": issue["severity"],
-                                "field": issue["area"],
-                                "msg": issue["msg"],
-                            })
+                    # Content audit (deep for categories, standard for all page types)
+                    cat_audit = audit_category_content(
+                        result, cluster_keywords, target_keywords,
+                        topic_clusters=st.session_state.get("topic_clusters"),
+                        page_authority=st.session_state.get("page_authority"),
+                    )
+                    result["content_score"] = cat_audit["score"]
+                    result["content_audit"] = cat_audit
+                    # Merge content issues into main issues
+                    for issue in cat_audit.get("issues", []):
+                        result["issues"].append({
+                            "type": issue["severity"],
+                            "field": issue["area"],
+                            "msg": issue["msg"],
+                        })
                 else:
                     result["meta_score"] = None
                     result["issues"] = [{"type": "critical", "field": "url", "msg": f"Could not fetch the page: {result.get('error', page_data.get('error'))}"}]
@@ -307,11 +306,11 @@ def render():
                     h2_list = " ".join(r["h2s"][:5])
                     st.markdown(f"<div style='font-size:0.75rem; color:#6b6b8a; margin-top:0.5rem; font-family:\"IBM Plex Mono\",monospace;'>H2: {h2_list}</div>", unsafe_allow_html=True)
 
-                # ── Category-specific deep audit ───────────────────
+                # ── Content deep audit ─────────────────────────────
                 cat_audit = r.get("content_audit")
                 if cat_audit:
                     st.markdown("---")
-                    st.markdown("#### Deep Category Analysis")
+                    st.markdown("#### Deep Content Analysis")
 
                     stats = cat_audit.get("content_stats", {})
                     kw_cov = cat_audit.get("keyword_coverage", {})
