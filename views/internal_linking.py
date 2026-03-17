@@ -178,7 +178,7 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
             if p1 not in audited_urls and p2 not in audited_urls:
                 continue
 
-            # Check both directions
+            # Check both directions — but only between RELATED pages
             for source_url, target_url in [(p1, p2), (p2, p1)]:
                 if source_url not in audited_urls:
                     continue
@@ -192,6 +192,18 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
                 if target_url.rstrip("/").lower() in known:
                     continue
 
+                # Only suggest links between RELATED pages (same URL hierarchy)
+                src_parts = urlparse(source_url).path.lower().strip("/").split("/")
+                tgt_parts = urlparse(target_url).path.lower().strip("/").split("/")
+                is_sibling = (len(src_parts) >= 2 and len(tgt_parts) >= 2
+                              and src_parts[0] == tgt_parts[0])
+                is_parent_child = (
+                    target_url.rstrip("/").lower().startswith(source_url.rstrip("/").lower() + "/") or
+                    source_url.rstrip("/").lower().startswith(target_url.rstrip("/").lower() + "/")
+                )
+                if not is_sibling and not is_parent_child:
+                    continue
+
                 # Determine priority from shared topic count + impressions
                 impr = page_impressions.get(source_url, 0)
                 if shared_count >= 3 or impr > 1000:
@@ -201,8 +213,11 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
                 else:
                     priority = "low"
 
-                # Suggest anchor from shared topics
-                suggested_anchor = topic_names[0] if topic_names else ""
+                # Generate NATURAL anchor text from the TARGET page's URL slug
+                target_slug = tgt_parts[-1] if tgt_parts else ""
+                suggested_anchor = target_slug.replace("-", " ").replace("_", " ")
+                if not suggested_anchor:
+                    suggested_anchor = "related page"
 
                 actions.append({
                     "id": action_id,

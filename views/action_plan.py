@@ -254,17 +254,41 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
                     linked_urls.add(sl.get("target", "").rstrip("/").lower())
 
             cluster_links = []
+            # Only suggest links to pages in the SAME URL hierarchy or closely related
+            from urllib.parse import urlparse as _up3
+            my_path_parts = _up3(url).path.lower().strip("/").split("/")
+
             for other_url, other_topics in page_topics.items():
                 if other_url.rstrip("/").lower() == url.rstrip("/").lower():
                     continue
                 other_names = set(t.get("topic", "") for t in other_topics) - _junk
                 shared = my_topics & other_names
-                if shared and other_url.rstrip("/").lower() not in linked_urls:
-                    cluster_links.append({
-                        "target": other_url,
-                        "shared_topics": list(shared)[:3],
-                        "anchor": list(shared)[0] if shared else "",
-                    })
+                if not shared or other_url.rstrip("/").lower() in linked_urls:
+                    continue
+
+                # Filter: only suggest links to RELATED pages, not random pages
+                other_path_parts = _up3(other_url).path.lower().strip("/").split("/")
+                # Related if: same parent path, or sibling, or parent/child
+                is_sibling = (len(my_path_parts) >= 2 and len(other_path_parts) >= 2
+                              and my_path_parts[0] == other_path_parts[0])
+                is_parent_child = (
+                    other_url.rstrip("/").lower().startswith(url.rstrip("/").lower() + "/") or
+                    url.rstrip("/").lower().startswith(other_url.rstrip("/").lower() + "/")
+                )
+                if not is_sibling and not is_parent_child:
+                    continue
+
+                # Generate a NATURAL anchor text from the target page's URL slug
+                target_slug = other_path_parts[-1] if other_path_parts else ""
+                natural_anchor = target_slug.replace("-", " ").replace("_", " ")
+                if not natural_anchor or natural_anchor == "/":
+                    natural_anchor = other_url.split("/")[-2] if "/" in other_url else "related page"
+
+                cluster_links.append({
+                    "target": other_url,
+                    "shared_topics": list(shared)[:3],
+                    "anchor": natural_anchor,
+                })
             cluster_links.sort(key=lambda x: -len(x["shared_topics"]))
             cluster_links = cluster_links[:5]
         else:
