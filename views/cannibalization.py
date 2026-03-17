@@ -43,6 +43,9 @@ def render():
                 st.session_state["cannibal_page_summary"] = get_page_cannibalization_summary(cannibal_df)
                 st.session_state["cannibal_clusters"] = get_cannibalization_clusters(cannibal_df)
 
+                from utils.persistence import save_key
+                save_key("cannibalization")
+
     if "cannibalization" not in st.session_state:
         st.info("Click 'Analyze Cannibalization' to start")
         return

@@ -106,6 +106,9 @@ def render():
             # Save to session for next steps
             st.session_state["ctr_gaps"] = filtered
 
+            from utils.persistence import save_key
+            save_key("ctr_gaps")
+
     with tab2:
         # Aggregate by page
         page_summary = filtered.groupby("page").agg(

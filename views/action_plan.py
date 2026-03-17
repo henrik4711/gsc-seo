@@ -45,6 +45,9 @@ def render():
                         client = get_client(get_anthropic_key())
                         result = generate_action_plan(client, audit_results, site_url)
                         st.session_state["action_plan"] = result
+
+                        from utils.persistence import save_key
+                        save_key("action_plan")
                     except Exception as e:
                         st.error(f"❌ Error: {e}")
 

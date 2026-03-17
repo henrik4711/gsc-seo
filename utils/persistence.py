@@ -12,17 +12,32 @@ DATA_DIR = "/data"
 
 # Keys to persist and their types
 PERSIST_KEYS = {
+    # GSC foundation data
+    "gsc_data": "dataframe",          # All GSC query+page data — the foundation
+    "gsc_site": "setting",            # Selected GSC property URL
+    "site_context": "setting",        # Site context string
+    "content_language": "setting",    # Content language
+    # Analysis results
+    "ctr_gaps": "dataframe",          # CTR gap analysis
+    "cannibalization": "json",        # Cannibalization results
+    "topic_clusters": "json",         # Topic cluster data
+    "content_roadmap": "json",        # Content roadmap
+    "content_gaps": "json",           # Content gaps
+    # Audit
     "audit_results": "json",          # List of audit dicts
+    # Screaming Frog
     "sf_pages": "dataframe",          # SF All Pages DataFrame
     "sf_inlinks": "dataframe",        # SF All Inlinks DataFrame
     "sf_link_map": "json",            # Processed link map dict
     "sf_crawl_issues": "json",        # Crawl analysis results
+    # Ahrefs
     "page_authority": "dataframe",    # Ahrefs page authority
     "ahrefs_best_by_links": "dataframe",
     "ahrefs_backlinks": "dataframe",
     "ahrefs_organic_keywords": "dataframe",
-    "topic_clusters": "json",         # Topic cluster data
-    "content_roadmap": "json",        # Content roadmap
+    # AI generated
+    "generated_content": "json",      # AI-generated meta/content per URL
+    "action_plan": "json",            # AI-generated action plan
 }
 
 
@@ -48,7 +63,10 @@ def save_key(key: str):
     data = st.session_state[key]
 
     try:
-        if data_type == "dataframe" and isinstance(data, pd.DataFrame):
+        if data_type == "setting":
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(str(data))
+        elif data_type == "dataframe" and isinstance(data, pd.DataFrame):
             data.to_csv(path, index=False)
         elif data_type == "json":
             # Convert numpy/pandas types to native Python
@@ -97,7 +115,13 @@ def load_all():
             continue
 
         try:
-            if data_type == "dataframe":
+            if data_type == "setting":
+                with open(path, "r", encoding="utf-8") as f:
+                    val = f.read().strip()
+                if val:
+                    st.session_state[key] = val
+                    loaded.append(key)
+            elif data_type == "dataframe":
                 df = pd.read_csv(path)
                 if not df.empty:
                     st.session_state[key] = df

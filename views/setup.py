@@ -151,6 +151,12 @@ def render():
                             st.session_state["gsc_data"] = df
                             st.session_state["gsc_site"] = site
                             st.session_state["demo_mode"] = False
+
+                            # Auto-save GSC data to volume
+                            from utils.persistence import save_key
+                            save_key("gsc_data")
+                            save_key("gsc_site")
+
                             st.success(f"{len(df):,} query/page combinations fetched")
                             st.rerun()
                         except Exception as e:
@@ -205,6 +211,11 @@ def render():
         if st.button("Save settings"):
             st.session_state["site_context"] = site_context
             st.session_state["content_language"] = language
+
+            from utils.persistence import save_key
+            save_key("site_context")
+            save_key("content_language")
+
             st.success("Settings saved")
 
     with col2:
