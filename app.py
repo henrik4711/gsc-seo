@@ -395,6 +395,6 @@ elif "Content" in selected:
 elif "All Tasks" in selected:
     from views import unified_tasks
     unified_tasks.render()
-elif "Action" in selected:
+elif "Implementation" in selected:
     from views import action_plan
     action_plan.render()
