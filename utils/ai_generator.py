@@ -262,6 +262,291 @@ Return ONLY JSON:
     return json.loads(raw)
 
 
+def generate_link_text(
+    client: anthropic.Anthropic,
+    source_url: str,
+    target_url: str,
+    anchor_text: str,
+    placement_context: str,
+    keywords: list,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Generate a natural paragraph containing an internal link with proper anchor text."""
+    import json
+
+    prompt = f"""You are a senior SEO copywriter. Write a short, natural paragraph (2-3 sentences) that can be inserted into an existing page to create an internal link.
+
+## CONTEXT
+Source page: {source_url}
+Target page to link to: {target_url}
+Anchor text to use: {anchor_text}
+Where to place it: {placement_context}
+Related keywords: {', '.join(keywords[:10])}
+Site context: {site_context}
+Language: {language}
+
+## REQUIREMENTS
+- The paragraph must read naturally and fit the page context
+- Include the link with the exact anchor text provided
+- Do NOT be spammy or over-optimized
+- Write in {language}
+
+## OUTPUT FORMAT (JSON only, no markdown wrapping):
+{{
+  "paragraph": "The plain text paragraph with the anchor text naturally embedded",
+  "html": "<p>The paragraph with <a href='{target_url}'>anchor text</a> as HTML</p>"
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
+def generate_keyword_text(
+    client: anthropic.Anthropic,
+    missing_keywords: list,
+    existing_text: str,
+    page_type: str,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Generate optimized text paragraphs that naturally integrate missing keywords."""
+    import json
+
+    prompt = f"""You are a senior SEO copywriter. Rewrite or extend the following text to naturally integrate missing keywords.
+
+## CONTEXT
+Page type: {page_type}
+Site context: {site_context}
+Language: {language}
+
+Missing keywords to integrate: {', '.join(missing_keywords[:15])}
+
+Current text (excerpt):
+{existing_text[:2000]}
+
+## REQUIREMENTS
+- Keep the tone and style consistent with the existing text
+- Integrate as many missing keywords as possible, naturally
+- Do NOT keyword-stuff or make the text sound forced
+- Add 1-3 new paragraphs if needed to cover the keywords
+- Write in {language}
+
+## OUTPUT FORMAT (JSON only, no markdown wrapping):
+{{
+  "optimized_text": "The full optimized text with keywords integrated",
+  "keywords_integrated": ["list", "of", "keywords", "that", "were", "integrated"],
+  "word_count": 0
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
+def generate_keyword_faq(
+    client: anthropic.Anthropic,
+    missing_subtopics: list,
+    keywords: list,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Generate FAQ Q&A pairs targeting uncovered subtopics."""
+    import json
+
+    n_items = min(max(len(missing_subtopics), 3), 8)
+
+    prompt = f"""You are a senior SEO content specialist. Generate FAQ items targeting subtopics that are missing or poorly covered on the page.
+
+## CONTEXT
+Site context: {site_context}
+Language: {language}
+
+Uncovered subtopics: {', '.join(missing_subtopics[:10])}
+Related keywords to include: {', '.join(keywords[:15])}
+
+## REQUIREMENTS
+- Generate {n_items} FAQ Q&A pairs
+- Each question should target one or more uncovered subtopics
+- Each answer should naturally include relevant keywords
+- Answers should be 2-4 sentences, informative and helpful
+- Write in {language}
+
+## OUTPUT FORMAT (JSON only, no markdown wrapping):
+{{
+  "faq_items": [
+    {{"question": "...", "answer": "..."}}
+  ]
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
+def generate_article_outline(
+    client: anthropic.Anthropic,
+    title: str,
+    keywords: list,
+    content_type: str,
+    supporting_page: str,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Generate a detailed article outline with H2/H3 structure and word targets."""
+    import json
+
+    prompt = f"""You are a senior SEO content strategist. Create a detailed article outline.
+
+## ARTICLE DETAILS
+Title: {title}
+Content type: {content_type}
+Target keywords: {', '.join(keywords[:10])}
+This article supports hub page: {supporting_page}
+Site context: {site_context}
+Language: {language}
+
+## REQUIREMENTS
+- Create a structured outline with H2 sections and H3 subsections
+- Include word count targets per section
+- Note which keywords to include in each section
+- The outline should support the hub page through internal linking
+- Content type "{content_type}" should guide the structure (e.g. how-to = step-by-step, comparison = feature table, etc.)
+
+## OUTPUT FORMAT (JSON only, no markdown wrapping):
+{{
+  "outline": {{
+    "h1": "{title}",
+    "sections": [
+      {{
+        "h2": "Section heading",
+        "h3s": ["Subsection 1", "Subsection 2"],
+        "word_target": 200,
+        "keywords_to_include": ["keyword1", "keyword2"]
+      }}
+    ]
+  }},
+  "total_word_target": 1500
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
+def generate_article_full(
+    client: anthropic.Anthropic,
+    title: str,
+    keywords: list,
+    outline: dict | None,
+    content_type: str,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Generate a complete article in markdown."""
+    import json
+
+    outline_text = ""
+    if outline:
+        outline_text = f"\n\nFollow this outline:\n{json.dumps(outline, ensure_ascii=False, indent=2)}"
+
+    prompt = f"""You are a senior SEO copywriter. Write a complete, high-quality article.
+
+## ARTICLE DETAILS
+Title: {title}
+Content type: {content_type}
+Target keywords: {', '.join(keywords[:10])}
+Site context: {site_context}
+Language: {language}
+{outline_text}
+
+## REQUIREMENTS
+- Write in markdown format with proper H1, H2, H3 headings
+- Include an engaging intro, well-structured sections, and a conclusion
+- Naturally integrate target keywords (1-2% density)
+- Include a FAQ section at the end with 3-5 relevant questions
+- Write in {language}
+- Aim for 1000-2000 words depending on content type
+- Make it genuinely useful and well-written, not SEO spam
+
+## OUTPUT FORMAT (JSON only, no markdown wrapping):
+{{
+  "markdown": "# Title\\n\\n## Section...\\n\\nFull article in markdown",
+  "word_count": 0,
+  "meta_title": "Optimized meta title (50-60 chars)",
+  "meta_description": "Optimized meta description (140-160 chars)"
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
+def generate_article_meta(
+    client: anthropic.Anthropic,
+    title: str,
+    keywords: list,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Generate optimized meta title and description for a new article."""
+    import json
+
+    prompt = f"""You are a senior SEO specialist. Generate an optimized meta title and description for a new article.
+
+## ARTICLE
+Title: {title}
+Target keywords: {', '.join(keywords[:10])}
+Site context: {site_context}
+Language: {language}
+
+## REQUIREMENTS
+Title: 50-60 chars, primary keyword early, compelling
+Description: 140-160 chars, includes primary keyword, has CTA
+Write in {language}
+
+## OUTPUT FORMAT (JSON only, no markdown wrapping):
+{{
+  "meta_title": "...",
+  "meta_description": "..."
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = message.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
 def generate_action_plan(
     client: anthropic.Anthropic,
     audit_results: list,

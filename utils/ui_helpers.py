@@ -13,14 +13,17 @@ def shorten_url(url: str) -> str:
 
 
 STEP_ORDER = [
-    ("gsc_data",          "1. Setup & Connect",  "Connect GSC and add API keys"),
-    ("page_authority",    "2. Upload Ahrefs",    "Upload Ahrefs CSV files for backlink data"),
-    ("ctr_gaps",          "3. CTR Analysis",     "Click 'Analyze CTR Gaps' to find underperformers"),
-    ("cannibalization",   "4. Cannibalization",  "Click 'Analyze Cannibalization' to find keyword conflicts"),
-    ("topic_clusters",    "5. Topic Clusters",   "Click 'Build Topic Clusters' to group keywords"),
-    ("audit_results",     "6. Page Auditor",     "Click 'Run Audit' to check meta and content"),
-    ("generated_content", "7. Content Generator", "Select a page and generate AI-optimized content"),
-    ("action_plan",       "8. Action Plan",      "Click 'Generate AI Action Plan' for prioritized actions"),
+    ("gsc_data",          "1. Setup & Connect",    "Connect GSC and add API keys"),
+    ("page_authority",    "2. Upload Ahrefs",      "Upload Ahrefs CSV files for backlink data"),
+    ("ctr_gaps",          "3. CTR Analysis",       "Click 'Analyze CTR Gaps' to find underperformers"),
+    ("cannibalization",   "4. Cannibalization",    "Click 'Analyze Cannibalization' to find keyword conflicts"),
+    ("topic_clusters",    "5. Topic Clusters",     "Click 'Build Topic Clusters' to group keywords"),
+    ("audit_results",     "6. Page Auditor",       "Click 'Run Audit' to check meta and content"),
+    ("linking_fixes",     "7. Internal Linking",   "Review and fix internal linking issues"),
+    ("keyword_fixes",     "8. Missing Keywords",   "Fill keyword gaps with AI-generated text"),
+    ("new_articles",      "9. New Articles",       "Plan and generate new articles"),
+    ("generated_content", "10. Content Generator",  "Select a page and generate AI-optimized content"),
+    ("action_plan",       "11. Action Plan",        "Click 'Generate AI Action Plan' for prioritized actions"),
 ]
 
 

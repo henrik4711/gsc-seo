@@ -268,14 +268,17 @@ st.markdown("""
 
 # ── Pipeline step definitions ──────────────────────────────────────
 STEPS = [
-    ("1. Setup & Connect",  "setup",        "gsc_data",          "Connect GSC + API keys"),
-    ("2. Upload Ahrefs",    "ahrefs",       "page_authority",    "Upload backlink data"),
-    ("3. CTR Analysis",     "ctr",          "ctr_gaps",          "Find underperformers"),
-    ("4. Cannibalization",  "cannibal",     "cannibalization",   "Find keyword conflicts"),
-    ("5. Topic Clusters",   "topics",       "topic_clusters",    "Group keywords into topics"),
-    ("6. Page Auditor",     "auditor",      "audit_results",     "Check meta + content"),
-    ("7. Content Generator","content",      "generated_content", "AI-generated content"),
-    ("8. Action Plan",      "action",       "action_plan",       "Prioritized action plan"),
+    ("1. Setup & Connect",    "setup",        "gsc_data",          "Connect GSC + API keys"),
+    ("2. Upload Ahrefs",      "ahrefs",       "page_authority",    "Upload backlink data"),
+    ("3. CTR Analysis",       "ctr",          "ctr_gaps",          "Find underperformers"),
+    ("4. Cannibalization",    "cannibal",     "cannibalization",   "Find keyword conflicts"),
+    ("5. Topic Clusters",     "topics",       "topic_clusters",    "Group keywords into topics"),
+    ("6. Page Auditor",       "auditor",      "audit_results",     "Check meta + content"),
+    ("7. Internal Linking",   "linking",      "linking_fixes",     "Fix internal links"),
+    ("8. Missing Keywords",   "keywords",     "keyword_fixes",     "Fill keyword gaps"),
+    ("9. New Articles",       "articles",     "new_articles",      "Plan new content"),
+    ("10. Content Generator", "content",      "generated_content", "AI-generated content"),
+    ("11. Action Plan",       "action",       "action_plan",       "Prioritized action plan"),
 ]
 
 # Figure out which step the user should be on
@@ -361,6 +364,15 @@ elif "Topic" in selected:
 elif "Auditor" in selected:
     from views import page_auditor
     page_auditor.render()
+elif "Internal Linking" in selected:
+    from views import internal_linking
+    internal_linking.render()
+elif "Missing Keywords" in selected:
+    from views import missing_keywords
+    missing_keywords.render()
+elif "New Articles" in selected:
+    from views import new_articles
+    new_articles.render()
 elif "Content" in selected:
     from views import content_generator
     content_generator.render()

@@ -1,0 +1,333 @@
+"""
+Missing Keywords — action-first view
+Every item = one page to fix, with exact keywords to add and AI to write the text
+"""
+
+import streamlit as st
+import json
+from config import get_anthropic_key, has_anthropic_key
+
+
+def _build_action_list(audit_results):
+    """Build a flat, prioritized action list from keyword gaps."""
+    actions = []
+
+    for r in audit_results:
+        url = r.get("url", "")
+        impressions = r.get("impressions", 0)
+        lost_clicks = r.get("lost_clicks_estimate", 0)
+        content_audit = r.get("content_audit") or {}
+        kw_cov = content_audit.get("keyword_coverage") or {}
+        topic_cov = content_audit.get("topic_coverage") or {}
+        recommendations = content_audit.get("recommendations") or []
+        issues = content_audit.get("issues") or []
+
+        missing_kws = kw_cov.get("missing", [])
+        coverage_pct = kw_cov.get("coverage_pct", 100)
+
+        # Missing/partial subtopics
+        missing_subtopics = [
+            s for s in (topic_cov.get("subtopics") or [])
+            if s.get("status") in ("missing", "partial")
+        ]
+
+        if not missing_kws and not missing_subtopics:
+            continue
+
+        # Build specific instructions from the audit recommendations + issues
+        specific_actions = []
+        for rec in recommendations:
+            if any(kw_word in rec.lower() for kw_word in ["keyword", "integrate", "add content", "add text", "intro", "bottom text", "h2"]):
+                specific_actions.append(rec)
+        for iss in issues:
+            msg = iss.get("msg", "") if isinstance(iss, dict) else str(iss)
+            if any(kw_word in msg.lower() for kw_word in ["keyword", "missing", "thin", "intro", "no primary"]):
+                specific_actions.append(msg)
+
+        # Determine priority based on impressions + coverage
+        if impressions > 1000 and coverage_pct < 50:
+            priority = "high"
+        elif impressions > 500 or coverage_pct < 40:
+            priority = "high"
+        elif coverage_pct < 60:
+            priority = "medium"
+        else:
+            priority = "low"
+
+        # Build clear instruction
+        kw_list = ", ".join(missing_kws[:8])
+        subtopic_list = ", ".join([s["topic"] for s in missing_subtopics[:5]])
+
+        instruction_parts = []
+        if missing_kws:
+            instruction_parts.append(
+                f"Add these missing keywords naturally into the page text: **{kw_list}**"
+            )
+        if kw_cov.get("in_h1", 0) == 0 and missing_kws:
+            instruction_parts.append(
+                f"Make sure the H1 heading contains the primary keyword (**{missing_kws[0]}**)"
+            )
+        if kw_cov.get("in_intro", 0) == 0:
+            instruction_parts.append(
+                "Add keywords to the intro paragraph — Google gives extra weight to early text"
+            )
+        if missing_subtopics:
+            instruction_parts.append(
+                f"Add content sections about these missing topics: **{subtopic_list}**"
+            )
+
+        actions.append({
+            "url": url,
+            "page_type": r.get("page_type", "unknown"),
+            "priority": priority,
+            "impressions": impressions,
+            "lost_clicks": lost_clicks,
+            "coverage_pct": coverage_pct,
+            "missing_keywords": missing_kws,
+            "missing_subtopics": missing_subtopics,
+            "instructions": instruction_parts,
+            "audit_actions": specific_actions,
+            "body_text_snippet": (r.get("body_text") or r.get("intro_text") or "")[:800],
+            "in_h1": kw_cov.get("in_h1", 0),
+            "in_h2": kw_cov.get("in_h2", 0),
+            "in_intro": kw_cov.get("in_intro", 0),
+            "covered": kw_cov.get("covered", 0),
+            "total_checked": kw_cov.get("total_checked", 0),
+        })
+
+    # Sort: high priority first, then most impressions
+    pri_order = {"high": 0, "medium": 1, "low": 2}
+    actions.sort(key=lambda a: (pri_order.get(a["priority"], 1), -a["impressions"]))
+    return actions
+
+
+def render():
+    st.markdown("## Missing Keywords — Action List")
+    st.markdown(
+        "<p style='color:#6b6b8a; margin-bottom:1.5rem;'>"
+        "Every card = one page with keyword gaps. Follow the instructions, or click an AI button to generate the text.</p>",
+        unsafe_allow_html=True,
+    )
+
+    if not has_anthropic_key():
+        st.warning("Go to **1. Setup & Connect** and add Anthropic API key.")
+        return
+
+    if "audit_results" not in st.session_state:
+        st.warning("Go to **6. Page Auditor** and run an audit first.")
+        return
+
+    audit_results = st.session_state["audit_results"]
+    site_context = st.session_state.get("site_context", "")
+    language = st.session_state.get("content_language", "Swedish")
+
+    actions = _build_action_list(audit_results)
+
+    if not actions:
+        st.success("All audited pages have good keyword coverage!")
+        st.session_state["keyword_fixes"] = True
+        return
+
+    # ── Summary ───────────────────────────────────────────────────
+    high = sum(1 for a in actions if a["priority"] == "high")
+    total_missing = sum(len(a["missing_keywords"]) for a in actions)
+    total_topics = sum(len(a["missing_subtopics"]) for a in actions)
+    avg_cov = sum(a["coverage_pct"] for a in actions) / len(actions)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Pages to fix", len(actions))
+    c2.metric("High priority", high)
+    c3.metric("Missing keywords", total_missing)
+    c4.metric("Avg coverage", f"{avg_cov:.0f}%")
+
+    st.markdown("---")
+
+    # ── Filter ────────────────────────────────────────────────────
+    pri_filter = st.multiselect(
+        "Show priority",
+        ["high", "medium", "low"],
+        default=["high", "medium"],
+    )
+    filtered = [a for a in actions if a["priority"] in pri_filter]
+    st.markdown(f"**Showing {len(filtered)} of {len(actions)} pages**")
+
+    # ── Action cards ──────────────────────────────────────────────
+    for idx, a in enumerate(filtered):
+        url = a["url"]
+        pri = a["priority"]
+        pri_color = {"high": "#ff4455", "medium": "#ffaa33", "low": "#33dd88"}[pri]
+        border_color = {"high": "#ff4455", "medium": "#2a2a40", "low": "#1e1e2e"}[pri]
+        ptype = a["page_type"].upper()
+        cov = a["coverage_pct"]
+        cov_color = "#ff4455" if cov < 40 else "#ffaa33" if cov < 70 else "#33dd88"
+
+        # ── Card header ──────────────────────────────────────
+        st.markdown(
+            f"<div style='background:#12121f; border:1px solid {border_color}; border-left:4px solid {pri_color}; "
+            f"border-radius:6px; padding:1rem; margin-bottom:0.3rem;'>"
+            # Header
+            f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;'>"
+            f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:{pri_color}; "
+            f"text-transform:uppercase; letter-spacing:0.1em;'>{pri.upper()} · {ptype}</span>"
+            f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#6b6b8a;'>"
+            f"{a['impressions']:,} impr · {a['lost_clicks']:.0f} lost clicks</span>"
+            f"</div>"
+            # URL
+            f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600; margin-bottom:0.5rem;'>{url}</div>"
+            # Coverage bar
+            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem; margin-bottom:0.6rem;'>"
+            f"Keyword coverage: <span style='color:{cov_color};'>{cov:.0f}%</span> "
+            f"({a['covered']}/{a['total_checked']}) · "
+            f"In H1: {a['in_h1']} · In H2: {a['in_h2']} · In intro: {a['in_intro']}"
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        with st.expander(f"View details & AI actions for {url}", expanded=(idx == 0)):
+            # ── Missing keywords as badges ────────────────────
+            if a["missing_keywords"]:
+                kw_html = " ".join([
+                    f"<span style='background:#1a0d0d; border:1px solid #ff4455; border-radius:4px; padding:3px 10px; "
+                    f"font-family:\"IBM Plex Mono\",monospace; font-size:0.75rem; color:#ff4455; margin:2px; display:inline-block;'>{kw}</span>"
+                    for kw in a["missing_keywords"]
+                ])
+                st.markdown(f"**Missing keywords:** {kw_html}", unsafe_allow_html=True)
+
+            # ── Step-by-step instructions ─────────────────────
+            st.markdown("#### What to do")
+            for step_num, instruction in enumerate(a["instructions"], 1):
+                st.markdown(
+                    f"<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.5rem 0.8rem; "
+                    f"border-radius:0 4px 4px 0; margin-bottom:0.4rem; line-height:1.5;'>"
+                    f"<span style='color:#5533ff; font-weight:700;'>{step_num}.</span> "
+                    f"<span style='color:#e8e8f0; font-size:0.85rem;'>{instruction}</span></div>",
+                    unsafe_allow_html=True,
+                )
+
+            # ── Audit-detected issues ─────────────────────────
+            if a["audit_actions"]:
+                st.markdown("#### From page audit")
+                for aa in a["audit_actions"][:5]:
+                    st.markdown(f"<div style='font-size:0.8rem; color:#ffaa33; padding:2px 0;'>→ {aa}</div>", unsafe_allow_html=True)
+
+            # ── Missing subtopics ─────────────────────────────
+            if a["missing_subtopics"]:
+                st.markdown("#### Missing topic sections")
+                for sub in a["missing_subtopics"]:
+                    status_color = "#ff4455" if sub["status"] == "missing" else "#ffaa33"
+                    queries = ", ".join(sub.get("queries", [])[:5])
+                    st.markdown(
+                        f"<div style='background:#12121f; border:1px solid #1e1e2e; border-radius:4px; padding:0.5rem; margin-bottom:0.3rem;'>"
+                        f"<span style='color:{status_color}; font-size:0.75rem; font-weight:600;'>{sub['status'].upper()}</span> "
+                        f"<span style='color:#e8e8f0; font-size:0.85rem;'>{sub['topic']}</span><br>"
+                        f"<span style='font-size:0.72rem; color:#6b6b8a;'>Queries: {queries}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown("---")
+
+            # ── AI action buttons ─────────────────────────────
+            st.markdown("#### Let AI write the fix")
+            col_a, col_b, col_c = st.columns(3)
+
+            with col_a:
+                res_text_key = f"kw_text_{idx}"
+                if st.button("Write optimized text", key=f"btn_kw_text_{idx}", type="primary"):
+                    with st.spinner("AI writing keyword-optimized text..."):
+                        try:
+                            from utils.ai_generator import get_client, generate_keyword_text
+                            client = get_client(get_anthropic_key())
+                            result = generate_keyword_text(
+                                client, a["missing_keywords"], a["body_text_snippet"],
+                                a["page_type"], site_context, language,
+                            )
+                            st.session_state[res_text_key] = result
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+            with col_b:
+                res_intro_key = f"kw_intro_{idx}"
+                if st.button("Rewrite intro", key=f"btn_kw_intro_{idx}"):
+                    with st.spinner("AI rewriting intro with keywords..."):
+                        try:
+                            from utils.ai_generator import get_client, generate_keyword_text
+                            client = get_client(get_anthropic_key())
+                            result = generate_keyword_text(
+                                client, a["missing_keywords"], a["body_text_snippet"],
+                                a["page_type"], site_context, language,
+                            )
+                            st.session_state[res_intro_key] = result
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+            with col_c:
+                res_faq_key = f"kw_faq_{idx}"
+                if a["missing_subtopics"] and st.button("Generate FAQ", key=f"btn_kw_faq_{idx}"):
+                    with st.spinner("AI generating FAQ..."):
+                        try:
+                            from utils.ai_generator import get_client, generate_keyword_faq
+                            client = get_client(get_anthropic_key())
+                            subtopic_names = [s["topic"] for s in a["missing_subtopics"]]
+                            result = generate_keyword_faq(
+                                client, subtopic_names, a["missing_keywords"],
+                                site_context, language,
+                            )
+                            st.session_state[res_faq_key] = result
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+            # ── AI results ────────────────────────────────────
+            for rkey, label in [(f"kw_text_{idx}", "Optimized Text"), (f"kw_intro_{idx}", "Rewritten Intro")]:
+                if rkey in st.session_state:
+                    res = st.session_state[rkey]
+                    st.markdown(
+                        f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.8rem; "
+                        f"border-radius:0 6px 6px 0; margin:0.5rem 0;'>"
+                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88; "
+                        f"margin-bottom:0.4rem;'>COPY THIS — {label.upper()}</div>"
+                        f"<div style='color:#e8e8f0; line-height:1.6;'>{res.get('optimized_text', '')}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    integrated = res.get("keywords_integrated", [])
+                    if integrated:
+                        st.markdown(
+                            f"<span style='font-size:0.72rem; color:#33dd88;'>Keywords integrated: {', '.join(integrated)}</span>",
+                            unsafe_allow_html=True,
+                        )
+                    st.code(res.get("optimized_text", ""), language="text")
+
+            if f"kw_faq_{idx}" in st.session_state:
+                res = st.session_state[f"kw_faq_{idx}"]
+                st.markdown(
+                    "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88; "
+                    "margin:0.5rem 0 0.3rem 0;'>COPY THIS — FAQ SECTION</div>",
+                    unsafe_allow_html=True,
+                )
+                faq_md = ""
+                for faq in res.get("faq_items", []):
+                    q = faq.get("question", "")
+                    ans = faq.get("answer", "")
+                    st.markdown(f"**Q: {q}**")
+                    st.markdown(f"{ans}")
+                    faq_md += f"**Q: {q}**\n{ans}\n\n"
+                st.code(faq_md, language="text")
+
+    st.markdown("---")
+    st.session_state["keyword_fixes"] = True
+
+    # ── Download ──────────────────────────────────────────────────
+    export_data = [{
+        "page": a["url"],
+        "priority": a["priority"],
+        "coverage": f"{a['coverage_pct']:.0f}%",
+        "missing_keywords": a["missing_keywords"],
+        "instructions": a["instructions"],
+    } for a in actions]
+    st.download_button(
+        "Download action list (JSON)",
+        json.dumps(export_data, ensure_ascii=False, indent=2).encode("utf-8"),
+        "missing_keywords_actions.json",
+        "application/json",
+    )
