@@ -57,6 +57,11 @@ def _build_action_list(audit_results):
         else:
             priority = "low"
 
+        # Determine the PRIMARY keyword for this page — the one with most
+        # impressions from GSC, NOT just the first missing keyword
+        target_kws = r.get("target_keywords", [])  # sorted by impressions desc
+        primary_keyword = target_kws[0] if target_kws else (missing_kws[0] if missing_kws else "")
+
         # Build clear instruction
         kw_list = ", ".join(missing_kws[:8])
         subtopic_list = ", ".join([s["topic"] for s in missing_subtopics[:5]])
@@ -66,9 +71,9 @@ def _build_action_list(audit_results):
             instruction_parts.append(
                 f"Add these missing keywords naturally into the page text: **{kw_list}**"
             )
-        if kw_cov.get("in_h1", 0) == 0 and missing_kws:
+        if kw_cov.get("in_h1", 0) == 0 and primary_keyword:
             instruction_parts.append(
-                f"Make sure the H1 heading contains the primary keyword (**{missing_kws[0]}**)"
+                f"Make sure the H1 heading contains the primary keyword (**{primary_keyword}**)"
             )
         if kw_cov.get("in_intro", 0) == 0:
             instruction_parts.append(
@@ -91,9 +96,10 @@ def _build_action_list(audit_results):
             "missing_subtopics": missing_subtopics,
             "instructions": instruction_parts,
             "audit_actions": specific_actions,
+            "primary_keyword": primary_keyword,
             "body_text": (r.get("body_text") or r.get("full_body_text") or r.get("intro_text") or ""),
             "body_text_snippet": (r.get("body_text") or r.get("intro_text") or "")[:800],
-            "target_keywords": r.get("target_keywords", []),
+            "target_keywords": target_kws,
             "in_h1": kw_cov.get("in_h1", 0),
             "in_h2": kw_cov.get("in_h2", 0),
             "in_intro": kw_cov.get("in_intro", 0),
@@ -179,8 +185,10 @@ def render():
             f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#6b6b8a;'>"
             f"{a['impressions']:,} impr · {a['lost_clicks']:.0f} lost clicks</span>"
             f"</div>"
-            # URL
-            f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600; margin-bottom:0.5rem;'>{url}</div>"
+            # URL + primary keyword
+            f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600; margin-bottom:0.3rem;'>{url}</div>"
+            f"<div style='font-size:0.8rem; color:#9b9bb8; margin-bottom:0.5rem;'>"
+            f"Primary keyword (by impressions): <span style='color:#c8b4ff; font-weight:600;'>{a.get('primary_keyword', '?')}</span></div>"
             # Coverage bar
             f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem; margin-bottom:0.6rem;'>"
             f"Keyword coverage: <span style='color:{cov_color};'>{cov:.0f}%</span> "
