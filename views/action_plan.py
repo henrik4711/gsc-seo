@@ -29,22 +29,27 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         meta_eval = r.get("meta_eval") or {}
 
         # Determine the REAL primary keyword — not brand terms
-        # Brand keywords (appear on many pages) should not be primary
+        # Build brand keyword set from GSC data if not already done
+        if "_brand_keywords" not in st.session_state and gsc_data is not None and not gsc_data.empty:
+            total_pages = gsc_data["page"].nunique()
+            kw_page_counts = gsc_data.groupby("query")["page"].nunique()
+            st.session_state["_brand_keywords"] = set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
         brand_kws = st.session_state.get("_brand_keywords", set())
+        brand_lower = {b.lower() for b in brand_kws}
+
+        # Primary keyword = first non-brand keyword from target list
         primary_keyword = ""
         for kw in target_keywords:
-            if kw.lower() not in {b.lower() for b in brand_kws}:
+            if kw.lower() not in brand_lower:
                 primary_keyword = kw
                 break
-        if not primary_keyword and target_keywords:
-            # Fallback: try to extract from URL slug
+
+        # If ALL keywords are brand, use URL slug instead
+        if not primary_keyword:
             from urllib.parse import urlparse
             slug = urlparse(url).path.strip("/").split("/")[-1]
             slug_words = slug.replace("-", " ").replace("_", " ")
-            if slug_words:
-                primary_keyword = slug_words
-            else:
-                primary_keyword = target_keywords[0]
+            primary_keyword = slug_words if slug_words else (target_keywords[0] if target_keywords else "")
 
         steps = []
         total_time = 0  # minutes
@@ -446,7 +451,8 @@ def render():
     language = st.session_state.get("content_language", "Swedish")
 
     # Cache plans in session state — only rebuild when audit changes
-    cache_key = f"_impl_plans_{len(audit_results)}"
+    # v3 = cache version bump to force rebuild after brand keyword + link fixes
+    cache_key = f"_impl_plans_v3_{len(audit_results)}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_page_plans(audit_results, gsc_data, topic_clusters)
     plans = st.session_state[cache_key]

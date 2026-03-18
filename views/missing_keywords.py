@@ -181,7 +181,7 @@ def render():
     language = st.session_state.get("content_language", "Swedish")
 
     # Cache action list
-    cache_key = f"_kw_actions_{len(audit_results)}"
+    cache_key = f"_kw_actions_v3_{len(audit_results)}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_action_list(audit_results)
     actions = st.session_state[cache_key]

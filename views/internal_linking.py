@@ -308,7 +308,7 @@ def render():
     sf_link_map = st.session_state.get("sf_link_map")
 
     # Cache action list — only rebuild when data changes
-    cache_key = f"_link_actions_{len(audit_results)}_{bool(sf_link_map)}"
+    cache_key = f"_link_actions_v3_{len(audit_results)}_{bool(sf_link_map)}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_action_list(audit_results, topic_clusters, sf_link_map)
     actions = st.session_state[cache_key]
