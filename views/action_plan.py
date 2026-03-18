@@ -28,28 +28,42 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         issues = r.get("issues", [])
         meta_eval = r.get("meta_eval") or {}
 
-        # Determine the REAL primary keyword — not brand terms
-        # Build brand keyword set from GSC data if not already done
-        if "_brand_keywords" not in st.session_state and gsc_data is not None and not gsc_data.empty:
-            total_pages = gsc_data["page"].nunique()
-            kw_page_counts = gsc_data.groupby("query")["page"].nunique()
-            st.session_state["_brand_keywords"] = set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
-        brand_kws = st.session_state.get("_brand_keywords", set())
-        brand_lower = {b.lower() for b in brand_kws}
+        # Determine the REAL primary keyword for this page
+        # Strategy: URL slug is the most reliable signal for what the page is about
+        # "mshop" appears in target_keywords for every page but is never the right primary
+        from urllib.parse import urlparse as _up_pk
+        slug = _up_pk(url).path.strip("/").split("/")[-1]
+        slug_keyword = slug.replace("-", " ").replace("_", " ") if slug else ""
 
-        # Primary keyword = first non-brand keyword from target list
+        # Build brand keywords set if needed
+        if "_brand_keywords" not in st.session_state:
+            try:
+                if gsc_data is not None and hasattr(gsc_data, "groupby") and len(gsc_data) > 0:
+                    total_pages = gsc_data["page"].nunique()
+                    kw_page_counts = gsc_data.groupby("query")["page"].nunique()
+                    st.session_state["_brand_keywords"] = set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
+            except Exception:
+                st.session_state["_brand_keywords"] = set()
+        brand_lower = {b.lower() for b in st.session_state.get("_brand_keywords", set())}
+
+        # Primary keyword: first non-brand keyword that matches the URL slug topic
         primary_keyword = ""
+        slug_words = set(slug_keyword.lower().split()) if slug_keyword else set()
+
+        # First try: keyword that contains slug words (most relevant)
         for kw in target_keywords:
-            if kw.lower() not in brand_lower:
+            if kw.lower() not in brand_lower and set(kw.lower().split()) & slug_words:
                 primary_keyword = kw
                 break
-
-        # If ALL keywords are brand, use URL slug instead
+        # Second try: any non-brand keyword
         if not primary_keyword:
-            from urllib.parse import urlparse
-            slug = urlparse(url).path.strip("/").split("/")[-1]
-            slug_words = slug.replace("-", " ").replace("_", " ")
-            primary_keyword = slug_words if slug_words else (target_keywords[0] if target_keywords else "")
+            for kw in target_keywords:
+                if kw.lower() not in brand_lower:
+                    primary_keyword = kw
+                    break
+        # Last resort: URL slug as keyword
+        if not primary_keyword:
+            primary_keyword = slug_keyword or (target_keywords[0] if target_keywords else "")
 
         steps = []
         total_time = 0  # minutes
@@ -452,7 +466,7 @@ def render():
 
     # Cache plans in session state — only rebuild when audit changes
     # v3 = cache version bump to force rebuild after brand keyword + link fixes
-    cache_key = f"_impl_plans_v3_{len(audit_results)}"
+    cache_key = f"_impl_plans_v4_{len(audit_results)}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_page_plans(audit_results, gsc_data, topic_clusters)
     plans = st.session_state[cache_key]
