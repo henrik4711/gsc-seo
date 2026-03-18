@@ -29,8 +29,8 @@ HEADERS = {
 
 def classify_page_type(url: str, page_data: dict = None) -> dict:
     """
-    Classify a page as category, product, blog, or other.
-    Uses URL patterns + page structure.
+    Classify a page as category, product, blog, faq, or other.
+    Uses URL patterns + schema + HTML structure signals.
     """
     url_lower = url.lower()
     path = urlparse(url_lower).path.rstrip("/")
@@ -42,13 +42,18 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
         "signals": [],
     }
 
+    # ── 1. URL pattern matching ───────────────────────────────
     product_patterns = ["/products/", "/produkt/", "/product/", "/p/"]
     category_patterns = ["/kategori/", "/category/", "/collections/", "/c/"]
-    blog_patterns = ["/blog/", "/blogg/", "/artikel/", "/guide/", "/tips/"]
+    blog_patterns = ["/blog/", "/blogg/", "/artikel/", "/guide/", "/tips/", "/magazin/"]
+    faq_patterns = ["/faq/", "/fragor/", "/hjalp/", "/help/", "/support/"]
 
     if any(p in url_lower for p in product_patterns):
         result["page_type"] = "product"
         result["signals"].append("URL contains product path")
+    elif any(p in url_lower for p in faq_patterns):
+        result["page_type"] = "faq"
+        result["signals"].append("URL contains FAQ/help path")
     elif any(p in url_lower for p in blog_patterns):
         result["page_type"] = "blog"
         result["signals"].append("URL contains blog/guide path")
@@ -57,25 +62,82 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
         result["signals"].append("URL contains category path")
 
     if page_data:
-        schema_types = page_data.get("schema_types", [])
-        if any("Product" in str(s) for s in schema_types):
-            result["page_type"] = "product"
-            result["signals"].append("Product schema detected")
-        elif any("Collection" in str(s) or "ItemList" in str(s) for s in schema_types):
-            result["page_type"] = "category"
-            result["signals"].append("Collection/ItemList schema detected")
-        elif any("Article" in str(s) or "BlogPosting" in str(s) for s in schema_types):
-            result["page_type"] = "blog"
-            result["signals"].append("Article/Blog schema detected")
-
+        schema_types = [str(s).lower() for s in page_data.get("schema_types", [])]
+        h1 = (page_data.get("h1") or "").lower()
+        h2s = [h.lower() for h in page_data.get("h2s", [])]
+        body = (page_data.get("body_text") or page_data.get("full_body_text") or "").lower()
+        word_count = page_data.get("word_count", 0) or len(body.split())
         internal_links = page_data.get("internal_links", 0)
         if isinstance(internal_links, list):
             internal_links = len(internal_links)
-        h2_count = len(page_data.get("h2s", []))
-        if internal_links > 20 and h2_count <= 3:
+        h2_count = len(h2s)
+        product_count = page_data.get("product_count", 0)
+        has_price = "price" in body[:2000] or "kr" in body[:2000] or ":-" in body[:2000]
+
+        # ── 2. Schema-based classification ────────────────────
+        schema_str = " ".join(schema_types)
+        if "product" in schema_str and "itemlist" not in schema_str:
+            result["page_type"] = "product"
+            result["signals"].append("Product schema detected")
+        elif "itemlist" in schema_str or "collectionpage" in schema_str:
+            result["page_type"] = "category"
+            result["signals"].append("ItemList/Collection schema detected")
+        elif "article" in schema_str or "blogposting" in schema_str or "newsarticle" in schema_str:
+            result["page_type"] = "blog"
+            result["signals"].append("Article/Blog schema detected")
+        elif "faqpage" in schema_str:
+            result["page_type"] = "faq"
+            result["signals"].append("FAQPage schema detected")
+
+        # ── 3. HTML structure signals ─────────────────────────
+
+        # Product page signals: single item focus, price, add to cart
+        add_to_cart_signals = ["lägg i varukorg", "add to cart", "köp", "buy now", "add to bag"]
+        has_add_to_cart = any(s in body[:3000] for s in add_to_cart_signals)
+        if has_add_to_cart and has_price and product_count <= 1:
+            if result["page_type"] == "unknown":
+                result["page_type"] = "product"
+            result["signals"].append("Has add-to-cart + price = single product page")
+
+        # Category page signals: many products, product grid, filters
+        filter_signals = ["filtrera", "sortera", "filter", "sort by", "visa", "show"]
+        has_filters = any(s in body[:3000] for s in filter_signals)
+        if product_count >= 3:
+            if result["page_type"] == "unknown":
+                result["page_type"] = "category"
+            result["signals"].append(f"Shows {product_count} products = category/listing page")
+        elif internal_links > 20 and h2_count <= 3:
             if result["page_type"] == "unknown":
                 result["page_type"] = "category"
             result["signals"].append(f"Many links ({internal_links}) with few headings = product grid")
+        elif has_filters and internal_links > 10:
+            if result["page_type"] == "unknown":
+                result["page_type"] = "category"
+            result["signals"].append("Has filter/sort UI = listing page")
+
+        # Blog/guide signals: long text, many headings, article structure
+        if word_count > 500 and h2_count >= 3 and product_count == 0 and not has_add_to_cart:
+            if result["page_type"] == "unknown":
+                result["page_type"] = "blog"
+            result["signals"].append(f"Long text ({word_count} words) + {h2_count} H2s + no products = article/guide")
+
+        # FAQ signals: question patterns in headings
+        question_h2s = sum(1 for h in h2s if h.startswith(("vad ", "hur ", "vilk", "när ", "var ", "what ", "how ", "why ", "when ", "?")) or "?" in h)
+        if question_h2s >= 3:
+            if result["page_type"] in ("unknown", "blog"):
+                result["page_type"] = "faq"
+            result["signals"].append(f"{question_h2s} question-style H2s = FAQ page")
+
+        # ── 4. URL depth heuristic ────────────────────────────
+        if result["page_type"] == "unknown":
+            # Deep URLs (3+ segments) with no other signals → likely product
+            if len(segments) >= 3 and has_price:
+                result["page_type"] = "product"
+                result["signals"].append("Deep URL + price mentions = likely product")
+            # Shallow URLs (1 segment) → likely category or landing page
+            elif len(segments) == 1:
+                result["page_type"] = "category"
+                result["signals"].append("Single URL segment = likely category/landing page")
 
     if result["page_type"] != "unknown":
         result["confidence"] = "high" if len(result["signals"]) >= 2 else "medium"
