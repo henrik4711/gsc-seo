@@ -10,6 +10,30 @@ from config import get_anthropic_key, has_anthropic_key
 from utils.ui_helpers import shorten_url
 
 
+def _normalize(text):
+    """Normalize text for comparison: handle Swedish/Danish chars."""
+    import unicodedata
+    # Decompose unicode chars (ä → a + combining diaeresis), strip combining marks
+    nfkd = unicodedata.normalize("NFKD", text.lower())
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _text_contains_keyword(text, keyword):
+    """Check if text contains keyword, handling ä/ö/å vs a/o/a."""
+    # Direct match first
+    if keyword.lower() in text.lower():
+        return True
+    # Normalized match (ä→a, ö→o, å→a)
+    if _normalize(keyword) in _normalize(text):
+        return True
+    # Word-level match: all significant words present
+    kw_words = set(_normalize(keyword).split())
+    text_norm = _normalize(text)
+    if kw_words and all(w in text_norm for w in kw_words if len(w) > 2):
+        return True
+    return False
+
+
 def _build_page_plans(audit_results, gsc_data, topic_clusters):
     """Build a detailed implementation plan per page from ALL data sources."""
     plans = []
@@ -94,7 +118,7 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
 
         # Title missing primary keyword
         if primary_keyword and title:
-            if primary_keyword.lower() not in title.lower():
+            if not _text_contains_keyword(title, primary_keyword):
                 steps.append({
                     "action": f"Add primary keyword to title",
                     "time": 2,
@@ -140,7 +164,9 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         h1 = r.get("h1") or ""
         kw_cov = content_audit.get("keyword_coverage") or {}
 
-        if kw_cov.get("in_h1", 0) == 0 and primary_keyword:
+        # Check H1 ourselves with unicode-aware comparison (not just audit data)
+        h1_has_keyword = _text_contains_keyword(h1, primary_keyword) if (h1 and primary_keyword) else False
+        if not h1_has_keyword and primary_keyword:
             steps.append({
                 "action": f"Add primary keyword to H1",
                 "time": 2,
@@ -466,7 +492,7 @@ def render():
 
     # Cache plans in session state — only rebuild when audit changes
     # v3 = cache version bump to force rebuild after brand keyword + link fixes
-    cache_key = f"_impl_plans_v4_{len(audit_results)}"
+    cache_key = f"_impl_plans_v5_{len(audit_results)}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_page_plans(audit_results, gsc_data, topic_clusters)
     plans = st.session_state[cache_key]
