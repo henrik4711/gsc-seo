@@ -11,50 +11,293 @@ Build a multi-language WordPress affiliate site that ranks for adult product key
 
 ## Phase 1: Foundation (Week 1)
 
-### 1.1 WordPress Setup
+### 1.1 Two-Site Strategy
 
-**Hosting:**
-- Cloudways (DigitalOcean $28/mo) or Kinsta — fast, scalable, managed
-- Separate staging environment for testing before publish
-- CDN: Cloudflare free tier (caching + security)
-- SSL: Let's Encrypt (automatic via host)
+Split into 2 WordPress installations to reduce risk:
+
+```
+SITE 1: Nordic + Baltic (6 languages)
+Domain: nordisk-site.com (or your choice)
+Languages: /dk/ /no/ /fi/ /lv/ /lt/ /ee/
+Why together: Mshop ships directly, similar markets, you know the culture
+
+SITE 2: EU (13 languages)
+Domain: eu-site.com (or your choice)
+Languages: /pl/ /cz/ /hu/ /ro/ /el/ /hr/ /si/ /es/ /it/ /fr/ /nl/ /de/ /en/
+Why separate: If Google penalizes one site, the other survives.
+              19 languages on one WP is too slow.
+```
+
+Both sites use identical theme, plugins, and templates — just different WPML language packs.
+
+**Swedish excluded** — don't compete with Mshop on their home market.
+
+### 1.2 Hosting
+
+**Cloudways (DigitalOcean):**
+- Site 1 (6 languages): $28/mo DO Premium droplet
+- Site 2 (13 languages): $56/mo DO Premium droplet (more traffic)
+- Staging environment on each (free on Cloudways)
+- CDN: Cloudflare free tier (caching + security + DDoS)
+- SSL: Let's Encrypt (automatic)
+- Redis object cache: included on Cloudways
+- Server location: Frankfurt (central EU) for both
 
 **WordPress config:**
-- PHP 8.2+, Redis object cache, OPcache enabled
-- Disable comments, pingbacks, XML-RPC
-- Minimal plugins (see 1.3)
+- PHP 8.2+, OPcache enabled, Redis active
+- Disable: comments, pingbacks, XML-RPC, emojis, embeds
+- Minimal plugins (see 1.4)
+- Max upload size: 10MB (product images)
 
-**Domain strategy (per language):**
-- Option A: Subdirectories — `site.com/se/`, `site.com/dk/`, `site.com/en/` (recommended — all authority on one domain)
-- Option B: Subdomains — `se.site.com`, `dk.site.com` (easier to manage separately)
-- Option C: Separate domains per country (most expensive, hardest to build authority)
-- **Recommendation: Option A** — one strong domain, subdirectories per language
+### 1.3 Theme: GeneratePress Pro
 
-### 1.2 Theme
+**Why GeneratePress:**
+- 30KB CSS footprint — smallest of any theme = best Core Web Vitals
+- 100/100 PageSpeed out of the box
+- Full hook system — inject HTML anywhere without page builder
+- GP Elements (premium) — custom templates per CPT without code
+- Perfect for API-uploaded content (clean HTML output)
+- Used by top affiliate sites worldwide
+- $59/year
 
-**GeneratePress Pro** ($59/year) or **Kadence Pro** ($149/year)
-- Lightweight (<50KB CSS), fast, SEO-friendly
-- Full control over HTML output
-- No page builder bloat
-- Easy to customize via child theme
+**What we DON'T need:**
+- No Elementor/Divi/WPBakery — we generate HTML via API
+- No page builder — pure templates
+- No bloated "multipurpose" themes
 
-**Why not a premium theme?**
-- Most premium themes add 500KB+ of CSS/JS we don't need
-- We control the HTML structure via templates — theme just provides the shell
+**Child theme structure:**
+```
+generatepress-child/
+├── style.css                           # Minimal custom CSS
+├── functions.php                       # CPT registration, ACF, hooks
+├── single-product.php                  # Product page template
+├── archive-product.php                 # Product listing/grid
+├── taxonomy-product_category.php       # Category page with bottom text
+├── template-parts/
+│   ├── product-card.php               # Reusable product card
+│   ├── product-grid.php               # Responsive grid layout
+│   ├── affiliate-button.php           # "Köp hos Mshop →" CTA button
+│   ├── breadcrumb.php                 # Schema-enabled breadcrumbs
+│   ├── faq-section.php                # FAQ with FAQPage schema
+│   ├── trust-signals.php              # Shipping, returns, Trustpilot
+│   └── related-products.php           # Related products grid
+├── assets/
+│   ├── css/
+│   │   ├── product-card.css           # Product card styling
+│   │   ├── affiliate-button.css       # CTA button styling
+│   │   └── category-page.css          # Category layout
+│   └── js/
+│       └── affiliate-tracking.js      # Click tracking for affiliate links
+└── inc/
+    ├── cpt-product.php                # Custom Post Type registration
+    ├── acf-fields.php                 # ACF field group definitions
+    ├── schema-markup.php              # Custom JSON-LD schema
+    ├── affiliate-links.php            # Affiliate link management
+    └── api-extensions.php             # Custom REST API endpoints
+```
 
-### 1.3 Plugins (minimal)
+### 1.4 Plugins
+
+**Per site (identical setup):**
 
 | Plugin | Purpose | Cost |
 |--------|---------|------|
-| Rank Math Pro | SEO: schema, sitemap, redirects, breadcrumbs | $59/yr |
-| WPML | Multi-language (10-20 languages) | $99/yr |
-| Advanced Custom Fields Pro | Custom product fields | $49/yr |
-| WP All Import Pro | Bulk CSV/XML import (alternative to API) | $99/yr |
+| GeneratePress Pro | Theme framework | $59/yr |
+| Rank Math Pro | SEO: schema, sitemap, redirects, breadcrumbs, analytics | $59/yr |
+| WPML Multilingual CMS | Multi-language + hreflang | $99/yr |
+| Advanced Custom Fields Pro | Product custom fields | $49/yr |
+| WP Rocket | Page cache + CSS/JS optimization | $59/yr |
+| ShortPixel | Auto image compression on upload | $4.99/mo |
 | Redirection | 301 redirect management | Free |
-| ShortPixel | Image optimization (auto-compress uploads) | $4.99/mo |
-| WP Rocket | Caching + performance | $59/yr |
 
-**Total plugin cost: ~$420/year**
+**NOT needed:**
+- WooCommerce (no checkout)
+- Contact Form 7 (no forms needed)
+- Yoast (Rank Math is better)
+- Any page builder
+
+**Total per site: ~$385/year + $60/year ShortPixel = $445/year**
+**Both sites: ~$890/year**
+
+### 1.5 Template Specifications
+
+**Product Page (`single-product.php`):**
+```html
+<!-- Breadcrumb (auto via Rank Math) -->
+<article class="product-single">
+  <div class="product-top">
+    <!-- Left: Image gallery -->
+    <div class="product-gallery">
+      <img src="featured-image" alt="Product Name - primary keyword">
+      <!-- Thumbnail gallery below -->
+    </div>
+
+    <!-- Right: Product info -->
+    <div class="product-info">
+      <h1>Product Name</h1>
+      <div class="product-rating">★★★★☆ (4.2/5)</div>
+      <div class="product-price">
+        <span class="price-current">399 kr</span>
+        <span class="price-original">499 kr</span>
+        <span class="price-discount">-20%</span>
+      </div>
+      <p class="product-short-desc">Short description...</p>
+
+      <!-- AFFILIATE CTA — most important element -->
+      <a href="AFFILIATE_LINK" class="affiliate-button" rel="nofollow sponsored"
+         data-product="PRODUCT_ID" data-price="399">
+        Köp hos Mshop →
+      </a>
+      <p class="trust-line">✓ Diskret leverans 1-2 dagar ✓ 100 dagars öppet köp</p>
+
+      <!-- Product features table -->
+      <table class="product-features">
+        <tr><td>Material</td><td>Silikon</td></tr>
+        <tr><td>Storlek</td><td>18 cm</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Full description (AI-rewritten, unique) -->
+  <div class="product-description">
+    <h2>Om Product Name</h2>
+    <p>Full unique description...</p>
+  </div>
+
+  <!-- FAQ (with FAQPage schema) -->
+  <div class="product-faq">
+    <h2>Vanliga frågor om Product Name</h2>
+    <h3>Question 1?</h3>
+    <p>Answer 1...</p>
+  </div>
+
+  <!-- Related products -->
+  <div class="related-products">
+    <h2>Liknande produkter</h2>
+    <!-- product-card grid -->
+  </div>
+</article>
+```
+
+**Category Page (`taxonomy-product_category.php`):**
+```html
+<!-- Breadcrumb -->
+<div class="category-page">
+  <h1>Category Name</h1>
+
+  <!-- Intro text (AI-generated, ACF field) -->
+  <div class="category-intro">
+    <p>100-150 words intro...</p>
+  </div>
+
+  <!-- Product grid -->
+  <div class="product-grid">
+    <!-- product-card × N -->
+  </div>
+
+  <!-- Pagination -->
+
+  <!-- Bottom SEO text (AI-generated, ACF field, 800-1500 words) -->
+  <div class="category-bottom-text">
+    <h2>Guide: Hur väljer man [category]?</h2>
+    <p>Buying guide...</p>
+    <h3><a href="/subcategory">Subcategory Name</a></h3>
+    <p>Description + expert recommendation...</p>
+    <h2>Vanliga frågor om [category]</h2>
+    <!-- FAQ -->
+  </div>
+</div>
+```
+
+**Product Card (`template-parts/product-card.php`):**
+```html
+<div class="product-card">
+  <a href="/product-slug/">
+    <img src="product-image.jpg" alt="Product Name" loading="lazy"
+         width="300" height="300">
+    <div class="product-card-info">
+      <h3 class="product-card-name">Product Name</h3>
+      <div class="product-card-price">399 kr</div>
+      <div class="product-card-rating">★★★★☆</div>
+    </div>
+  </a>
+  <a href="AFFILIATE_LINK" class="product-card-cta" rel="nofollow sponsored">
+    Köp →
+  </a>
+</div>
+```
+
+**Affiliate Button (`template-parts/affiliate-button.php`):**
+```html
+<a href="<?php echo get_field('affiliate_link'); ?>"
+   class="affiliate-button"
+   rel="nofollow sponsored"
+   target="_blank"
+   data-tracking="<?php echo get_the_ID(); ?>">
+  <span class="affiliate-button-text">Köp hos Mshop</span>
+  <span class="affiliate-button-arrow">→</span>
+</a>
+<div class="affiliate-trust">
+  <span>✓ Diskret leverans</span>
+  <span>✓ 100 dagars öppet köp</span>
+  <span>✓ Fri frakt över 999 kr</span>
+</div>
+```
+
+### 1.6 Schema Markup Strategy
+
+**Per page type (via Rank Math + custom JSON-LD):**
+
+| Page Type | Schema Types |
+|-----------|-------------|
+| Product | Product, Offer, AggregateRating, BreadcrumbList, FAQPage |
+| Category | ItemList, BreadcrumbList, FAQPage |
+| Article/Blog | Article, BreadcrumbList, FAQPage |
+| Homepage | Organization, WebSite, SearchAction |
+
+**Product schema (custom, in `inc/schema-markup.php`):**
+```json
+{
+  "@context": "https://schema.org",
+  "@type": "Product",
+  "name": "Product Name",
+  "image": "product-image.jpg",
+  "description": "Short description",
+  "brand": {"@type": "Brand", "name": "Brand Name"},
+  "offers": {
+    "@type": "Offer",
+    "url": "OUR_PAGE_URL",
+    "priceCurrency": "SEK",
+    "price": "399",
+    "availability": "https://schema.org/InStock",
+    "seller": {"@type": "Organization", "name": "Mshop"}
+  },
+  "aggregateRating": {
+    "@type": "AggregateRating",
+    "ratingValue": "4.2",
+    "reviewCount": "156"
+  }
+}
+```
+
+**Important:** `offers.url` points to OUR page (not Mshop). The affiliate link is in the page content, not in schema.
+
+### 1.7 Core Web Vitals Targets
+
+```
+LCP (Largest Contentful Paint): < 2.0s  (product image)
+INP (Interaction to Next Paint): < 150ms (minimal JS)
+CLS (Cumulative Layout Shift):   < 0.05  (fixed image dimensions)
+
+How we achieve this:
+- GeneratePress: 30KB CSS
+- WP Rocket: page cache + critical CSS
+- ShortPixel: WebP images, lazy loading
+- Cloudflare: CDN for static assets
+- No page builder JS
+- Product images: fixed width/height attributes
+- Fonts: system fonts or preloaded Google Fonts (1 family max)
+```
 
 ### 1.4 Custom Post Types
 
