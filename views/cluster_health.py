@@ -180,10 +180,16 @@ def render():
 
     st.markdown("---")
 
-    # ── Bulk evaluate button ──────────────────────────────────────
-    col_gen, col_info = st.columns([1, 2])
+    # ── Bulk evaluate / Clear buttons ────────────────────────────
+    col_gen, col_clear, col_info = st.columns([1, 1, 2])
     with col_gen:
         gen_top = st.button("Evaluate top 5 clusters", type="primary")
+    with col_clear:
+        if st.button("Clear all cached evaluations"):
+            keys_to_del = [k for k in st.session_state if k.startswith("_cluster_health_")]
+            for k in keys_to_del:
+                del st.session_state[k]
+            st.rerun()
     with col_info:
         st.markdown(
             "<span style='font-size:0.75rem; color:#6b6b8a;'>"
