@@ -208,6 +208,46 @@ def render():
                         unsafe_allow_html=True,
                     )
 
+                # ── Meta title + description (always shown prominently) ──
+                meta_title = plan.get("meta_title", "")
+                meta_desc_plan = plan.get("meta_description", "")
+                meta_changed = plan.get("meta_changed", False)
+                mt_chars = plan.get("meta_title_chars", len(meta_title))
+                md_chars = plan.get("meta_description_chars", len(meta_desc_plan))
+
+                if meta_title or meta_desc_plan:
+                    # Get current values from audit
+                    page_r = next((r for r in audit_results if r["url"] == url), {})
+                    current_title = page_r.get("title") or ""
+                    current_desc = page_r.get("meta_description") or ""
+
+                    mt_color = "#33dd88" if 50 <= mt_chars <= 60 else "#ffaa33" if mt_chars > 0 else "#ff4455"
+                    md_color = "#33dd88" if 140 <= md_chars <= 160 else "#ffaa33" if md_chars > 0 else "#ff4455"
+
+                    change_label = "RECOMMENDED CHANGE" if meta_changed else "CURRENT (OK)"
+                    change_border = "#ffaa33" if meta_changed else "#33dd88"
+
+                    st.markdown(
+                        f"<div style='background:#12121f; border:2px solid {change_border}; border-radius:8px; padding:1rem; margin-bottom:1rem;'>"
+                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:{change_border}; "
+                        f"margin-bottom:0.5rem;'>META TITLE & DESCRIPTION · {change_label}</div>"
+                        # Current
+                        f"{'<div style=\"font-size:0.72rem; color:#6b6b8a; margin-bottom:0.3rem;\">Current title: ' + current_title + ' (' + str(len(current_title)) + ' chars)</div>' if meta_changed and current_title else ''}"
+                        f"{'<div style=\"font-size:0.72rem; color:#6b6b8a; margin-bottom:0.5rem;\">Current desc: ' + current_desc[:80] + '... (' + str(len(current_desc)) + ' chars)</div>' if meta_changed and current_desc else ''}"
+                        # Recommended
+                        f"<div style='margin-bottom:0.4rem;'>"
+                        f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:{mt_color};'>TITLE · {mt_chars} chars</span><br>"
+                        f"<span style='font-size:0.95rem; color:#e8e8f0; font-weight:500;'>{meta_title}</span></div>"
+                        f"<div>"
+                        f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:{md_color};'>DESCRIPTION · {md_chars} chars</span><br>"
+                        f"<span style='font-size:0.85rem; color:#b8b8d0;'>{meta_desc_plan}</span></div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    if meta_changed:
+                        st.code(f"Title: {meta_title}\nDescription: {meta_desc_plan}", language="text")
+
                 # Steps
                 steps = plan.get("steps", [])
                 if not steps:
