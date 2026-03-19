@@ -181,45 +181,59 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         coverage_pct = kw_cov.get("coverage_pct", 100)
 
         # Filter missing keywords: only keep those RELEVANT to this page
-        # Pillar pages (e.g. /sexleksaker) also get child-page keywords
+        # Must match the page's SPECIFIC topic, not just share generic words
         from urllib.parse import urlparse as _urlparse
         page_path = _urlparse(url).path.lower().rstrip("/")
-        slug_parts = set(page_path.replace("-", " ").replace("/", " ").split())
-        slug_parts.discard("")
 
-        # Detect pillar: find child page slugs
+        # Use the LAST slug segment as the specific topic (what makes this page unique)
+        # /sexleksaker-for-man → "sexleksaker for man" (all words needed together)
+        last_slug = page_path.split("/")[-1] if "/" in page_path else page_path.lstrip("/")
+        specific_words = set(last_slug.replace("-", " ").replace("_", " ").split())
+        # Remove stop words that match everything
+        stop_words = {"for", "och", "med", "till", "av", "i", "pa", "den", "det", "en", "ett", "and", "the", "of", "in", "to"}
+        specific_words -= stop_words
+        specific_words.discard("")
+
+        # For pillar pages: also include child slug words
         child_slug_words = set()
         if topic_clusters:
             for other_url in topic_clusters.get("page_topics", {}).keys():
                 other_path = _urlparse(other_url).path.lower().rstrip("/")
                 if other_path != page_path and other_path.startswith(page_path + "/"):
                     child_part = other_path[len(page_path):].replace("-", " ").replace("/", " ")
-                    child_slug_words.update(child_part.split())
-        child_slug_words.discard("")
-
-        # Get this page's cluster topics
-        page_cluster_topics = set()
-        if topic_clusters:
-            for t in topic_clusters.get("page_topics", {}).get(url, []):
-                page_cluster_topics.add(t.get("topic", "").lower())
+                    child_slug_words.update(w for w in child_part.split() if w and w not in stop_words)
 
         def _is_relevant_keyword(kw):
             kw_lower = kw.lower()
-            kw_words = set(kw_lower.split())
-            # Matches URL slug?
-            if kw_words & slug_parts:
+            kw_words = set(kw_lower.split()) - stop_words
+
+            if not kw_words:
+                return False
+
+            # Must share a SPECIFIC word with the page slug (not just generic "sexleksaker")
+            # For /sexleksaker-for-man: keyword must contain "man" or "män" or "honom"
+            # The _normalize function handles ä→a, ö→o
+            slug_specific = {_normalize(w) for w in specific_words if len(w) > 2}
+            kw_normalized = {_normalize(w) for w in kw_words if len(w) > 2}
+
+            if slug_specific and kw_normalized & slug_specific:
                 return True
+
             # Pillar page: matches child page slugs?
-            if child_slug_words and kw_words & child_slug_words:
-                return True
-            # Matches cluster topics?
-            for topic in page_cluster_topics:
-                if set(topic.split()) & kw_words:
+            if child_slug_words:
+                child_normalized = {_normalize(w) for w in child_slug_words if len(w) > 2}
+                if kw_normalized & child_normalized:
                     return True
-            # Matches primary keyword?
+
+            # Matches primary keyword's specific words?
             if primary_keyword:
-                if set(primary_keyword.lower().split()) & kw_words:
+                pk_words = {_normalize(w) for w in primary_keyword.lower().split() if len(w) > 2} - {_normalize(w) for w in stop_words}
+                # Must share a DISTINGUISHING word (not "sexleksaker" which is everywhere)
+                # Use the last word of primary keyword as most specific
+                pk_last = _normalize(primary_keyword.lower().split()[-1]) if primary_keyword else ""
+                if pk_last and len(pk_last) > 2 and pk_last in " ".join(kw_normalized):
                     return True
+
             return False
 
         missing_kws = [kw for kw in missing_kws_raw if _is_relevant_keyword(kw)]
@@ -492,7 +506,7 @@ def render():
 
     # Cache plans in session state — only rebuild when audit changes
     # v3 = cache version bump to force rebuild after brand keyword + link fixes
-    cache_key = f"_impl_plans_v5_{len(audit_results)}"
+    cache_key = f"_impl_plans_v6_{len(audit_results)}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_page_plans(audit_results, gsc_data, topic_clusters)
     plans = st.session_state[cache_key]

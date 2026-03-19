@@ -25,14 +25,20 @@ def _build_action_list(audit_results):
         missing_kws_raw = kw_cov.get("missing", [])
         coverage_pct = kw_cov.get("coverage_pct", 100)
 
-        # Filter missing keywords: only keep those RELEVANT to this page's topic
-        # Pillar pages (e.g. /sexleksaker) also get child-page keywords
+        # Filter missing keywords: only keep those RELEVANT to this page's SPECIFIC topic
+        import unicodedata
+        def _norm(text):
+            nfkd = unicodedata.normalize("NFKD", text.lower())
+            return "".join(c for c in nfkd if not unicodedata.combining(c))
+
         from urllib.parse import urlparse as _urlparse
         page_path = _urlparse(url).path.lower().rstrip("/")
-        slug_parts = set(page_path.replace("-", " ").replace("/", " ").split())
-        slug_parts.discard("")
+        last_slug = page_path.split("/")[-1] if "/" in page_path else page_path.lstrip("/")
+        stop_words = {"for", "och", "med", "till", "av", "i", "pa", "den", "det", "en", "ett", "and", "the", "of", "in", "to"}
+        specific_words = set(last_slug.replace("-", " ").replace("_", " ").split()) - stop_words
+        specific_words.discard("")
 
-        # Detect pillar: find child page slugs
+        # Pillar: child slug words
         child_slug_words = set()
         tc = st.session_state.get("topic_clusters", {})
         if tc:
@@ -40,32 +46,33 @@ def _build_action_list(audit_results):
                 other_path = _urlparse(other_url).path.lower().rstrip("/")
                 if other_path != page_path and other_path.startswith(page_path + "/"):
                     child_part = other_path[len(page_path):].replace("-", " ").replace("/", " ")
-                    child_slug_words.update(child_part.split())
-        child_slug_words.discard("")
+                    child_slug_words.update(w for w in child_part.split() if w and w not in stop_words)
 
-        page_cluster_topics = set()
-        if tc:
-            for t in tc.get("page_topics", {}).get(url, []):
-                page_cluster_topics.add(t.get("topic", "").lower())
-
-        target_kws_lower = set(kw.lower() for kw in r.get("target_keywords", [])[:3])
+        # Primary keyword's distinguishing word
+        target_kws = r.get("target_keywords", [])
+        brand_lower = {b.lower() for b in st.session_state.get("_brand_keywords", set())}
+        pk_last = ""
+        for tkw in target_kws:
+            if tkw.lower() not in brand_lower:
+                words = tkw.lower().split()
+                pk_last = _norm(words[-1]) if words else ""
+                break
 
         def _is_relevant(kw):
-            kw_lower = kw.lower()
-            kw_words = set(kw_lower.split())
-            # Matches URL slug?
-            if kw_words & slug_parts:
+            kw_words = {_norm(w) for w in kw.lower().split() if len(w) > 2} - {_norm(w) for w in stop_words}
+            if not kw_words:
+                return False
+            # Must share a SPECIFIC word with the page slug
+            slug_norm = {_norm(w) for w in specific_words if len(w) > 2}
+            if slug_norm and kw_words & slug_norm:
                 return True
-            # Pillar page: matches child page slugs?
-            if child_slug_words and kw_words & child_slug_words:
-                return True
-            # Matches cluster topics?
-            for topic in page_cluster_topics:
-                if set(topic.split()) & kw_words:
+            # Pillar: matches child slugs?
+            if child_slug_words:
+                child_norm = {_norm(w) for w in child_slug_words if len(w) > 2}
+                if kw_words & child_norm:
                     return True
-            # Matches top target keywords?
-            for tkw in target_kws_lower:
-                if set(tkw.split()) & kw_words:
+            # Matches primary keyword's last (most specific) word?
+            if pk_last and len(pk_last) > 2 and pk_last in " ".join(kw_words):
                     return True
             return False
 
@@ -181,7 +188,7 @@ def render():
     language = st.session_state.get("content_language", "Swedish")
 
     # Cache action list
-    cache_key = f"_kw_actions_v3_{len(audit_results)}"
+    cache_key = f"_kw_actions_v6_{len(audit_results)}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_action_list(audit_results)
     actions = st.session_state[cache_key]
