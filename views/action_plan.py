@@ -438,7 +438,7 @@ def render():
                                     tone_sample = ""
                                     if nc_link:
                                         page_r = next((r for r in audit_results if r["url"] == nc_link), {})
-                                        tone_sample = (page_r.get("body_text") or "")[:500]
+                                        tone_sample = (page_r.get("intro_text") or page_r.get("bottom_text") or "")[:500]
 
                                     result = generate_full_article_html(
                                         client,

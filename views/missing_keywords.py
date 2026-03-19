@@ -8,6 +8,21 @@ import json
 from config import get_anthropic_key, has_anthropic_key
 
 
+def _get_clean_snippet(r, max_chars=800):
+    """Get clean editorial text, avoiding nav/menu pollution."""
+    intro = r.get("intro_text") or ""
+    bottom = r.get("bottom_text") or ""
+    if intro or bottom:
+        return (intro + "\n" + bottom).strip()[:max_chars]
+    body = r.get("body_text") or ""
+    h1 = r.get("h1") or ""
+    if h1 and h1 in body:
+        start = body.index(h1)
+        return body[start:start + max_chars]
+    skip = min(300, len(body) // 4)
+    return body[skip:skip + max_chars]
+
+
 def _build_action_list(audit_results):
     """Build a flat, prioritized action list from keyword gaps."""
     actions = []
@@ -120,8 +135,8 @@ def _build_action_list(audit_results):
             "instructions": instruction_parts,
             "audit_actions": specific_actions,
             "primary_keyword": primary_keyword,
-            "body_text": (r.get("body_text") or r.get("full_body_text") or r.get("intro_text") or ""),
-            "body_text_snippet": (r.get("body_text") or r.get("intro_text") or "")[:800],
+            "body_text": (r.get("intro_text") or r.get("bottom_text") or r.get("body_text") or ""),
+            "body_text_snippet": _get_clean_snippet(r),
             "target_keywords": target_kws,
             "in_h1": kw_cov.get("in_h1", 0),
             "in_h2": kw_cov.get("in_h2", 0),
@@ -288,7 +303,7 @@ def render():
                         from utils.ai_generator import get_client, assess_content_quality
                         client = get_client(get_anthropic_key())
                         result = assess_content_quality(
-                            client, url, a["body_text"][:3000],
+                            client, url, _get_clean_snippet(a, 3000),
                             a["page_type"], a["target_keywords"],
                             site_context, language,
                         )

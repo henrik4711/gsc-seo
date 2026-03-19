@@ -10,6 +10,34 @@ import streamlit as st
 from typing import Optional
 
 
+def _clean_body_text(page_data: dict, max_chars: int = 1500) -> str:
+    """
+    Get clean editorial text from a page, avoiding navigation/menu/footer pollution.
+    Priority: intro_text > bottom_text > body_text (with nav skipped).
+    """
+    # Best: use specific editorial text fields
+    intro = page_data.get("intro_text") or ""
+    bottom = page_data.get("bottom_text") or ""
+    if intro or bottom:
+        combined = (intro + "\n\n" + bottom).strip()
+        return combined[:max_chars]
+
+    # Fallback: body_text but skip first ~300 chars (navigation/menu area)
+    body = page_data.get("body_text") or page_data.get("full_body_text") or ""
+    if not body:
+        return ""
+
+    # Find where real content starts — look for the H1 text as anchor
+    h1 = page_data.get("h1") or ""
+    if h1 and h1 in body:
+        start = body.index(h1)
+        return body[start:start + max_chars]
+
+    # Otherwise skip navigation (typically first 200-400 chars)
+    skip = min(300, len(body) // 4)
+    return body[skip:skip + max_chars]
+
+
 def _parse_ai_json(message) -> dict:
     """Safely parse JSON from an AI response. Returns dict or raises with clear error."""
     if not message.content:
@@ -142,7 +170,7 @@ def generate_content_audit(
     """
     Analyse existing page content for keyword gaps and SEO opportunities
     """
-    body = page_data.get("body_text", "")[:4000]
+    body = _clean_body_text(page_data, 4000)
     url = page_data.get("url", "")
     
     prompt = f"""You are an SEO content analyst. Analyze this landing page and its keyword coverage.
@@ -263,7 +291,7 @@ def generate_landing_page_text(
     """
     url = page_data.get("url", "")
     h2s = page_data.get("h2s", [])
-    existing = page_data.get("body_text", "")[:2000]
+    existing = _clean_body_text(page_data, 2000)
     page_type = page_data.get("page_type", "unknown")
 
     # Page-type specific instructions
@@ -980,7 +1008,7 @@ def generate_page_implementation_plan(
     h2s = page_data.get("h2s", [])[:10]
     page_type = page_data.get("page_type", "unknown")
     word_count = page_data.get("word_count", 0)
-    body_snippet = (page_data.get("body_text") or page_data.get("intro_text") or "")[:1500]
+    body_snippet = _clean_body_text(page_data, 1500)
     target_keywords = page_data.get("target_keywords", [])[:15]
     impressions = page_data.get("impressions", 0)
     lost_clicks = page_data.get("lost_clicks_estimate", 0)
