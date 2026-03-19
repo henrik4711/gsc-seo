@@ -82,16 +82,37 @@ def scrape_page(url: str, timeout: int = 10) -> dict:
         result["h2s"] = [h.get_text(strip=True) for h in soup.find_all("h2")][:10]
         result["h3s"] = [h.get_text(strip=True) for h in soup.find_all("h3")][:10]
         
-        # Body text (remove script, style, nav, footer)
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+        # Body text — remove non-content elements
+        # 1. Remove script, style, nav, footer, header, aside
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "svg"]):
             tag.decompose()
-        
-        main_content = soup.find("main") or soup.find("article") or soup.find("div", class_=re.compile("content|product|description", re.I)) or soup.body
+
+        # 2. Remove cookie consent / GDPR popups
+        cookie_selectors = [
+            {"class_": re.compile(r"cookie|consent|gdpr|cc-|privacy-banner|cookie-bar", re.I)},
+            {"id": re.compile(r"cookie|consent|gdpr|cc-", re.I)},
+        ]
+        for sel in cookie_selectors:
+            for tag in soup.find_all(["div", "section", "aside"], sel):
+                tag.decompose()
+
+        # 3. Remove mega-menu / dropdown nav content
+        for tag in soup.find_all(["div", "ul"], class_=re.compile(r"mega-?menu|dropdown|nav-menu|mobile-menu|menu-overlay", re.I)):
+            tag.decompose()
+
+        # 4. Find main content container
+        main_content = (
+            soup.find("main")
+            or soup.find("article")
+            or soup.find("div", role="main")
+            or soup.find("div", class_=re.compile(r"^(main|page|content|product|category)", re.I))
+            or soup.body
+        )
+
         if main_content:
             raw_text = main_content.get_text(separator=" ", strip=True)
-            # Clean whitespace
             body_text = re.sub(r'\s+', ' ', raw_text).strip()
-            result["body_text"] = body_text[:8000]  # Cap at 8k chars for AI
+            result["body_text"] = body_text[:8000]
             result["word_count"] = len(body_text.split())
         
         # Schema types
