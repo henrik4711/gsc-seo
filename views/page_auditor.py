@@ -414,7 +414,8 @@ def render():
                         log_q.write(f"Batch {batch_num}/{total_batches}: {', '.join(r['url'].split('/')[-1] or r['url'].split('/')[-2] for r in batch)}")
 
                         try:
-                            assessments = assess_content_quality_batch(client, batch, site_context, language)
+                            tc = st.session_state.get("topic_clusters")
+                            assessments = assess_content_quality_batch(client, batch, site_context, language, tc)
                             for assessment in assessments:
                                 aurl = assessment.get("url", "")
                                 # Match assessment to page

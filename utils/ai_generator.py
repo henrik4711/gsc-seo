@@ -243,14 +243,36 @@ def assess_content_quality_batch(
     pages: list,
     site_context: str = "",
     language: str = "Swedish",
+    topic_clusters: dict = None,
 ) -> list:
     """
     Batch assess content quality for multiple pages in a single call.
     Evaluates up to 5 pages at once to reduce API calls.
+    Includes cluster context so AI can assess if text supports the topic structure.
     """
     page_sections = []
     for i, p in enumerate(pages):
         body = _clean_body_text(p, 800)
+
+        # Get cluster context for this page
+        cluster_info = ""
+        if topic_clusters:
+            page_topics = topic_clusters.get("page_topics", {})
+            url = p.get("url", "")
+            topics = page_topics.get(url, [])
+            if topics:
+                topic_names = [t.get("topic", "") for t in topics[:5]]
+                cluster_info = f"Topic cluster(s): {', '.join(topic_names)}\n"
+
+            # Is this a pillar page?
+            from urllib.parse import urlparse
+            page_path = urlparse(url).path.lower().rstrip("/")
+            child_pages = [u for u in page_topics.keys()
+                          if urlparse(u).path.lower().rstrip("/").startswith(page_path + "/")]
+            if child_pages:
+                cluster_info += f"PILLAR page with {len(child_pages)} child pages\n"
+                cluster_info += f"Child pages: {', '.join(c.split('/')[-1] for c in child_pages[:8])}\n"
+
         page_sections.append(
             f"### PAGE {i+1}\n"
             f"URL: {p.get('url', '')}\n"
@@ -258,6 +280,7 @@ def assess_content_quality_batch(
             f"Title: {(p.get('title') or '')[:80]}\n"
             f"H1: {(p.get('h1') or '')[:80]}\n"
             f"Word count: {p.get('word_count', 0)}\n"
+            f"{cluster_info}"
             f"Target keywords: {', '.join(p.get('target_keywords', [])[:5])}\n"
             f"Text sample:\n{body}\n"
         )
@@ -279,6 +302,8 @@ Language: {language}
 3. **Depth**: Does it cover the topic thoroughly? Or is it thin and superficial?
 4. **Readability**: Is it well-structured, easy to scan, clear language? Or is it a wall of repetitive text?
 5. **E-E-A-T**: Does it show experience, expertise? Does it feel like it was written by someone who knows the products? Or is it generic marketing fluff?
+6. **Cluster fit**: If this is a PILLAR page, does the text provide a comprehensive overview that links to and summarizes ALL child topics? If it's a SPOKE page, does it go deep on its specific subtopic and reference the pillar? Does the text make sense in the context of the site's topic structure?
+7. **Standalone value**: Would this text make sense on its own? Does it have a clear purpose and structure? Or does it feel like it was written just for SEO with no real reader in mind?
 
 ## VERDICTS:
 - **KEEP** (7-10): Good content, minor improvements only
