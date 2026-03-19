@@ -184,11 +184,13 @@ def render():
             log = st.empty()
 
             for i, url in enumerate(urls):
-                remaining = (total_urls - i)
-                mins = remaining // 60
-                secs = remaining % 60
-                log.write(f"[{i+1}/{total_urls}] {url}  (~{mins}m {secs}s left)")
-                progress.progress((i) / total_urls)
+                # Update UI only every 10 pages to avoid websocket overload
+                if i % 10 == 0:
+                    remaining = (total_urls - i)
+                    mins = remaining // 60
+                    secs = remaining % 60
+                    log.write(f"[{i+1}/{total_urls}] {url}  (~{mins}m {secs}s left)")
+                    progress.progress(i / total_urls)
 
                 # Get keywords for this page from GSC
                 # Filter out brand keywords that appear on every page
@@ -278,8 +280,11 @@ def render():
                     result["issues"] = []
 
                 audit_results.append(result)
-                progress.progress((i + 1) / total_urls)
-                time.sleep(0.3)
+
+                # Only update UI every 10 pages (reduces re-renders from 900 to 90)
+                if (i + 1) % 10 == 0 or (i + 1) == total_urls:
+                    progress.progress((i + 1) / total_urls)
+                    log.write(f"[{i+1}/{total_urls}] Done: {url}")
 
                 # Auto-save every 50 pages so progress isn't lost on crash/timeout
                 if len(audit_results) % 50 == 0:
