@@ -392,20 +392,61 @@ For each language:
 5. Adjust: prices (local currency), shipping info, legal disclaimers
 6. Local keyword research (what do DANES search for vs SWEDES?)
 
-### 5.2 Language Priority (by market size)
+### 5.2 Language Priority (by ROI — low competition first)
 
-| Priority | Language | Market | Affiliate target |
-|----------|----------|--------|-----------------|
-| 1 | Swedish (sv) | Sweden | mshop.se |
-| 2 | Danish (da) | Denmark | mshop.dk |
-| 3 | Norwegian (nb) | Norway | mshop.se (ships to NO) |
-| 4 | English (en) | UK/US/Global | mshop EU or partner |
-| 5 | German (de) | Germany/Austria/Switzerland | EU partner |
-| 6 | Finnish (fi) | Finland | mshop.se (ships to FI) |
-| 7 | Dutch (nl) | Netherlands/Belgium | EU partner |
-| 8 | French (fr) | France/Belgium/Switzerland | EU partner |
-| 9 | Spanish (es) | Spain/Latin America | EU partner |
-| 10 | Italian (it) | Italy | EU partner |
+**Wave 1 — Nordic (launch, week 1-2). You know the market, Mshop ships directly.**
+
+| # | Language | Market | Population | Competition | Affiliate target |
+|---|----------|--------|-----------|-------------|-----------------|
+| 1 | Danish (da) | Denmark | 5.9M | Medium | mshop.dk |
+| 2 | Norwegian (nb) | Norway | 5.4M | Medium | mshop.se (ships to NO) |
+| 3 | Finnish (fi) | Finland | 5.5M | Low | mshop.se (ships to FI) |
+
+**Wave 2 — Baltic (month 2). Near zero SEO competition.**
+
+| # | Language | Market | Population | Competition | Affiliate target |
+|---|----------|--------|-----------|-------------|-----------------|
+| 4 | Latvian (lv) | Latvia | 1.8M | Very low | EU partner |
+| 5 | Lithuanian (lt) | Lithuania | 2.8M | Very low | EU partner |
+| 6 | Estonian (et) | Estonia | 1.3M | Very low | EU partner |
+
+**Wave 3 — Central Europe (month 3). Big markets, liberal culture, low SEO competition.**
+
+| # | Language | Market | Population | Competition | Affiliate target |
+|---|----------|--------|-----------|-------------|-----------------|
+| 7 | Polish (pl) | Poland | 38M | Medium | EU partner |
+| 8 | Czech (cs) | Czech Republic | 10.7M | Low | EU partner |
+| 9 | Hungarian (hu) | Hungary | 10M | Low | EU partner |
+
+**Wave 4 — Southeast Europe (month 4). No competitors at all.**
+
+| # | Language | Market | Population | Competition | Affiliate target |
+|---|----------|--------|-----------|-------------|-----------------|
+| 10 | Romanian (ro) | Romania | 19M | Very low | EU partner |
+| 11 | Greek (el) | Greece | 10.7M | Very low | EU partner |
+| 12 | Croatian (hr) | Croatia (+Serbia/Bosnia) | 4M (+11M) | Very low | EU partner |
+| 13 | Slovenian (sl) | Slovenia | 2.1M | Zero | EU partner |
+
+**Wave 5 — Western Europe (month 5-6). Big markets, harder competition.**
+
+| # | Language | Market | Population | Competition | Affiliate target |
+|---|----------|--------|-----------|-------------|-----------------|
+| 14 | Spanish (es) | Spain | 47M | High | EU partner |
+| 15 | Italian (it) | Italy | 60M | High | EU partner |
+| 16 | French (fr) | France/Belgium/CH | 68M+ | High | EU partner |
+| 17 | Dutch (nl) | Netherlands/Belgium | 24M | Medium-high | EU partner |
+| 18 | German (de) | Germany/Austria/CH | 100M+ | High | EU partner |
+
+**Wave 6 — English (month 6+). Biggest potential, hardest competition.**
+
+| # | Language | Market | Population | Competition | Affiliate target |
+|---|----------|--------|-----------|-------------|-----------------|
+| 19 | English (en) | UK/Ireland/Global | 70M+ EU | Very high | EU partner |
+
+**Swedish (sv) — special case:**
+Do NOT compete with Mshop.se on their own market. Only add Swedish if Mshop specifically wants it as a content/SEO partner site.
+
+**Total addressable population: ~500M+ across EU**
 
 ### 5.3 WPML Configuration
 
@@ -530,42 +571,99 @@ Post-launch (first month):
 ### 7.2 Content Calendar
 
 ```
-Week 1-4: Launch with 30 articles (top priority from content roadmap)
-Month 2: Add 20 articles + expand to language #2 (Danish)
-Month 3: Add 20 articles + expand to language #3 (Norwegian)
-Month 4-6: Add 10 articles/month/language + expand to English + German
-Month 6-12: Focus on what's ranking, double down on winning topics
+Week 1-2:  Launch Wave 1 (DK + NO + FI) with 30 articles each
+Month 2:   Launch Wave 2 (LV + LT + EE) with 20 articles each
+Month 3:   Launch Wave 3 (PL + CZ + HU) with 30 articles each
+Month 4:   Launch Wave 4 (RO + GR + HR + SI) with 20 articles each
+Month 5-6: Launch Wave 5 (ES + IT + FR + NL + DE) with 30 articles each
+Month 6+:  Launch Wave 6 (EN) with 50 articles
+Ongoing:   5-10 new articles per language per month based on ranking data
 ```
 
-### 7.3 Revenue Projections (conservative)
+### 7.3 Revenue Projections (conservative, 12% commission)
 
 ```
 Assumptions:
-- 2000 products, 50 categories, 100 articles
-- Affiliate commission: 10-15% of sale
-- Average order value: 500 SEK
-- Conversion rate from affiliate click: 3-5%
+- 2000 products, 50 categories, 50-100 articles per language
+- 12% affiliate commission
+- Average order: 400-600 SEK (varies by market)
+- Conversion rate: 3-5% of affiliate clicks
+- Average commission per sale: ~60 SEK
 
-Month 1-3: ~0 SEK (indexing period)
-Month 3-6: 5,000-15,000 SEK/month (early rankings)
-Month 6-12: 20,000-50,000 SEK/month (growing authority)
-Year 2: 50,000-150,000 SEK/month (established, multi-language)
+Wave 1 — Nordic (DK + NO + FI):
+  Month 3-6:    3,000-10,000 SEK/month
+  Month 6-12:  15,000-40,000 SEK/month
+  Year 2:      30,000-70,000 SEK/month
 
-With 10 languages at maturity: multiply by 3-5x
+Wave 2 — Baltic (LV + LT + EE):
+  Month 4-6:    1,000-3,000 SEK/month (small markets but zero competition)
+  Month 6-12:   5,000-15,000 SEK/month
+  Year 2:      10,000-25,000 SEK/month
+
+Wave 3 — Central Europe (PL + CZ + HU):
+  Month 5-8:    2,000-8,000 SEK/month
+  Month 8-12:  15,000-40,000 SEK/month
+  Year 2:      30,000-80,000 SEK/month (Poland alone is huge)
+
+Wave 4 — Southeast (RO + GR + HR + SI):
+  Month 6-9:    1,000-5,000 SEK/month
+  Month 9-12:   8,000-20,000 SEK/month
+  Year 2:      15,000-40,000 SEK/month
+
+Wave 5 — Western Europe (ES + IT + FR + NL + DE):
+  Month 8-12:   5,000-20,000 SEK/month
+  Year 2:      40,000-120,000 SEK/month (big markets, slow start)
+
+Wave 6 — English:
+  Month 9-12:   2,000-10,000 SEK/month
+  Year 2:      15,000-50,000 SEK/month
+
+TOTAL ALL MARKETS:
+  Month 6:     15,000-40,000 SEK/month
+  Month 12:    60,000-150,000 SEK/month
+  Year 2:      140,000-385,000 SEK/month
+  Year 3:      250,000-600,000 SEK/month (compound growth)
+
+Conservative annual income at maturity (year 2-3):
+  Low estimate:   1.7M SEK/year (~170,000 EUR)
+  Mid estimate:   3.5M SEK/year (~350,000 EUR)
+  High estimate:  6.0M SEK/year (~600,000 EUR)
 ```
 
 ### 7.4 Ongoing Costs
 
 ```
 Monthly:
-- Hosting: 300-500 SEK
-- WPML: ~80 SEK
-- Rank Math Pro: ~50 SEK
-- ShortPixel: ~50 SEK
-- Claude API: 500-2000 SEK (depending on content generation volume)
-- Domain: ~100 SEK/year
+- Hosting (Cloudways, scales with traffic):    500-2,000 SEK
+- WPML (19 languages):                        ~200 SEK
+- Rank Math Pro:                               ~50 SEK
+- ShortPixel (image optimization):             ~50 SEK
+- Claude API (content generation + updates):   1,000-5,000 SEK
+- Domain + SSL:                                ~100 SEK/year
+- GSC API / Ahrefs (keyword research):         ~1,000 SEK
 
-Total: ~1,000-3,000 SEK/month
+Total: ~3,000-8,000 SEK/month
+Profit margin at maturity: 95%+
+```
+
+### 7.5 Risk Factors
+
+```
+HIGH RISK:
+- Google algorithm update targeting affiliate/AI sites
+  Mitigation: genuine E-E-A-T signals, unique reviews, not just rewritten specs
+
+MEDIUM RISK:
+- Mshop changes affiliate terms or commission rate
+  Mitigation: diversify to multiple affiliate partners per market
+- Competitor enters same low-competition markets
+  Mitigation: first-mover advantage + more content + better SEO
+
+LOW RISK:
+- Content quality issues (AI hallucination)
+  Mitigation: pre-publish validation pipeline
+- Technical downtime
+  Mitigation: managed hosting with uptime SLA
 ```
 
 ---
