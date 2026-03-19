@@ -1017,6 +1017,28 @@ Site: {site_context}
     return _parse_ai_json(message)
 
 
+def _format_existing_links(page_data: dict) -> str:
+    """Format existing internal links for the AI prompt."""
+    links = page_data.get("internal_links", [])
+    if isinstance(links, int):
+        return f"(count only: {links} links, no detail available)"
+    if not links:
+        return "(no links found)"
+    # Show unique links with anchors
+    seen = set()
+    lines = []
+    for l in links:
+        url = l.get("url", "")
+        anchor = l.get("anchor", "")
+        if url and url not in seen:
+            seen.add(url)
+            short = url.replace("https://www.mshop.se", "")
+            lines.append(f"  [{anchor[:40]}] → {short}")
+    if len(lines) > 30:
+        return "\n".join(lines[:30]) + f"\n  ... and {len(lines) - 30} more links"
+    return "\n".join(lines) if lines else "(no links found)"
+
+
 def generate_page_implementation_plan(
     client: anthropic.Anthropic,
     page_data: dict,
@@ -1086,6 +1108,9 @@ H2s: {', '.join(h2s) if h2s else 'None'}
 Word count: {word_count}
 Internal links on page: {link_count}
 Schema types present: {', '.join(schema_types) if schema_types else 'None'}
+
+## EXISTING INTERNAL LINKS ON THIS PAGE (already present — do NOT suggest these again)
+{_format_existing_links(page_data)}
 Meta score: {meta_score}/100
 Content score: {content_score}/100
 Impressions: {impressions:,}
@@ -1114,7 +1139,7 @@ Create a step-by-step implementation plan. For each step, be SPECIFIC — tell t
 CRITICAL RULES:
 1. KEYWORD RELEVANCE: Only include keywords that a user searching for them would expect to find on THIS specific page. Example: "clitoris vibrator" does NOT belong on a men's sex toy page. "dildo köp" is generic and belongs on the dildo category page, not a subcategory. Be STRICT about this.
 2. Do NOT recommend adding a keyword to H1 if H1 already contains it (handle Swedish chars: ä=a, ö=o, å=a)
-3. INTERNAL LINKS: Link to pages that RANK in Google for relevant keywords. Use EXACT URLs from the site URL list. Do NOT invent URLs. Link to category pages, brand pages, or guide pages — whichever has the most SEO value for the keyword. Do NOT link to individual product pages unless they rank for important keywords.
+3. INTERNAL LINKS: Check the EXISTING LINKS list above first. Do NOT recommend adding links that already exist on the page. Only suggest NEW links to pages that RANK in Google for relevant keywords. Use EXACT URLs from the site URL list. Do NOT invent URLs. Also verify anchor texts of existing links are descriptive and keyword-rich — if an existing link has poor anchor text (like "Läs mer" or "Klicka här"), suggest improving it.
 4. META TITLE: Must be under 60 chars. Primary keyword first. Not a brand name.
 5. META DESCRIPTION: Must be 140-160 chars. Include primary keyword + CTA.
 6. ALWAYS show meta title + description as the FIRST step if they need improvement.

@@ -411,8 +411,9 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
                     is_internal = True
                 else:
                     result["external_link_count"] += 1
-            elif href.startswith("/"):
+            elif href.startswith("/") and not href.startswith("//"):
                 is_internal = True
+                href = f"https://{domain}{href}"  # Convert to absolute URL
 
             if is_internal:
                 link_info = {"url": href, "anchor": anchor}

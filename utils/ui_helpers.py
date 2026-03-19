@@ -12,6 +12,38 @@ def shorten_url(url: str) -> str:
     return parsed.path + (f"?{parsed.query}" if parsed.query else "")
 
 
+def normalize_url(url: str) -> str:
+    """
+    Normalize a URL for consistent matching across the entire system.
+    Handles: http/https, www, trailing slashes, case, relative URLs.
+    """
+    if not url:
+        return ""
+    u = str(url).strip()
+    # Convert relative to absolute (assume https + www.mshop.se for now)
+    if u.startswith("/") and not u.startswith("//"):
+        u = "https://www.mshop.se" + u
+    # Standardize protocol
+    u = u.replace("http://", "https://")
+    # Keep www (it's part of the canonical URL for mshop.se)
+    # Remove trailing slash
+    u = u.rstrip("/")
+    # Lowercase
+    u = u.lower()
+    # Remove fragment (#section)
+    if "#" in u:
+        u = u[:u.index("#")]
+    # Remove tracking params but keep meaningful query strings
+    if "?" in u:
+        base, query = u.split("?", 1)
+        # Remove common tracking params
+        import re
+        params = query.split("&")
+        clean_params = [p for p in params if not re.match(r"^(utm_|itm_|ref=|fbclid|gclid)", p)]
+        u = base + ("?" + "&".join(clean_params) if clean_params else "")
+    return u
+
+
 STEP_ORDER = [
     ("gsc_data",          "1. Setup & Connect",    "Connect GSC and add API keys"),
     ("page_authority",    "2. Upload Ahrefs",      "Upload Ahrefs CSV files for backlink data"),
