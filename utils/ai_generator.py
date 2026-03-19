@@ -1058,6 +1058,11 @@ def generate_page_implementation_plan(
     meta_score = page_data.get("meta_score")
     content_score = page_data.get("content_score")
 
+    # Backlink data
+    referring_domains = page_data.get("referring_domains", 0)
+    backlinks = page_data.get("backlinks", 0)
+    authority_score = page_data.get("authority_score", 0)
+
     # Internal links this page has
     internal_links = page_data.get("internal_links", 0)
     link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
@@ -1085,6 +1090,9 @@ Meta score: {meta_score}/100
 Content score: {content_score}/100
 Impressions: {impressions:,}
 Lost clicks estimate: {lost_clicks:.0f}
+Referring domains (backlinks): {referring_domains}
+Total backlinks: {backlinks}
+Authority score: {authority_score}
 Site context: {site_context}
 Language: {language}
 
@@ -1117,6 +1125,7 @@ CRITICAL RULES:
 11. If keywords indicate topics not covered by ANY existing page, suggest a NEW article/blog
 12. For thin/generic text: specify which sections need rewriting and what angle to take
 13. VALIDATION: Before including any keyword in your plan, ask yourself: "Would a user searching THIS keyword expect to land on THIS page?" If not, exclude it.
+14. BACKLINKS: If the page has high impressions but few or zero referring domains, recommend building backlinks. This is often the single biggest factor for improving rankings. Assess backlink need based on: impressions vs referring domains ratio. A page with 10,000+ impressions and 0 referring domains URGENTLY needs backlinks.
 
 ## OUTPUT FORMAT (JSON only):
 

@@ -25,6 +25,9 @@ def _sort_pages_by_impact(audit_results):
             "lost_clicks": r.get("lost_clicks_estimate", 0),
             "meta_score": r.get("meta_score"),
             "content_score": r.get("content_score"),
+            "referring_domains": r.get("referring_domains", 0),
+            "backlinks": r.get("backlinks", 0),
+            "authority_score": r.get("authority_score", 0),
         })
     pages.sort(key=lambda p: -p["lost_clicks"])
     return pages
@@ -145,8 +148,22 @@ def render():
         meta_s = p["meta_score"]
         content_s = p["content_score"]
 
+        rd = p.get("referring_domains", 0)
+        bl = p.get("backlinks", 0)
+
         border = "#ff4455" if lost > 1000 else "#ffaa33" if lost > 200 else "#2a2a40"
         plan_badge = "<span style='color:#33dd88; font-size:0.65rem;'>PLAN READY</span>" if has_plan else "<span style='color:#6b6b8a; font-size:0.65rem;'>NO PLAN YET</span>"
+
+        # Backlink status: green/yellow/red based on impressions vs referring domains
+        if rd >= 10 or (impr < 500 and rd >= 3):
+            bl_color = "#33dd88"
+            bl_label = "OK"
+        elif rd >= 3 or (impr < 1000 and rd >= 1):
+            bl_color = "#ffaa33"
+            bl_label = "LOW"
+        else:
+            bl_color = "#ff4455"
+            bl_label = "NONE" if rd == 0 else "CRITICAL"
 
         # Card header
         st.markdown(
@@ -161,7 +178,9 @@ def render():
             f"</div>"
             f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600;'>{url}</div>"
             f"<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.2rem;'>"
-            f"Meta: {meta_s if meta_s is not None else '?'}/100 · Content: {content_s if content_s is not None else '?'}/100"
+            f"Meta: {meta_s if meta_s is not None else '?'}/100 · "
+            f"Content: {content_s if content_s is not None else '?'}/100 · "
+            f"Backlinks: <span style='color:{bl_color}; font-weight:600;'>{rd} domains ({bl_label})</span>"
             f"</div>"
             f"</div>",
             unsafe_allow_html=True,
