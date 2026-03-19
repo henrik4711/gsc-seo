@@ -377,24 +377,77 @@ def render():
                     # Display AI results
                     if ai_result_key in st.session_state:
                         ai_type, res = st.session_state[ai_result_key]
-                        st.markdown(
-                            "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
-                            "margin:0.3rem 0;'>COPY THIS INTO YOUR CMS</div>",
-                            unsafe_allow_html=True,
-                        )
+                        page_r = next((r for r in audit_results if r["url"] == url), {})
 
                         if ai_type == "meta" and isinstance(res, dict):
+                            # Show current vs new
+                            current_t = page_r.get("title") or ""
+                            current_d = page_r.get("meta_description") or ""
+                            st.markdown(
+                                f"<div style='background:#1a0d0d; border:1px solid #2a2a40; border-radius:6px; padding:0.6rem; margin:0.3rem 0;'>"
+                                f"<div style='font-size:0.6rem; color:#ff4455; font-family:\"IBM Plex Mono\",monospace;'>CURRENT</div>"
+                                f"<div style='font-size:0.8rem; color:#9b9bb8;'>Title: {current_t}</div>"
+                                f"<div style='font-size:0.8rem; color:#9b9bb8;'>Desc: {current_d}</div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
+                                "margin:0.3rem 0;'>COPY THIS — NEW META</div>",
+                                unsafe_allow_html=True,
+                            )
                             for i, v in enumerate(res.get("variants", []), 1):
                                 st.code(f"Title: {v.get('title','')}\nDescription: {v.get('description','')}", language="text")
+                            if res.get("analysis"):
+                                st.markdown(f"<div style='font-size:0.75rem; color:#6b6b8a;'>Why: {res['analysis']}</div>", unsafe_allow_html=True)
 
                         elif ai_type == "content" and isinstance(res, dict):
+                            # Show current text vs new
+                            current_text = _clean_body_text(page_r, 500)
+                            if current_text:
+                                st.markdown(
+                                    f"<div style='background:#1a0d0d; border:1px solid #2a2a40; border-radius:6px; padding:0.6rem; margin:0.3rem 0;'>"
+                                    f"<div style='font-size:0.6rem; color:#ff4455; font-family:\"IBM Plex Mono\",monospace;'>CURRENT TEXT</div>"
+                                    f"<div style='font-size:0.8rem; color:#9b9bb8;'>{current_text[:300]}{'...' if len(current_text) > 300 else ''}</div>"
+                                    f"</div>",
+                                    unsafe_allow_html=True,
+                                )
+                            st.markdown(
+                                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
+                                "margin:0.3rem 0;'>COPY THIS — NEW TEXT</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
+                                f"border-radius:0 4px 4px 0;'><div style='color:#e8e8f0; line-height:1.6;'>"
+                                f"{res.get('optimized_text', '')}</div></div>",
+                                unsafe_allow_html=True,
+                            )
+                            kws = res.get("keywords_integrated", [])
+                            if kws:
+                                st.markdown(f"<span style='font-size:0.7rem; color:#33dd88;'>Keywords added: {', '.join(kws)}</span>", unsafe_allow_html=True)
                             st.code(res.get("optimized_text", ""), language="text")
 
                         elif ai_type == "links" and isinstance(res, dict):
-                            st.markdown(f"<div style='color:#e8e8f0;'>{res.get('paragraph','')}</div>", unsafe_allow_html=True)
+                            st.markdown(
+                                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
+                                "margin:0.3rem 0;'>COPY THIS — LINK PARAGRAPH</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
+                                f"border-radius:0 4px 4px 0;'><div style='color:#e8e8f0; line-height:1.6;'>"
+                                f"{res.get('paragraph', '')}</div></div>",
+                                unsafe_allow_html=True,
+                            )
                             st.code(res.get("html", ""), language="html")
 
                         elif ai_type == "schema" and isinstance(res, dict):
+                            st.markdown(
+                                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88;'>"
+                                f"PASTE THIS IN &lt;head&gt; — SCHEMA MARKUP ({', '.join(res.get('types', []))})</div>",
+                                unsafe_allow_html=True,
+                            )
                             st.code(res.get("json_ld", ""), language="html")
 
                 # New content suggestions
