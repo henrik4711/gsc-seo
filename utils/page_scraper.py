@@ -157,30 +157,35 @@ def scrape_page(url: str, timeout: int = 10) -> dict:
             except Exception:
                 pass
         
-        # Link analysis — count from ORIGINAL soup (before nav removal)
-        # Re-parse to get accurate link count
-        full_soup = BeautifulSoup(resp.text, "html.parser")
-        # Only remove script/style, keep nav for link counting
-        for tag in full_soup(["script", "style"]):
-            tag.decompose()
+        # Link analysis — count from content area, not full page
+        # Use xmx-page-content to get CONTENT links (not nav)
+        content_for_links = (
+            BeautifulSoup(resp.text, "html.parser").find("div", class_="xmx-page-content")
+            or main_content
+        )
 
         domain = urlparse(url).netloc
         internal_link_list = []
-        for a in full_soup.find_all("a", href=True):
-            href = a["href"]
-            anchor = a.get_text(strip=True)[:100]
-            if href.startswith("http"):
-                if domain in href:
-                    internal_link_list.append({"url": href, "anchor": anchor})
-                else:
-                    result["external_links"] += 1
-            elif href.startswith("/") and not href.startswith("//"):
-                # Relative URL — internal link
-                full_url = f"https://{domain}{href}"
-                internal_link_list.append({"url": full_url, "anchor": anchor})
+        seen_urls = set()
+        ext_count = 0
+        if content_for_links:
+            for a in content_for_links.find_all("a", href=True):
+                href = a["href"]
+                anchor = a.get_text(strip=True)[:80]
+                if href.startswith("/") and not href.startswith("//"):
+                    href = f"https://{domain}{href}"
+                if href.startswith("http"):
+                    if domain in href:
+                        norm = href.rstrip("/").lower().split("?")[0].split("#")[0]
+                        if norm not in seen_urls:
+                            seen_urls.add(norm)
+                            internal_link_list.append({"url": href, "anchor": anchor})
+                    else:
+                        ext_count += 1
 
-        result["internal_links"] = internal_link_list
+        result["internal_links"] = internal_link_list  # unique content links only
         result["internal_link_count"] = len(internal_link_list)
+        result["external_links"] = ext_count
         
         # Images without alt
         result["images_without_alt"] = sum(

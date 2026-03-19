@@ -303,20 +303,31 @@ def render():
                     progress.progress((i + 1) / total_urls)
                     log.write(f"[{i+1}/{total_urls}] Done: {url}")
 
-                # Auto-save every 50 pages so progress isn't lost on crash/timeout
-                if len(audit_results) % 50 == 0:
-                    if st.session_state.get("bulk_new_only", False) and "audit_results" in st.session_state:
-                        merged = list(st.session_state["audit_results"])
-                        existing_urls = set(r["url"] for r in merged)
-                        for new_r in audit_results:
-                            if new_r["url"] not in existing_urls:
-                                merged.append(new_r)
-                                existing_urls.add(new_r["url"])
-                        st.session_state["audit_results"] = merged
-                    else:
-                        st.session_state["audit_results"] = list(audit_results)
-                    from utils.persistence import save_key
-                    save_key("audit_results")
+                # Auto-save every 100 pages — write to DISK only (not session_state)
+                # to avoid triggering Streamlit re-renders during audit
+                if len(audit_results) % 100 == 0:
+                    try:
+                        from utils.persistence import _volume_available, _file_path
+                        import json
+                        if _volume_available():
+                            # Merge with existing on disk
+                            path = _file_path("audit_results", "json")
+                            existing_on_disk = []
+                            if __import__("os").path.exists(path):
+                                with open(path, "r", encoding="utf-8") as f:
+                                    existing_on_disk = json.load(f)
+                            existing_urls = set(r.get("url", "") for r in existing_on_disk)
+                            for new_r in audit_results:
+                                if new_r.get("url", "") not in existing_urls:
+                                    existing_on_disk.append(new_r)
+                                    existing_urls.add(new_r["url"])
+                            def _conv(obj):
+                                if hasattr(obj, 'item'): return obj.item()
+                                raise TypeError(type(obj))
+                            with open(path, "w", encoding="utf-8") as f:
+                                json.dump(existing_on_disk, f, ensure_ascii=False, indent=1, default=_conv)
+                    except Exception:
+                        pass  # Don't crash audit if save fails
 
             # Merge with existing results if bulk audit with "keep existing"
             if st.session_state.get("bulk_new_only", False) and "audit_results" in st.session_state:
