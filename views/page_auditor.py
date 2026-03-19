@@ -281,6 +281,21 @@ def render():
                 progress.progress((i + 1) / total_urls)
                 time.sleep(0.3)
 
+                # Auto-save every 50 pages so progress isn't lost on crash/timeout
+                if len(audit_results) % 50 == 0:
+                    if st.session_state.get("bulk_new_only", False) and "audit_results" in st.session_state:
+                        merged = list(st.session_state["audit_results"])
+                        existing_urls = set(r["url"] for r in merged)
+                        for new_r in audit_results:
+                            if new_r["url"] not in existing_urls:
+                                merged.append(new_r)
+                                existing_urls.add(new_r["url"])
+                        st.session_state["audit_results"] = merged
+                    else:
+                        st.session_state["audit_results"] = list(audit_results)
+                    from utils.persistence import save_key
+                    save_key("audit_results")
+
             # Merge with existing results if bulk audit with "keep existing"
             if st.session_state.get("bulk_new_only", False) and "audit_results" in st.session_state:
                 existing = st.session_state["audit_results"]
