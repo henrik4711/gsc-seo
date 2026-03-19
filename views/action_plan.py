@@ -180,63 +180,31 @@ def _build_page_plans(audit_results, gsc_data, topic_clusters):
         missing_kws_raw = kw_cov.get("missing", [])
         coverage_pct = kw_cov.get("coverage_pct", 100)
 
-        # Filter missing keywords: only keep those RELEVANT to this page
-        # Must match the page's SPECIFIC topic, not just share generic words
-        from urllib.parse import urlparse as _urlparse
-        page_path = _urlparse(url).path.lower().rstrip("/")
+        # Use AI to filter keywords by relevance (cached per page)
+        ai_filter_key = f"_kw_filter_{hash(url) & 0xFFFFFF}"
+        if missing_kws_raw and ai_filter_key not in st.session_state:
+            try:
+                from utils.ai_generator import get_client, filter_relevant_keywords
+                from config import get_anthropic_key, has_anthropic_key
+                if has_anthropic_key():
+                    client = get_client(get_anthropic_key())
+                    ai_filter = filter_relevant_keywords(
+                        client, url, r.get("title") or "", h1,
+                        missing_kws_raw[:40], page_type,
+                    )
+                    st.session_state[ai_filter_key] = ai_filter
+            except Exception:
+                st.session_state[ai_filter_key] = None
 
-        # Use the LAST slug segment as the specific topic (what makes this page unique)
-        # /sexleksaker-for-man → "sexleksaker for man" (all words needed together)
-        last_slug = page_path.split("/")[-1] if "/" in page_path else page_path.lstrip("/")
-        specific_words = set(last_slug.replace("-", " ").replace("_", " ").split())
-        # Remove stop words that match everything
-        stop_words = {"for", "och", "med", "till", "av", "i", "pa", "den", "det", "en", "ett", "and", "the", "of", "in", "to"}
-        specific_words -= stop_words
-        specific_words.discard("")
-
-        # For pillar pages: also include child slug words
-        child_slug_words = set()
-        if topic_clusters:
-            for other_url in topic_clusters.get("page_topics", {}).keys():
-                other_path = _urlparse(other_url).path.lower().rstrip("/")
-                if other_path != page_path and other_path.startswith(page_path + "/"):
-                    child_part = other_path[len(page_path):].replace("-", " ").replace("/", " ")
-                    child_slug_words.update(w for w in child_part.split() if w and w not in stop_words)
-
-        def _is_relevant_keyword(kw):
-            kw_lower = kw.lower()
-            kw_words = set(kw_lower.split()) - stop_words
-
-            if not kw_words:
-                return False
-
-            # Must share a SPECIFIC word with the page slug (not just generic "sexleksaker")
-            # For /sexleksaker-for-man: keyword must contain "man" or "män" or "honom"
-            # The _normalize function handles ä→a, ö→o
-            slug_specific = {_normalize(w) for w in specific_words if len(w) > 2}
-            kw_normalized = {_normalize(w) for w in kw_words if len(w) > 2}
-
-            if slug_specific and kw_normalized & slug_specific:
-                return True
-
-            # Pillar page: matches child page slugs?
-            if child_slug_words:
-                child_normalized = {_normalize(w) for w in child_slug_words if len(w) > 2}
-                if kw_normalized & child_normalized:
-                    return True
-
-            # Matches primary keyword's specific words?
-            if primary_keyword:
-                pk_words = {_normalize(w) for w in primary_keyword.lower().split() if len(w) > 2} - {_normalize(w) for w in stop_words}
-                # Must share a DISTINGUISHING word (not "sexleksaker" which is everywhere)
-                # Use the last word of primary keyword as most specific
-                pk_last = _normalize(primary_keyword.lower().split()[-1]) if primary_keyword else ""
-                if pk_last and len(pk_last) > 2 and pk_last in " ".join(kw_normalized):
-                    return True
-
-            return False
-
-        missing_kws = [kw for kw in missing_kws_raw if _is_relevant_keyword(kw)]
+        ai_result = st.session_state.get(ai_filter_key)
+        if ai_result and isinstance(ai_result, dict):
+            missing_kws = ai_result.get("relevant", missing_kws_raw)
+            # Update primary keyword if AI found a better one
+            ai_primary = ai_result.get("primary_keyword", "")
+            if ai_primary:
+                primary_keyword = ai_primary
+        else:
+            missing_kws = missing_kws_raw
 
         if missing_kws:
             kw_list = ", ".join(missing_kws[:8])
@@ -506,7 +474,7 @@ def render():
 
     # Cache plans in session state — only rebuild when audit changes
     # v3 = cache version bump to force rebuild after brand keyword + link fixes
-    cache_key = f"_impl_plans_v6_{len(audit_results)}"
+    cache_key = f"_impl_plans_v7_{len(audit_results)}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_page_plans(audit_results, gsc_data, topic_clusters)
     plans = st.session_state[cache_key]

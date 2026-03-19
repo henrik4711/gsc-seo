@@ -25,58 +25,28 @@ def _build_action_list(audit_results):
         missing_kws_raw = kw_cov.get("missing", [])
         coverage_pct = kw_cov.get("coverage_pct", 100)
 
-        # Filter missing keywords: only keep those RELEVANT to this page's SPECIFIC topic
-        import unicodedata
-        def _norm(text):
-            nfkd = unicodedata.normalize("NFKD", text.lower())
-            return "".join(c for c in nfkd if not unicodedata.combining(c))
+        # Use AI to filter keywords by relevance (cached per page)
+        ai_filter_key = f"_kw_filter_{hash(url) & 0xFFFFFF}"
+        if missing_kws_raw and ai_filter_key not in st.session_state:
+            try:
+                from utils.ai_generator import get_client, filter_relevant_keywords
+                from config import get_anthropic_key, has_anthropic_key
+                if has_anthropic_key():
+                    client = get_client(get_anthropic_key())
+                    h1 = (r.get("h1") or "")
+                    ai_filter = filter_relevant_keywords(
+                        client, url, r.get("title") or "", h1,
+                        missing_kws_raw[:40], r.get("page_type", ""),
+                    )
+                    st.session_state[ai_filter_key] = ai_filter
+            except Exception:
+                st.session_state[ai_filter_key] = None
 
-        from urllib.parse import urlparse as _urlparse
-        page_path = _urlparse(url).path.lower().rstrip("/")
-        last_slug = page_path.split("/")[-1] if "/" in page_path else page_path.lstrip("/")
-        stop_words = {"for", "och", "med", "till", "av", "i", "pa", "den", "det", "en", "ett", "and", "the", "of", "in", "to"}
-        specific_words = set(last_slug.replace("-", " ").replace("_", " ").split()) - stop_words
-        specific_words.discard("")
-
-        # Pillar: child slug words
-        child_slug_words = set()
-        tc = st.session_state.get("topic_clusters", {})
-        if tc:
-            for other_url in tc.get("page_topics", {}).keys():
-                other_path = _urlparse(other_url).path.lower().rstrip("/")
-                if other_path != page_path and other_path.startswith(page_path + "/"):
-                    child_part = other_path[len(page_path):].replace("-", " ").replace("/", " ")
-                    child_slug_words.update(w for w in child_part.split() if w and w not in stop_words)
-
-        # Primary keyword's distinguishing word
-        target_kws = r.get("target_keywords", [])
-        brand_lower = {b.lower() for b in st.session_state.get("_brand_keywords", set())}
-        pk_last = ""
-        for tkw in target_kws:
-            if tkw.lower() not in brand_lower:
-                words = tkw.lower().split()
-                pk_last = _norm(words[-1]) if words else ""
-                break
-
-        def _is_relevant(kw):
-            kw_words = {_norm(w) for w in kw.lower().split() if len(w) > 2} - {_norm(w) for w in stop_words}
-            if not kw_words:
-                return False
-            # Must share a SPECIFIC word with the page slug
-            slug_norm = {_norm(w) for w in specific_words if len(w) > 2}
-            if slug_norm and kw_words & slug_norm:
-                return True
-            # Pillar: matches child slugs?
-            if child_slug_words:
-                child_norm = {_norm(w) for w in child_slug_words if len(w) > 2}
-                if kw_words & child_norm:
-                    return True
-            # Matches primary keyword's last (most specific) word?
-            if pk_last and len(pk_last) > 2 and pk_last in " ".join(kw_words):
-                    return True
-            return False
-
-        missing_kws = [kw for kw in missing_kws_raw if _is_relevant(kw)]
+        ai_result = st.session_state.get(ai_filter_key)
+        if ai_result and isinstance(ai_result, dict):
+            missing_kws = ai_result.get("relevant", missing_kws_raw)
+        else:
+            missing_kws = missing_kws_raw
 
         # Missing/partial subtopics
         missing_subtopics = [
@@ -188,7 +158,7 @@ def render():
     language = st.session_state.get("content_language", "Swedish")
 
     # Cache action list
-    cache_key = f"_kw_actions_v6_{len(audit_results)}"
+    cache_key = f"_kw_actions_v7_{len(audit_results)}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_action_list(audit_results)
     actions = st.session_state[cache_key]

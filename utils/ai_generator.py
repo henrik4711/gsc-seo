@@ -676,6 +676,51 @@ Write in {language}
     return _parse_ai_json(message)
 
 
+def filter_relevant_keywords(
+    client: anthropic.Anthropic,
+    url: str,
+    page_title: str,
+    h1: str,
+    all_keywords: list,
+    page_type: str = "",
+) -> dict:
+    """Use AI to filter keywords by relevance to a specific page."""
+    prompt = f"""You are an SEO expert. Given a specific page, determine which keywords are RELEVANT to that page and which are NOT.
+
+## PAGE
+URL: {url}
+Title: {page_title}
+H1: {h1}
+Page type: {page_type}
+
+## KEYWORDS TO EVALUATE
+{', '.join(all_keywords[:40])}
+
+## TASK
+For each keyword, decide: should this keyword be on THIS specific page, or does it belong on a DIFFERENT page?
+
+Rules:
+- A keyword is RELEVANT if a user searching for it would expect to find it on THIS page
+- A keyword is NOT relevant if it clearly belongs on a different page (e.g. "dildo" belongs on a dildo page, not a "for men" page, UNLESS it's specifically "dildo for men")
+- Brand keywords (site name) are NOT relevant unless this is the homepage
+- Generic keywords that apply to the whole site are NOT relevant to a specific subpage
+
+Return ONLY JSON:
+{{
+  "relevant": ["keyword1", "keyword2"],
+  "not_relevant": ["keyword3", "keyword4"],
+  "primary_keyword": "the single most important keyword for this page"
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1500,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    return _parse_ai_json(message)
+
+
 def generate_schema_markup(
     page_type: str,
     url: str,
