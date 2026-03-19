@@ -9,6 +9,7 @@ import json
 import pandas as pd
 from config import get_anthropic_key, has_anthropic_key
 from utils.ui_helpers import shorten_url
+from utils.ai_generator import _clean_body_text
 
 
 def _sort_pages_by_impact(audit_results):
@@ -497,16 +498,74 @@ def render():
                 rewrites = plan.get("text_rewrites", [])
                 if rewrites:
                     st.markdown("#### Sections to Rewrite")
-                    for rw in rewrites:
+                    page_r = next((r for r in audit_results if r["url"] == url), {})
+
+                    for rw_idx, rw in enumerate(rewrites):
+                        section_name = rw.get("section", "")
+                        problem = rw.get("current_problem", "")
+                        angle = rw.get("suggested_angle", "")
+
                         st.markdown(
-                            f"<div style='background:#1a0d0d; border-left:3px solid #ff4455; padding:0.5rem 0.8rem; "
-                            f"border-radius:0 4px 4px 0; margin-bottom:0.4rem;'>"
-                            f"<div style='font-size:0.85rem; color:#ff4455; font-weight:600;'>{rw.get('section', '')}</div>"
-                            f"<div style='font-size:0.8rem; color:#9b9bb8;'>Problem: {rw.get('current_problem', '')}</div>"
-                            f"<div style='font-size:0.8rem; color:#c8b4ff;'>Rewrite to: {rw.get('suggested_angle', '')}</div>"
+                            f"<div style='background:#1a0d0d; border-left:3px solid #ff4455; padding:0.7rem 1rem; "
+                            f"border-radius:0 6px 6px 0; margin-bottom:0.5rem;'>"
+                            f"<div style='font-size:0.9rem; color:#ff4455; font-weight:600; margin-bottom:0.3rem;'>{section_name}</div>"
+                            f"<div style='font-size:0.8rem; color:#9b9bb8; margin-bottom:0.3rem;'>Problem: {problem}</div>"
+                            f"<div style='font-size:0.8rem; color:#c8b4ff;'>New angle: {angle}</div>"
                             f"</div>",
                             unsafe_allow_html=True,
                         )
+
+                        # Show current text snippet
+                        current_text = _clean_body_text(page_r, 1000) if page_r else ""
+                        if current_text:
+                            with st.expander(f"Current text on page"):
+                                st.text(current_text[:500] + ("..." if len(current_text) > 500 else ""))
+
+                        # AI rewrite button
+                        rewrite_key = f"_rewrite_{url_hash}_{rw_idx}"
+                        if st.button(f"AI: Rewrite this section", key=f"btn_rewrite_{url_hash}_{rw_idx}", type="primary"):
+                            with st.spinner("AI rewriting section..."):
+                                try:
+                                    from utils.ai_generator import get_client, generate_keyword_text
+                                    client = get_client(get_anthropic_key())
+
+                                    # Build specific prompt context from the rewrite suggestion
+                                    rewrite_context = (
+                                        f"SECTION TO REWRITE: {section_name}\n"
+                                        f"PROBLEM: {problem}\n"
+                                        f"NEW ANGLE: {angle}\n\n"
+                                        f"CURRENT TEXT:\n{current_text[:800]}"
+                                    )
+
+                                    result = generate_keyword_text(
+                                        client,
+                                        page_r.get("target_keywords", [])[:10],
+                                        rewrite_context,
+                                        page_r.get("page_type", "unknown"),
+                                        site_context, language,
+                                    )
+                                    st.session_state[rewrite_key] = result
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+
+                        if rewrite_key in st.session_state:
+                            res = st.session_state[rewrite_key]
+                            st.markdown(
+                                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
+                                "margin:0.3rem 0;'>COPY THIS — REWRITTEN SECTION</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.8rem; "
+                                f"border-radius:0 6px 6px 0;'>"
+                                f"<div style='color:#e8e8f0; line-height:1.6;'>{res.get('optimized_text', '')}</div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                            kws = res.get("keywords_integrated", [])
+                            if kws:
+                                st.markdown(f"<span style='font-size:0.7rem; color:#33dd88;'>Keywords: {', '.join(kws)}</span>", unsafe_allow_html=True)
+                            st.code(res.get("optimized_text", ""), language="text")
 
                 # Generate category bottom text button (for category pages)
                 page_r = next((r for r in audit_results if r["url"] == url), {})
