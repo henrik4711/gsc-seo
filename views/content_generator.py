@@ -218,7 +218,7 @@ def render():
 
                     result = generate_content_audit(
                         client, page_data, target_keywords,
-                        page_queries["query"].tolist()
+                        non_brand["query"].tolist()
                     )
 
                     if "generated_content" not in st.session_state:
@@ -295,7 +295,7 @@ def render():
 
                     result = generate_landing_page_text(
                         client, pdata, target_keywords,
-                        page_queries["query"].tolist(),
+                        non_brand["query"].tolist(),
                         site_context, language, tone
                     )
 
