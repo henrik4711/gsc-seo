@@ -966,6 +966,7 @@ def generate_full_article_html(
     site_context: str = "",
     language: str = "Swedish",
     all_site_urls: list = None,
+    cluster_context: str = "",
 ) -> dict:
     """Generate a complete article as HTML matching Mshop's exact format."""
     from utils.templates import BLOG_TEMPLATE_INSTRUCTIONS
@@ -1000,6 +1001,7 @@ Title: {title}
 Content type: {content_type}
 Target keywords: {', '.join(keywords[:10])}
 This article supports/links from: {link_from_url}
+{f"Cluster context: {cluster_context}" if cluster_context else ""}
 Site: {site_context}
 Language: {language}
 
@@ -1113,6 +1115,64 @@ Site: {site_context}
     return _parse_ai_json(message)
 
 
+def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str:
+    """Build cluster context showing this page's role in the topic structure."""
+    if not topic_clusters:
+        return "(no cluster data available)"
+
+    url = page_data.get("url", "")
+    page_topics = topic_clusters.get("page_topics", {})
+    topics = page_topics.get(url, [])
+
+    if not topics:
+        return "(this page is not in any topic cluster)"
+
+    from urllib.parse import urlparse
+    page_path = urlparse(url).path.lower().rstrip("/")
+
+    lines = []
+
+    # This page's topics
+    topic_names = [t.get("topic", "") for t in topics[:5]]
+    lines.append(f"Topics this page covers: {', '.join(topic_names)}")
+
+    # Is this a pillar?
+    child_pages = []
+    for other_url in page_topics.keys():
+        other_path = urlparse(other_url).path.lower().rstrip("/")
+        if other_path != page_path and other_path.startswith(page_path + "/"):
+            child_pages.append(other_url)
+
+    if child_pages:
+        lines.append(f"PILLAR PAGE — has {len(child_pages)} child/spoke pages:")
+        for cp in child_pages[:10]:
+            cp_short = cp.replace("https://www.mshop.se", "")
+            cp_topics = [t.get("topic", "") for t in page_topics.get(cp, [])[:2]]
+            lines.append(f"  Child: {cp_short} (topics: {', '.join(cp_topics)})")
+        lines.append("As a pillar, this page should: overview ALL child topics, link DOWN to each child, provide comprehensive category guidance")
+    else:
+        # Find parent/hub page
+        path_parts = page_path.strip("/").split("/")
+        if len(path_parts) >= 2:
+            parent_path = "/" + "/".join(path_parts[:-1])
+            parent_url = f"https://www.mshop.se{parent_path}"
+            lines.append(f"SPOKE PAGE — parent/hub: {parent_url}")
+            lines.append("As a spoke, this page should: go DEEP on its specific subtopic, link UP to parent hub, cross-link to sibling pages")
+
+        # Find siblings
+        sibling_pages = []
+        for other_url in page_topics.keys():
+            other_path = urlparse(other_url).path.lower().rstrip("/")
+            if other_url != url and len(other_path.strip("/").split("/")) == len(path_parts):
+                other_parts = other_path.strip("/").split("/")
+                if len(other_parts) >= 2 and other_parts[:-1] == path_parts[:-1]:
+                    sibling_pages.append(other_url)
+        if sibling_pages:
+            lines.append(f"Sibling pages ({len(sibling_pages)}): {', '.join(s.replace('https://www.mshop.se', '') for s in sibling_pages[:8])}")
+
+    return "\n".join(lines)
+
+
 def _format_existing_links(page_data: dict) -> str:
     """Format existing internal links for the AI prompt."""
     links = page_data.get("internal_links", [])
@@ -1141,6 +1201,7 @@ def generate_page_implementation_plan(
     site_context: str = "",
     all_site_urls: list = None,
     language: str = "Swedish",
+    topic_clusters: dict = None,
 ) -> dict:
     """
     Generate a complete, verified implementation plan for a single page.
@@ -1217,6 +1278,9 @@ Authority score: {authority_score}
 Site context: {site_context}
 Language: {language}
 
+## TOPIC CLUSTER CONTEXT (this page's role in the site's topic structure)
+{_format_cluster_context(page_data, topic_clusters)}
+
 ## GSC KEYWORDS (sorted by impressions, these are queries users search to find this page)
 {', '.join(target_keywords)}
 
@@ -1246,7 +1310,12 @@ CRITICAL RULES:
 11. If keywords indicate topics not covered by ANY existing page, suggest a NEW article/blog
 12. For thin/generic text: specify which sections need rewriting and what angle to take
 13. VALIDATION: Before including any keyword in your plan, ask yourself: "Would a user searching THIS keyword expect to land on THIS page?" If not, exclude it.
-14. BACKLINKS: If the page has high impressions but few or zero referring domains, recommend building backlinks. This is often the single biggest factor for improving rankings. Assess backlink need based on: impressions vs referring domains ratio. A page with 10,000+ impressions and 0 referring domains URGENTLY needs backlinks.
+14. BACKLINKS: If the page has high impressions but few or zero referring domains, recommend building backlinks. This is often the single biggest factor for improving rankings.
+15. CLUSTER CONTEXT: Check the TOPIC CLUSTER CONTEXT section. All recommendations must fit the page's role:
+    - PILLAR pages: recommend content that overviews ALL child topics, links DOWN to each child
+    - SPOKE pages: recommend deep content on THIS specific subtopic, link UP to hub, cross-link to siblings
+    - New articles must fill gaps in the cluster structure, not duplicate existing pages
+    - Anchor texts must be contextually appropriate for the cluster relationship
 
 ## OUTPUT FORMAT (JSON only):
 

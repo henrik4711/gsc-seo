@@ -119,7 +119,7 @@ def render():
                 try:
                     page_r = next((r for r in audit_results if r["url"] == p["url"]), {})
                     result = generate_page_implementation_plan(
-                        client, page_r, site_context, all_site_urls, language,
+                        client, page_r, site_context, all_site_urls, language, topic_clusters,
                     )
                     st.session_state[plan_key] = result
                 except Exception as e:
@@ -515,6 +515,11 @@ def render():
                                         page_r = next((r for r in audit_results if r["url"] == nc_link), {})
                                         tone_sample = (page_r.get("intro_text") or page_r.get("bottom_text") or "")[:500]
 
+                                    # Build cluster context for the article
+                                    from utils.ai_generator import _format_cluster_context
+                                    page_r_for_ctx = next((r for r in audit_results if r["url"] == nc_link), {})
+                                    cluster_ctx = _format_cluster_context(page_r_for_ctx, topic_clusters) if nc_link else ""
+
                                     result = generate_full_article_html(
                                         client,
                                         title=nc_title,
@@ -526,6 +531,7 @@ def render():
                                         site_context=site_context,
                                         language=language,
                                         all_site_urls=all_site_urls,
+                                        cluster_context=cluster_ctx,
                                     )
                                     st.session_state[article_key] = result
                                 except Exception as e:
