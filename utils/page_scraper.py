@@ -114,12 +114,13 @@ def scrape_page(url: str, timeout: int = 10) -> dict:
         for tag in soup.find_all(attrs={"role": re.compile(r"^(navigation|search|banner|complementary)$", re.I)}):
             tag.decompose()
 
-        # 5. Find main content container
+        # 5. Find main content container — site-specific first, then generic
         main_content = (
-            soup.find("main")
+            soup.find("div", class_="xmx-page-content")  # Mshop specific
+            or soup.find("main")
             or soup.find("article")
             or soup.find("div", role="main")
-            or soup.find("div", class_=re.compile(r"^(main|page|content|product|category)", re.I))
+            or soup.find("div", class_=re.compile(r"^(main|page-content|content-area|product-detail|category-content)", re.I))
             or soup.body
         )
 

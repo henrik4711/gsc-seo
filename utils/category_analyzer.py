@@ -360,7 +360,7 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
             tag.decompose()
 
         # ── Editorial text separation ─────────────────────────
-        main = soup.find("main") or soup.body
+        main = soup.find("div", class_="xmx-page-content") or soup.find("main") or soup.body
         if main:
             all_paragraphs = main.find_all(["p", "div"], recursive=True)
             intro_parts = []
