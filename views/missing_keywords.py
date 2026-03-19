@@ -10,17 +10,8 @@ from config import get_anthropic_key, has_anthropic_key
 
 def _get_clean_snippet(r, max_chars=800):
     """Get clean editorial text, avoiding nav/menu pollution."""
-    intro = r.get("intro_text") or ""
-    bottom = r.get("bottom_text") or ""
-    if intro or bottom:
-        return (intro + "\n" + bottom).strip()[:max_chars]
-    body = r.get("body_text") or ""
-    h1 = r.get("h1") or ""
-    if h1 and h1 in body:
-        start = body.index(h1)
-        return body[start:start + max_chars]
-    skip = min(300, len(body) // 4)
-    return body[skip:skip + max_chars]
+    from utils.ai_generator import _clean_body_text
+    return _clean_body_text(r, max_chars)
 
 
 def _build_action_list(audit_results):

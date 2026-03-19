@@ -13,7 +13,7 @@ from typing import Optional
 def _clean_body_text(page_data: dict, max_chars: int = 1500) -> str:
     """
     Get clean editorial text from a page, avoiding navigation/menu/footer pollution.
-    Priority: intro_text > bottom_text > body_text (with nav skipped).
+    Priority: intro_text > bottom_text > body_text (with nav stripped).
     """
     # Best: use specific editorial text fields
     intro = page_data.get("intro_text") or ""
@@ -22,20 +22,48 @@ def _clean_body_text(page_data: dict, max_chars: int = 1500) -> str:
         combined = (intro + "\n\n" + bottom).strip()
         return combined[:max_chars]
 
-    # Fallback: body_text but skip first ~300 chars (navigation/menu area)
     body = page_data.get("body_text") or page_data.get("full_body_text") or ""
     if not body:
         return ""
 
-    # Find where real content starts — look for the H1 text as anchor
-    h1 = page_data.get("h1") or ""
-    if h1 and h1 in body:
-        start = body.index(h1)
-        return body[start:start + max_chars]
+    # Strip known menu/nav patterns from the text
+    import re
+    # Remove runs of short menu items (capitalized words separated by spaces, no sentences)
+    # Pattern: sequences of 2-4 word fragments without periods
+    nav_patterns = [
+        r'(?:Shoppa efter (?:märke|stil)\s*)+',
+        r'(?:Alla\s+)?(?:erbjudanden[a-z]*|Kategorier|Produkter|Populära (?:sökord|produkter)|Sök förslag)\s*',
+        r'(?:Varukorg|Vinterrea|REA|Mshop\.se)\s*',
+        r'(?:Hjälp & Kontakt|Våra butiker)\s*',
+        r'(?:Intimleksaker|Underkläder & Förspel|Hälsotek)\s*',
+        r'\d+ kr frakt[^.]*',
+        r'\d+\*? dagar (?:leverans|öppet köp)[^.]*',
+        r'stjärnor på Trustpilot\s*',
+        r'(?:Basques & Bodies|Klänningar & Kjolar|Catsuits & Bodystockings)\s*',
+        r'(?:Sexiga Underkläder|Bondage|Rollspel)\s*',
+        r'(?:Effekt|Kroppsdel|Hälsa & Sexhjälpmedel)\s*',
+    ]
+    cleaned = body
+    for pattern in nav_patterns:
+        cleaned = re.sub(pattern, ' ', cleaned, flags=re.IGNORECASE)
 
-    # Otherwise skip navigation (typically first 200-400 chars)
-    skip = min(300, len(body) // 4)
-    return body[skip:skip + max_chars]
+    # Remove repeated short fragments (menu-style: "Word Word Word Word")
+    # A line of many 1-2 word items with no punctuation = menu
+    cleaned = re.sub(r'(?:\b[A-ZÅÄÖ][a-zåäö]+\b\s+){5,}', ' ', cleaned)
+
+    # Clean multiple spaces
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
+
+    # Find where real content starts — first sentence with >20 chars
+    sentences = re.split(r'(?<=[.!?])\s+', cleaned)
+    start_idx = 0
+    for i, sent in enumerate(sentences):
+        if len(sent) > 40 and not any(nav in sent.lower() for nav in ['shoppa', 'varukorg', 'mshop.se', 'populära']):
+            start_idx = cleaned.index(sent) if sent in cleaned else 0
+            break
+
+    result = cleaned[start_idx:start_idx + max_chars]
+    return result.strip()
 
 
 def _parse_ai_json(message) -> dict:
