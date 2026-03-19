@@ -310,11 +310,25 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     page_labels = [s[0] for s in STEPS]
-    # Don't override user's selection with next_idx on re-render
+    # Persistent navigation — survives re-renders during long operations
     if "selected_page" not in st.session_state:
         st.session_state["selected_page"] = page_labels[next_idx]
-    page = st.radio("", page_labels, index=page_labels.index(st.session_state["selected_page"]), label_visibility="collapsed", key="nav_radio")
-    st.session_state["selected_page"] = page
+
+    # Ensure stored page is valid
+    if st.session_state["selected_page"] not in page_labels:
+        st.session_state["selected_page"] = page_labels[next_idx]
+
+    page = st.radio(
+        "", page_labels,
+        index=page_labels.index(st.session_state["selected_page"]),
+        label_visibility="collapsed",
+        key="nav_radio",
+    )
+
+    # Only update if user actually clicked a different page
+    if page != st.session_state.get("_last_rendered_page"):
+        st.session_state["selected_page"] = page
+    st.session_state["_last_rendered_page"] = page
 
     st.markdown("---")
 
