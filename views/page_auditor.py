@@ -216,6 +216,20 @@ def render():
                 # Also get cluster keywords for deeper validation
                 cluster_keywords = _get_cluster_keywords(url)
 
+                # Get backlink data if available
+                page_auth = st.session_state.get("page_authority")
+                rd = 0
+                bl_count = 0
+                auth_score = 0
+                if page_auth is not None and hasattr(page_auth, "iterrows"):
+                    def _norm(u):
+                        return str(u).rstrip("/").lower().replace("http://", "https://").replace("https://www.", "https://")
+                    match = page_auth[page_auth["page"].apply(_norm) == _norm(url)]
+                    if not match.empty:
+                        rd = int(match.iloc[0].get("referring_domains", 0))
+                        bl_count = int(match.iloc[0].get("backlinks", 0))
+                        auth_score = int(match.iloc[0].get("authority_score", 0))
+
                 result = {
                     "url": url,
                     "target_keywords": target_keywords,
@@ -225,6 +239,9 @@ def render():
                     "ctr_gap_pct": page_queries["ctr_gap_pct"].mean() if "ctr_gap_pct" in page_queries.columns and len(page_queries) > 0 else 0,
                     "impressions": page_queries["impressions"].sum(),
                     "clicks": page_queries["clicks"].sum(),
+                    "referring_domains": rd,
+                    "backlinks": bl_count,
+                    "authority_score": auth_score,
                 }
 
                 if scrape_live:
