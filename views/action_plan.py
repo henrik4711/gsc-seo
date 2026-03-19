@@ -402,6 +402,7 @@ def render():
                                         tone_sample=tone_sample,
                                         site_context=site_context,
                                         language=language,
+                                        all_site_urls=all_site_urls,
                                     )
                                     st.session_state[article_key] = result
                                 except Exception as e:

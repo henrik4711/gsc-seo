@@ -813,77 +813,61 @@ def generate_full_article_html(
     tone_sample: str = "",
     site_context: str = "",
     language: str = "Swedish",
+    all_site_urls: list = None,
 ) -> dict:
-    """Generate a complete article as HTML with embedded products and images."""
+    """Generate a complete article as HTML matching Mshop's exact format."""
+    from utils.templates import BLOG_TEMPLATE_INSTRUCTIONS
 
     products_section = ""
     if products:
         product_lines = []
         for p in products[:8]:
             product_lines.append(
-                f"  - {p.get('name','')}: {p.get('price','')} | "
-                f"Image: {p.get('image_url','')} | "
-                f"URL: {p.get('product_url','')} | "
-                f"Desc: {p.get('description','')}"
+                f"  - Name: {p.get('name','')}\n"
+                f"    Price: {p.get('price','')}\n"
+                f"    Image: {p.get('image_url','')}\n"
+                f"    URL: {p.get('product_url','')}\n"
+                f"    Description: {p.get('description','')}"
             )
         products_section = f"""
 
-## PRODUCTS TO FEATURE IN THE ARTICLE (use these real products with real images)
+## REAL PRODUCTS TO FEATURE (use these exact names, images, URLs, prices)
 {chr(10).join(product_lines)}
 
-Include 3-5 of these products naturally in the article:
-- In a 'Top picks' or 'Our recommendations' section with product cards
-- Each product card should have: image, name, short description, price, link to product page
-- Do NOT just list products — weave them into the narrative with genuine recommendations"""
+Feature 3-5 of these products naturally in the article using the product card HTML format from the template instructions."""
 
-    tone_section = ""
-    if tone_sample:
-        tone_section = f"""
+    url_section = ""
+    if all_site_urls:
+        url_section = f"\n\n## ALL SITE URLs (use these for internal links — do NOT invent URLs)\n{chr(10).join(all_site_urls[:150])}"
 
-## TONE OF VOICE (match this style)
-Sample from the site:
-{tone_sample[:500]}
-
-Match this tone: level of formality, how they address the customer, vocabulary, sentence length."""
-
-    prompt = f"""You are a senior content writer. Write a complete, ready-to-publish article as HTML.
+    prompt = f"""You are a senior content writer for Mshop.se, Scandinavia's leading adult webshop.
+Write a complete, CMS-ready article following the EXACT HTML format specified below.
 
 ## ARTICLE DETAILS
 Title: {title}
 Content type: {content_type}
 Target keywords: {', '.join(keywords[:10])}
-This article should be linked FROM: {link_from_url}
+This article supports/links from: {link_from_url}
 Site: {site_context}
 Language: {language}
-{products_section}{tone_section}
 
-## REQUIREMENTS
-- Write as clean, semantic HTML (h1, h2, h3, p, ul, li, strong, a, img tags)
-- Include the H1 title at the top
-- Write an engaging intro (100-150 words) that hooks the reader
-- 3-5 H2 sections with substantial content (200-300 words each)
+{BLOG_TEMPLATE_INSTRUCTIONS}
+{products_section}{url_section}
+
+## CONTENT REQUIREMENTS
+- 1500-2500 words total
+- Intro paragraph (100-150 words) — NO H1 tag
+- 3-5 H2 main sections with H3 subsections for product categories
+- Each H3 subsection: product description + expert recommendation (xmx--high-emphasis)
+- Product carousel cards after recommendation sections using real product data
+- FAQ at the end (3-5 questions as regular H3 + p, not accordion)
+- Conclusion with CTA mentioning discreet shipping and customer service
+- Internal links to related categories using real URLs
 - Naturally integrate target keywords (1-2% density)
-- If products are provided: include a product recommendation section with HTML cards using the real image URLs and product links
-- Include a FAQ section with 3-5 questions (use <details>/<summary> for accordion)
-- Include a conclusion with CTA
-- Add internal link back to {link_from_url} with natural anchor text
-- Total: 1500-2500 words
-- Make it genuinely helpful, not SEO spam
-- Language: {language}
-
-## PRODUCT CARD HTML TEMPLATE (use this format for each featured product):
-<div class="product-card" style="border:1px solid #eee; border-radius:8px; padding:16px; margin:12px 0; display:flex; gap:16px; align-items:center;">
-  <img src="PRODUCT_IMAGE_URL" alt="PRODUCT_NAME" style="width:120px; height:120px; object-fit:contain; border-radius:4px;">
-  <div>
-    <h3 style="margin:0 0 4px 0;"><a href="PRODUCT_URL">PRODUCT_NAME</a></h3>
-    <p style="margin:0 0 4px 0; color:#666; font-size:14px;">SHORT_DESCRIPTION</p>
-    <p style="margin:0; font-weight:bold;">PRICE</p>
-  </div>
-</div>
 
 ## OUTPUT FORMAT (JSON only):
 {{
-  "html": "<h1>Title</h1>\\n<p>Full article as HTML...</p>",
+  "html": "<p>Intro paragraph...</p>\\n<h2>Section...</h2>\\n<p>Content...</p>",
   "word_count": 0,
   "meta_title": "SEO title (50-60 chars)",
   "meta_description": "Meta description (140-160 chars)",
