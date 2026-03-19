@@ -312,8 +312,16 @@ def render():
                                     from utils.ai_generator import get_client, generate_keyword_text
                                     client = get_client(get_anthropic_key())
                                     page_r = next((r for r in audit_results if r["url"] == url), {})
+                                    # Use step instruction as context instead of raw body text
+                                    # (body text contains menu/nav pollution)
                                     kw_list = page_r.get("target_keywords", [])[:10]
-                                    body = (page_r.get("body_text") or "")[:800]
+                                    context = step.get("instruction", "") + "\n" + step.get("detail", "")
+                                    # Get intro/bottom text specifically, not full body
+                                    body = (page_r.get("intro_text") or page_r.get("bottom_text") or "")[:800]
+                                    if not body:
+                                        # Fallback: skip first 300 chars (nav/menu) of body
+                                        raw_body = page_r.get("body_text") or ""
+                                        body = raw_body[300:1100] if len(raw_body) > 300 else raw_body[:800]
                                     result = generate_keyword_text(
                                         client, kw_list, body,
                                         page_r.get("page_type", "unknown"),
