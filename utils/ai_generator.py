@@ -892,11 +892,14 @@ Create a step-by-step implementation plan. For each step, be SPECIFIC — tell t
 CRITICAL RULES:
 1. Only include RELEVANT missing keywords — keywords that a user searching for them would expect to find on THIS page. Filter out keywords that belong on other pages.
 2. Do NOT recommend adding a keyword to H1 if H1 already contains it (handle Swedish chars: ä=a, ö=o, å=a)
-3. For internal links: only suggest links to pages that are topically related (same category, parent/child, or genuinely complementary)
+3. For internal links: only suggest links to pages that are topically related. Use EXACT URLs from the site URL list. Do NOT invent URLs.
 4. Meta title MUST be under 60 chars. Primary keyword should be the most important keyword for THIS page (not a brand name)
 5. Only suggest schema types that are appropriate for this page type (no Product schema on category pages)
 6. Be honest: if the page is already good, say so. Don't invent problems.
 7. Each step must have a time estimate in minutes
+8. For content steps: specify EXACTLY what text to add, which H2 heading to use, and where on the page it should go (intro, bottom, new section)
+9. If keywords indicate topics not covered by ANY page on the site, suggest a NEW article/blog post to create — include suggested title, target keywords, and which existing page should link to it
+10. For existing text that is thin, generic, or low quality: specify which paragraphs/sections need rewriting and what angle to take
 
 ## OUTPUT FORMAT (JSON only):
 {{
@@ -906,8 +909,24 @@ CRITICAL RULES:
       "action": "Short action title",
       "time_minutes": 5,
       "detail": "What is wrong / current state",
-      "instruction": "Exactly what to do, step by step",
-      "type": "meta|content|links|schema|structure"
+      "instruction": "Exactly what to do, step by step. For content: specify which H2 section, what to write about, which keywords to include. For links: include the full target URL.",
+      "type": "meta|content|links|schema|structure|new_content"
+    }}
+  ],
+  "new_content_suggestions": [
+    {{
+      "type": "blog|guide|faq|category",
+      "suggested_title": "Title for the new article",
+      "target_keywords": ["kw1", "kw2"],
+      "why": "Why this content is needed and what search intent it serves",
+      "link_from": "URL of existing page that should link to this new content"
+    }}
+  ],
+  "text_rewrites": [
+    {{
+      "section": "Which section/paragraph needs rewriting",
+      "current_problem": "Why the current text is bad",
+      "suggested_angle": "What the new text should focus on"
     }}
   ],
   "overall_assessment": "2-3 sentences about this page's SEO status and priority"

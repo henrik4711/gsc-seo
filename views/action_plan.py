@@ -348,6 +348,43 @@ def render():
                         elif ai_type == "schema" and isinstance(res, dict):
                             st.code(res.get("json_ld", ""), language="html")
 
+                # New content suggestions
+                new_content = plan.get("new_content_suggestions", [])
+                if new_content:
+                    st.markdown("#### New Content to Create")
+                    for nc in new_content:
+                        nc_type = nc.get("type", "blog").upper()
+                        nc_title = nc.get("suggested_title", "")
+                        nc_kws = ", ".join(nc.get("target_keywords", []))
+                        nc_why = nc.get("why", "")
+                        nc_link = nc.get("link_from", "")
+                        st.markdown(
+                            f"<div style='background:#0d0d15; border-left:3px solid #c8b4ff; padding:0.7rem 1rem; "
+                            f"border-radius:0 6px 6px 0; margin-bottom:0.5rem;'>"
+                            f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#c8b4ff;'>{nc_type}</span>"
+                            f"<div style='font-size:0.95rem; color:#e8e8f0; font-weight:600; margin:0.3rem 0;'>{nc_title}</div>"
+                            f"<div style='font-size:0.8rem; color:#9b9bb8;'>Keywords: {nc_kws}</div>"
+                            f"<div style='font-size:0.8rem; color:#9b9bb8;'>Why: {nc_why}</div>"
+                            f"{'<div style=\"font-size:0.8rem; color:#5533ff;\">Link from: ' + nc_link + '</div>' if nc_link else ''}"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                # Text rewrite suggestions
+                rewrites = plan.get("text_rewrites", [])
+                if rewrites:
+                    st.markdown("#### Sections to Rewrite")
+                    for rw in rewrites:
+                        st.markdown(
+                            f"<div style='background:#1a0d0d; border-left:3px solid #ff4455; padding:0.5rem 0.8rem; "
+                            f"border-radius:0 4px 4px 0; margin-bottom:0.4rem;'>"
+                            f"<div style='font-size:0.85rem; color:#ff4455; font-weight:600;'>{rw.get('section', '')}</div>"
+                            f"<div style='font-size:0.8rem; color:#9b9bb8;'>Problem: {rw.get('current_problem', '')}</div>"
+                            f"<div style='font-size:0.8rem; color:#c8b4ff;'>Rewrite to: {rw.get('suggested_angle', '')}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
                 # Regenerate plan button
                 if st.button("Regenerate plan", key=f"btn_regen_{url_hash}"):
                     del st.session_state[plan_key]
