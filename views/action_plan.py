@@ -55,6 +55,12 @@ def render():
     site_context = st.session_state.get("site_context", "")
     language = st.session_state.get("content_language", "Swedish")
 
+    # Build site URL list for AI to reference real URLs
+    all_site_urls = sorted(set(r["url"] for r in audit_results if r.get("url")))
+    gsc = st.session_state.get("gsc_data")
+    if gsc is not None and hasattr(gsc, "page"):
+        all_site_urls = sorted(set(all_site_urls + gsc["page"].unique().tolist()))
+
     pages = _sort_pages_by_impact(audit_results)
 
     if not pages:
@@ -101,7 +107,7 @@ def render():
                 try:
                     page_r = next((r for r in audit_results if r["url"] == p["url"]), {})
                     result = generate_page_implementation_plan(
-                        client, page_r, site_context, language,
+                        client, page_r, site_context, all_site_urls, language,
                     )
                     st.session_state[plan_key] = result
                 except Exception as e:

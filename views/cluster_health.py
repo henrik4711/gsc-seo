@@ -168,6 +168,11 @@ def render():
     # ── Summary ───────────────────────────────────────────────────
     evaluated = sum(1 for c in clusters_sorted if f"_cluster_health_{hash(c.get('topic','')) & 0xFFFFFF}" in st.session_state)
 
+    # Build site URL list for AI
+    all_site_urls = sorted(set(r["url"] for r in audit_results if r.get("url")))
+    if gsc_data is not None and hasattr(gsc_data, "page"):
+        all_site_urls = sorted(set(all_site_urls + gsc_data["page"].unique().tolist()))
+
     c1, c2, c3 = st.columns(3)
     c1.metric("Topic clusters", len(clusters_sorted))
     c2.metric("Evaluated", evaluated)
@@ -207,7 +212,7 @@ def render():
                 try:
                     cd = _build_cluster_data(cluster, audit_results, tc, gsc_data, sf_link_map)
                     if cd:
-                        result = evaluate_cluster_health(client, cd, site_context, language)
+                        result = evaluate_cluster_health(client, cd, site_context, language, all_site_urls)
                         st.session_state[health_key] = result
                 except Exception as e:
                     st.session_state[health_key] = {"error": str(e), "health_score": 0}
@@ -264,7 +269,7 @@ def render():
                             client = get_client(get_anthropic_key())
                             cd = _build_cluster_data(cluster, audit_results, tc, gsc_data, sf_link_map)
                             if cd:
-                                result = evaluate_cluster_health(client, cd, site_context, language)
+                                result = evaluate_cluster_health(client, cd, site_context, language, all_site_urls)
                                 st.session_state[health_key] = result
                                 st.rerun()
                         except Exception as e:

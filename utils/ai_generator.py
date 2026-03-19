@@ -681,18 +681,26 @@ def evaluate_cluster_health(
     cluster_data: dict,
     site_context: str = "",
     language: str = "Swedish",
+    all_site_urls: list = None,
 ) -> dict:
     """
     AI evaluates an entire topic cluster: structure, linking, keyword distribution,
     content coverage, and hub-spoke relationships.
     """
+    # Include actual site URLs so AI can reference real pages
+    url_list = ""
+    if all_site_urls:
+        url_list = f"\n\n## ALL PAGES ON THIS SITE (use these exact URLs in your recommendations)\n{chr(10).join(all_site_urls[:200])}"
+
     prompt = f"""You are a senior SEO architect specializing in topic cluster strategy (Google 2026 best practices).
 
 Evaluate this ENTIRE topic cluster and identify problems + fixes. You must check EVERY aspect of cluster health.
 
+IMPORTANT: When recommending links or page references, use the EXACT URLs from the site URL list below. Do NOT invent URLs.
+
 ## SITE CONTEXT
 {site_context}
-Language: {language}
+Language: {language}{url_list}
 
 ## CLUSTER OVERVIEW
 Topic: {cluster_data.get('topic', '')}
@@ -799,6 +807,7 @@ def generate_page_implementation_plan(
     client: anthropic.Anthropic,
     page_data: dict,
     site_context: str = "",
+    all_site_urls: list = None,
     language: str = "Swedish",
 ) -> dict:
     """
@@ -839,7 +848,14 @@ def generate_page_implementation_plan(
     internal_links = page_data.get("internal_links", 0)
     link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
 
+    # Include site URLs so AI uses real URLs in link recommendations
+    url_list_section = ""
+    if all_site_urls:
+        url_list_section = f"\n\n## ALL PAGES ON THIS SITE (use these exact URLs when recommending internal links)\n{chr(10).join(all_site_urls[:200])}"
+
     prompt = f"""You are a senior SEO strategist reviewing a single page. Based on ALL the data below, create a precise implementation plan with ONLY actions that are correct and relevant for THIS specific page.
+
+IMPORTANT: When recommending internal links, use the EXACT URLs from the site URL list below. Do NOT invent or guess URLs.{url_list_section}
 
 ## PAGE DATA
 URL: {url}
