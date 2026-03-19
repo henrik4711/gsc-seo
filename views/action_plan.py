@@ -60,15 +60,12 @@ def render():
     language = st.session_state.get("content_language", "Swedish")
 
     # Build site URL list for AI to reference real URLs
-    # Build site URL list — filter out brand/filter pages (/alla/BRAND)
-    # which are not real category pages and confuse AI link recommendations
+    # Build site URL list for AI — include ALL URLs that rank in GSC
     raw_urls = set(r["url"] for r in audit_results if r.get("url"))
     gsc = st.session_state.get("gsc_data")
     if gsc is not None and hasattr(gsc, "page"):
         raw_urls.update(gsc["page"].unique().tolist())
-
-    # Filter: remove /alla/ URLs (brand filters, not real categories)
-    all_site_urls = sorted(u for u in raw_urls if "/alla/" not in u.lower())
+    all_site_urls = sorted(raw_urls)
 
     pages = _sort_pages_by_impact(audit_results)
 

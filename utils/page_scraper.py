@@ -157,15 +157,30 @@ def scrape_page(url: str, timeout: int = 10) -> dict:
             except Exception:
                 pass
         
-        # Link analysis
+        # Link analysis — count from ORIGINAL soup (before nav removal)
+        # Re-parse to get accurate link count
+        full_soup = BeautifulSoup(resp.text, "html.parser")
+        # Only remove script/style, keep nav for link counting
+        for tag in full_soup(["script", "style"]):
+            tag.decompose()
+
         domain = urlparse(url).netloc
-        for a in soup.find_all("a", href=True):
+        internal_link_list = []
+        for a in full_soup.find_all("a", href=True):
             href = a["href"]
+            anchor = a.get_text(strip=True)[:100]
             if href.startswith("http"):
                 if domain in href:
-                    result["internal_links"] += 1
+                    internal_link_list.append({"url": href, "anchor": anchor})
                 else:
                     result["external_links"] += 1
+            elif href.startswith("/") and not href.startswith("//"):
+                # Relative URL — internal link
+                full_url = f"https://{domain}{href}"
+                internal_link_list.append({"url": full_url, "anchor": anchor})
+
+        result["internal_links"] = internal_link_list
+        result["internal_link_count"] = len(internal_link_list)
         
         # Images without alt
         result["images_without_alt"] = sum(

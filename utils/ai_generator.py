@@ -1114,7 +1114,7 @@ Create a step-by-step implementation plan. For each step, be SPECIFIC — tell t
 CRITICAL RULES:
 1. KEYWORD RELEVANCE: Only include keywords that a user searching for them would expect to find on THIS specific page. Example: "clitoris vibrator" does NOT belong on a men's sex toy page. "dildo köp" is generic and belongs on the dildo category page, not a subcategory. Be STRICT about this.
 2. Do NOT recommend adding a keyword to H1 if H1 already contains it (handle Swedish chars: ä=a, ö=o, å=a)
-3. INTERNAL LINKS: Link to CATEGORY pages, not individual product pages or brand filter pages. Use EXACT URLs from the site URL list. Do NOT invent URLs. Example: link to /sexleksaker/dildos (category) not /satisfyer-pro-2 (product) and not /alla/fleshlight (brand filter). URLs containing '/alla/' are brand filters, NOT categories.
+3. INTERNAL LINKS: Link to pages that RANK in Google for relevant keywords. Use EXACT URLs from the site URL list. Do NOT invent URLs. Link to category pages, brand pages, or guide pages — whichever has the most SEO value for the keyword. Do NOT link to individual product pages unless they rank for important keywords.
 4. META TITLE: Must be under 60 chars. Primary keyword first. Not a brand name.
 5. META DESCRIPTION: Must be 140-160 chars. Include primary keyword + CTA.
 6. ALWAYS show meta title + description as the FIRST step if they need improvement.
