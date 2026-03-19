@@ -1,529 +1,139 @@
 """
-Action Plan — Implementation Guide
-Per-page step-by-step instructions with AI buttons for every fix.
-Combines data from: audit, topic clusters, internal linking, CTR gaps.
+Action Plan — AI-Powered Implementation Guide
+Each page gets a complete, AI-verified implementation plan.
+No rule-based guessing — Claude evaluates all data and creates precise steps.
 """
 
 import streamlit as st
+import json
 import pandas as pd
 from config import get_anthropic_key, has_anthropic_key
 from utils.ui_helpers import shorten_url
 
 
-def _normalize(text):
-    """Normalize text for comparison: handle Swedish/Danish chars."""
-    import unicodedata
-    # Decompose unicode chars (ä → a + combining diaeresis), strip combining marks
-    nfkd = unicodedata.normalize("NFKD", text.lower())
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
-
-
-def _text_contains_keyword(text, keyword):
-    """Check if text contains keyword, handling ä/ö/å vs a/o/a."""
-    # Direct match first
-    if keyword.lower() in text.lower():
-        return True
-    # Normalized match (ä→a, ö→o, å→a)
-    if _normalize(keyword) in _normalize(text):
-        return True
-    # Word-level match: all significant words present
-    kw_words = set(_normalize(keyword).split())
-    text_norm = _normalize(text)
-    if kw_words and all(w in text_norm for w in kw_words if len(w) > 2):
-        return True
-    return False
-
-
-def _build_page_plans(audit_results, gsc_data, topic_clusters):
-    """Build a detailed implementation plan per page from ALL data sources."""
-    plans = []
-
-    df = gsc_data
-
+def _sort_pages_by_impact(audit_results):
+    """Sort audited pages by potential impact (lost clicks)."""
+    pages = []
     for r in audit_results:
-        url = r.get("url", "")
-        impressions = r.get("impressions", 0)
-        lost_clicks = r.get("lost_clicks_estimate", 0)
-        meta_score = r.get("meta_score")
-        content_score = r.get("content_score")
-        page_type = r.get("page_type", "unknown")
-        target_keywords = r.get("target_keywords", [])
-        content_audit = r.get("content_audit") or {}
-        issues = r.get("issues", [])
-        meta_eval = r.get("meta_eval") or {}
-
-        # Determine the REAL primary keyword for this page
-        # Strategy: URL slug is the most reliable signal for what the page is about
-        # "mshop" appears in target_keywords for every page but is never the right primary
-        from urllib.parse import urlparse as _up_pk
-        slug = _up_pk(url).path.strip("/").split("/")[-1]
-        slug_keyword = slug.replace("-", " ").replace("_", " ") if slug else ""
-
-        # Build brand keywords set if needed
-        if "_brand_keywords" not in st.session_state:
-            try:
-                if gsc_data is not None and hasattr(gsc_data, "groupby") and len(gsc_data) > 0:
-                    total_pages = gsc_data["page"].nunique()
-                    kw_page_counts = gsc_data.groupby("query")["page"].nunique()
-                    st.session_state["_brand_keywords"] = set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
-            except Exception:
-                st.session_state["_brand_keywords"] = set()
-        brand_lower = {b.lower() for b in st.session_state.get("_brand_keywords", set())}
-
-        # Primary keyword: first non-brand keyword that matches the URL slug topic
-        primary_keyword = ""
-        slug_words = set(slug_keyword.lower().split()) if slug_keyword else set()
-
-        # First try: keyword that contains slug words (most relevant)
-        for kw in target_keywords:
-            if kw.lower() not in brand_lower and set(kw.lower().split()) & slug_words:
-                primary_keyword = kw
-                break
-        # Second try: any non-brand keyword
-        if not primary_keyword:
-            for kw in target_keywords:
-                if kw.lower() not in brand_lower:
-                    primary_keyword = kw
-                    break
-        # Last resort: URL slug as keyword
-        if not primary_keyword:
-            primary_keyword = slug_keyword or (target_keywords[0] if target_keywords else "")
-
-        steps = []
-        total_time = 0  # minutes
-
-        # ── STEP: Fix meta title ──────────────────────────────
-        title = r.get("title") or ""
-        title_len = r.get("title_length") or len(title)
-        title_issues = [i for i in issues if isinstance(i, dict) and i.get("field") in ("title", "title_length")]
-
-        if title_len > 60:
-            steps.append({
-                "action": "Shorten meta title",
-                "time": 2,
-                "detail": f"Current: \"{title}\" ({title_len} chars) — must be under 60 chars",
-                "what_to_do": f"Open **{url}** in CMS → Edit SEO title → Shorten to max 60 chars. Keep primary keyword **{primary_keyword}** first.",
-                "ai_type": "meta",
-            })
-            total_time += 2
-        elif title_len < 30 and title_len > 0:
-            steps.append({
-                "action": "Extend meta title",
-                "time": 2,
-                "detail": f"Current: \"{title}\" ({title_len} chars) — too short, aim for 50-60 chars",
-                "what_to_do": f"Open **{url}** in CMS → Edit SEO title → Add USP/benefit to reach 50-60 chars.",
-                "ai_type": "meta",
-            })
-            total_time += 2
-
-        # Title missing primary keyword
-        if primary_keyword and title:
-            if not _text_contains_keyword(title, primary_keyword):
-                steps.append({
-                    "action": f"Add primary keyword to title",
-                    "time": 2,
-                    "detail": f"Primary keyword **\"{primary_keyword}\"** is NOT in the title",
-                    "what_to_do": f"Edit title to start with or contain **\"{primary_keyword}\"**. Current: \"{title}\"",
-                    "ai_type": "meta",
-                })
-                total_time += 2
-
-        # ── STEP: Fix meta description ────────────────────────
-        desc = r.get("meta_description") or ""
-        desc_len = r.get("description_length") or len(desc)
-
-        if not desc or desc_len < 10:
-            steps.append({
-                "action": "Add meta description",
-                "time": 3,
-                "detail": "No meta description — Google will auto-generate one (usually bad)",
-                "what_to_do": f"Open **{url}** in CMS → Add meta description with **{primary_keyword}**, 140-160 chars, include CTA.",
-                "ai_type": "meta",
-            })
-            total_time += 3
-        elif desc_len < 120:
-            steps.append({
-                "action": "Extend meta description",
-                "time": 2,
-                "detail": f"Only {desc_len} chars — extend to 140-160 for full SERP display",
-                "what_to_do": f"Open **{url}** in CMS → Extend meta description to 140-160 chars. Add benefits, CTA, or USP.",
-                "ai_type": "meta",
-            })
-            total_time += 2
-        elif desc_len > 165:
-            steps.append({
-                "action": "Shorten meta description",
-                "time": 2,
-                "detail": f"Currently {desc_len} chars — Google truncates at ~160",
-                "what_to_do": f"Open **{url}** in CMS → Shorten meta description to max 160 chars.",
-                "ai_type": "meta",
-            })
-            total_time += 2
-
-        # ── STEP: Fix H1 ─────────────────────────────────────
-        h1 = r.get("h1") or ""
-        kw_cov = content_audit.get("keyword_coverage") or {}
-
-        # Check H1 ourselves with unicode-aware comparison (not just audit data)
-        h1_has_keyword = _text_contains_keyword(h1, primary_keyword) if (h1 and primary_keyword) else False
-        if not h1_has_keyword and primary_keyword:
-            steps.append({
-                "action": f"Add primary keyword to H1",
-                "time": 2,
-                "detail": f"H1 is \"{h1 or '(empty)'}\" — does NOT contain \"{primary_keyword}\"",
-                "what_to_do": f"Open **{url}** in CMS → Change H1 to include **\"{primary_keyword}\"**. H1 should match search intent.",
-                "ai_type": None,
-            })
-            total_time += 2
-
-        # ── STEP: Add missing keywords ────────────────────────
-        missing_kws_raw = kw_cov.get("missing", [])
-        coverage_pct = kw_cov.get("coverage_pct", 100)
-
-        # Use AI to filter keywords by relevance (cached per page)
-        ai_filter_key = f"_kw_filter_{hash(url) & 0xFFFFFF}"
-        if missing_kws_raw and ai_filter_key not in st.session_state:
-            try:
-                from utils.ai_generator import get_client, filter_relevant_keywords
-                from config import get_anthropic_key, has_anthropic_key
-                if has_anthropic_key():
-                    client = get_client(get_anthropic_key())
-                    ai_filter = filter_relevant_keywords(
-                        client, url, r.get("title") or "", h1,
-                        missing_kws_raw[:40], page_type,
-                    )
-                    st.session_state[ai_filter_key] = ai_filter
-            except Exception:
-                st.session_state[ai_filter_key] = None
-
-        ai_result = st.session_state.get(ai_filter_key)
-        if ai_result and isinstance(ai_result, dict):
-            missing_kws = ai_result.get("relevant", missing_kws_raw)
-            # Update primary keyword if AI found a better one
-            ai_primary = ai_result.get("primary_keyword", "")
-            if ai_primary:
-                primary_keyword = ai_primary
-        else:
-            missing_kws = missing_kws_raw
-
-        if missing_kws:
-            kw_list = ", ".join(missing_kws[:8])
-            remaining = len(missing_kws) - 8 if len(missing_kws) > 8 else 0
-            steps.append({
-                "action": f"Add {len(missing_kws)} missing keywords to page text",
-                "time": 30,
-                "detail": f"Coverage: {coverage_pct:.0f}% — missing: **{kw_list}**{f' (+{remaining} more)' if remaining else ''}",
-                "what_to_do": (
-                    f"Open **{url}** in CMS. Integrate these keywords naturally into existing text or new paragraphs. "
-                    f"Don't keyword-stuff — write for the customer first. "
-                    f"Focus on intro paragraph and H2 sections."
-                ),
-                "ai_type": "keywords",
-                "missing_keywords": missing_kws,
-            })
-            total_time += 30
-
-        # ── STEP: Add missing topic sections ──────────────────
-        topic_cov = content_audit.get("topic_coverage") or {}
-        missing_subtopics = [
-            s for s in (topic_cov.get("subtopics") or [])
-            if s.get("status") in ("missing", "partial")
-        ]
-
-        if missing_subtopics:
-            topic_names = [s["topic"] for s in missing_subtopics]
-            steps.append({
-                "action": f"Add {len(missing_subtopics)} missing topic sections",
-                "time": 45,
-                "detail": "Missing H2 sections for: **" + "**, **".join(topic_names[:5]) + "**",
-                "what_to_do": (
-                    f"Open **{url}** in CMS. Add a new H2 section for each missing topic. "
-                    f"Each section should be 80-150 words. "
-                    f"Use the topic name as H2 heading."
-                ),
-                "ai_type": "keywords",
-                "missing_keywords": [q for s in missing_subtopics for q in s.get("queries", [])[:3]],
-                "subtopics": topic_names,
-            })
-            total_time += 45
-
-        # ── STEP: Fix internal links ──────────────────────────
-        linking = content_audit.get("linking") or {}
-        link_fixes = linking.get("link_fix_suggestions") or []
-        missing_crosslinks = linking.get("missing_crosslinks") or []
-
-        # Also check topic cluster overlap — but filter out junk topics
-        if topic_clusters:
-            page_topics = topic_clusters.get("page_topics", {})
-
-            # Filter junk topics (appear on 30%+ of pages = brand/generic)
-            _topic_counts = {}
-            for _url_t, _tlist in page_topics.items():
-                for _t in _tlist:
-                    _tn = _t.get("topic", "")
-                    _topic_counts[_tn] = _topic_counts.get(_tn, 0) + 1
-            _total = len(page_topics)
-            _junk = {tn for tn, c in _topic_counts.items() if c >= _total * 0.3}
-
-            my_topics = set(t.get("topic", "") for t in page_topics.get(url, [])) - _junk
-
-            # Find pages we share topics with but don't link to
-            linked_urls = set()
-            internal_links = r.get("internal_links", [])
-            if isinstance(internal_links, list):
-                for l in internal_links:
-                    u = l.get("url", "")
-                    linked_urls.add(u.rstrip("/").lower())
-
-            sf_link_map = st.session_state.get("sf_link_map")
-            if sf_link_map:
-                for sl in sf_link_map.get("links_from", {}).get(url, []):
-                    linked_urls.add(sl.get("target", "").rstrip("/").lower())
-
-            cluster_links = []
-            # Only suggest links to pages in the SAME URL hierarchy or closely related
-            from urllib.parse import urlparse as _up3
-            my_path_parts = _up3(url).path.lower().strip("/").split("/")
-
-            for other_url, other_topics in page_topics.items():
-                if other_url.rstrip("/").lower() == url.rstrip("/").lower():
-                    continue
-                other_names = set(t.get("topic", "") for t in other_topics) - _junk
-                shared = my_topics & other_names
-                if not shared or other_url.rstrip("/").lower() in linked_urls:
-                    continue
-
-                # Filter: only suggest links to RELATED pages, not random pages
-                other_path_parts = _up3(other_url).path.lower().strip("/").split("/")
-                # Related if: same parent path, or sibling, or parent/child
-                is_sibling = (len(my_path_parts) >= 2 and len(other_path_parts) >= 2
-                              and my_path_parts[0] == other_path_parts[0])
-                is_parent_child = (
-                    other_url.rstrip("/").lower().startswith(url.rstrip("/").lower() + "/") or
-                    url.rstrip("/").lower().startswith(other_url.rstrip("/").lower() + "/")
-                )
-                if not is_sibling and not is_parent_child:
-                    continue
-
-                # Generate a NATURAL anchor text from the target page's URL slug
-                target_slug = other_path_parts[-1] if other_path_parts else ""
-                natural_anchor = target_slug.replace("-", " ").replace("_", " ")
-                if not natural_anchor or natural_anchor == "/":
-                    natural_anchor = other_url.split("/")[-2] if "/" in other_url else "related page"
-
-                cluster_links.append({
-                    "target": other_url,
-                    "shared_topics": list(shared)[:3],
-                    "anchor": natural_anchor,
-                })
-            cluster_links.sort(key=lambda x: -len(x["shared_topics"]))
-            cluster_links = cluster_links[:5]
-        else:
-            cluster_links = []
-
-        all_link_actions = []
-        for fix in link_fixes:
-            all_link_actions.append(f"Add link to `{fix.get('target_url','')}` with anchor **\"{fix.get('suggested_anchor','')}\"** in {fix.get('placement','page text')}")
-        for cl in cluster_links:
-            all_link_actions.append(f"Add link to `{cl['target']}` with anchor **\"{cl['anchor']}\"** (shared topics: {', '.join(cl['shared_topics'])})")
-
-        if all_link_actions:
-            link_detail = "\n".join([f"  → {la}" for la in all_link_actions[:8]])
-            steps.append({
-                "action": f"Add {len(all_link_actions)} internal links",
-                "time": 10,
-                "detail": f"Missing links to related pages:\n{link_detail}",
-                "what_to_do": (
-                    f"Open **{url}** in CMS. Add each link in a natural context — "
-                    f"intro, bottom text, or a relevant H2 section. "
-                    f"Use the suggested anchor text, not 'click here'."
-                ),
-                "ai_type": "links",
-                "link_actions": all_link_actions,
-            })
-            total_time += 10
-
-        # ── STEP: Content quality ─────────────────────────────
-        word_count = r.get("word_count", 0)
-        if word_count and word_count < 100 and page_type != "product":
-            steps.append({
-                "action": "Add content — page is too thin",
-                "time": 60,
-                "detail": f"Only {word_count} words — Google considers this thin content. Aim for 300+ words for categories, 500+ for guides.",
-                "what_to_do": f"Open **{url}** in CMS. Add intro text, buying guide, FAQ, or descriptive sections.",
-                "ai_type": "keywords",
-            })
-            total_time += 60
-
-        # ── STEP: Add FAQ schema ──────────────────────────────
-        has_faq = r.get("has_faq", False) or (content_audit.get("content_stats") or {}).get("has_faq", False)
-        if not has_faq and page_type in ("category", "blog"):
-            steps.append({
-                "action": "Add FAQ section with schema",
-                "time": 20,
-                "detail": "No FAQ found — FAQ schema can earn rich results in Google (extra visibility)",
-                "what_to_do": f"Open **{url}** in CMS. Add 3-5 FAQ questions targeting missing subtopics. Add FAQPage schema markup.",
-                "ai_type": "faq",
-            })
-            total_time += 20
-
-        # ── STEP: Add missing schema markup ───────────────────
-        schema_types = r.get("schema_types", [])
-        missing_schemas = []
-        if "BreadcrumbList" not in schema_types:
-            missing_schemas.append("BreadcrumbList")
-        if page_type in ("category", "blog") and "FAQPage" not in schema_types and has_faq:
-            missing_schemas.append("FAQPage")
-        trust = content_audit.get("trust") or {}
-        if not trust.get("has_org_schema", False) and url.rstrip("/").count("/") <= 3:
-            missing_schemas.append("Organization")
-
-        if missing_schemas:
-            steps.append({
-                "action": f"Add schema markup: {', '.join(missing_schemas)}",
-                "time": 10,
-                "detail": f"Missing structured data: **{', '.join(missing_schemas)}**. Schema helps Google show rich results (FAQ dropdowns, breadcrumbs in SERP).",
-                "what_to_do": (
-                    f"Add JSON-LD `<script>` tags to `<head>` of **{url}**. "
-                    f"Click the button below to generate the exact code."
-                ),
-                "ai_type": "schema",
-                "missing_schemas": missing_schemas,
-            })
-            total_time += 10
-
-        # ── STEP: Spoke → Hub link ────────────────────────────
-        # Check if this page links back to its parent/hub page
-        from urllib.parse import urlparse as _up2
-        page_path = _up2(url).path.lower().rstrip("/")
-        path_parts = page_path.strip("/").split("/")
-        if len(path_parts) >= 2:
-            parent_path = "/" + "/".join(path_parts[:-1])
-            # Check if we link to parent
-            linked_paths = set()
-            il = r.get("internal_links", [])
-            if isinstance(il, list):
-                for l in il:
-                    linked_paths.add(_up2(l.get("url", "")).path.lower().rstrip("/"))
-            sf_lm = st.session_state.get("sf_link_map")
-            if sf_lm:
-                for sl in sf_lm.get("links_from", {}).get(url, []):
-                    linked_paths.add(_up2(sl.get("target", "")).path.lower().rstrip("/"))
-
-            if parent_path not in linked_paths and parent_path != "":
-                # Find parent URL
-                parent_url = url[:url.lower().find(path_parts[-1])].rstrip("/")
-                steps.append({
-                    "action": f"Add link back to hub page {parent_path}",
-                    "time": 5,
-                    "detail": f"This spoke page does NOT link back to its hub/pillar **{parent_path}**. Google requires bidirectional hub↔spoke links for topic authority.",
-                    "what_to_do": (
-                        f"Open **{url}** in CMS. Add a link to **{parent_url or parent_path}** "
-                        f"in the intro or bottom text. Use descriptive anchor text like the hub page's main topic."
-                    ),
-                    "ai_type": "links",
-                    "link_actions": [f"Add link to `{parent_url or parent_path}` with anchor **\"{path_parts[-2].replace('-', ' ')}\"**"],
-                })
-                total_time += 5
-
-        if not steps:
+        if not r.get("url"):
             continue
-
-        plans.append({
-            "url": url,
-            "page_type": page_type,
-            "impressions": impressions,
-            "lost_clicks": lost_clicks,
-            "meta_score": meta_score,
-            "content_score": content_score,
-            "steps": steps,
-            "total_time": total_time,
-            "target_keywords": target_keywords,
-            "primary_keyword": primary_keyword,
-            "body_text_snippet": (r.get("body_text") or r.get("intro_text") or "")[:800],
+        pages.append({
+            "url": r["url"],
+            "page_type": r.get("page_type", "unknown"),
+            "impressions": r.get("impressions", 0),
+            "lost_clicks": r.get("lost_clicks_estimate", 0),
+            "meta_score": r.get("meta_score"),
+            "content_score": r.get("content_score"),
         })
-
-    # Sort by lost clicks descending
-    plans.sort(key=lambda p: -p["lost_clicks"])
-    return plans
+    pages.sort(key=lambda p: -p["lost_clicks"])
+    return pages
 
 
 def render():
     st.markdown("## Implementation Guide")
     st.markdown(
         "<p style='color:#6b6b8a; margin-bottom:1.5rem;'>"
-        "Step-by-step instructions for every page. Work from the top — highest impact first. "
-        "Click AI buttons to generate the exact text to paste into your CMS.</p>",
+        "AI-verified step-by-step plan for every page. Sorted by impact — work from the top. "
+        "Click a page to generate its plan.</p>",
         unsafe_allow_html=True,
     )
 
     has_audit = "audit_results" in st.session_state and st.session_state["audit_results"]
     has_gaps = "ctr_gaps" in st.session_state
-    gsc_data = st.session_state.get("gsc_data")
 
     if not has_audit:
-        st.warning("Run **6. Page Auditor** first (bulk audit recommended for full picture)")
+        st.warning("Run **6. Page Auditor** first (bulk audit recommended)")
         if has_gaps:
             _show_ctr_only_plan()
         return
 
+    if not has_anthropic_key():
+        st.warning("Add Anthropic API key in **1. Setup** — needed for AI implementation plans")
+        return
+
     audit_results = st.session_state["audit_results"]
-    topic_clusters = st.session_state.get("topic_clusters", {})
     site_context = st.session_state.get("site_context", "")
     language = st.session_state.get("content_language", "Swedish")
 
-    # Cache plans in session state — only rebuild when audit changes
-    # v3 = cache version bump to force rebuild after brand keyword + link fixes
-    cache_key = f"_impl_plans_v7_{len(audit_results)}"
-    if cache_key not in st.session_state:
-        st.session_state[cache_key] = _build_page_plans(audit_results, gsc_data, topic_clusters)
-    plans = st.session_state[cache_key]
+    pages = _sort_pages_by_impact(audit_results)
 
-    if not plans:
-        st.success("All audited pages look good — no issues found!")
+    if not pages:
+        st.info("No audited pages found")
         return
 
     # ── Summary ───────────────────────────────────────────────────
-    total_lost = sum(p["lost_clicks"] for p in plans)
-    total_steps = sum(len(p["steps"]) for p in plans)
-    total_time = sum(p["total_time"] for p in plans)
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Pages to fix", len(plans))
-    c2.metric("Total steps", total_steps)
-    c3.metric("Est. time", f"{total_time // 60}h {total_time % 60}m")
-    c4.metric("Lost clicks recoverable", f"{total_lost:,.0f}")
+    total_lost = sum(p["lost_clicks"] for p in pages)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Pages audited", len(pages))
+    c2.metric("Total lost clicks", f"{total_lost:,.0f}")
+    c3.metric("Pages with plan", sum(1 for p in pages if f"_ai_plan_{hash(p['url']) & 0xFFFFFF}" in st.session_state))
 
     st.markdown("---")
 
+    # ── Generate all plans button ─────────────────────────────────
+    col_gen, col_info = st.columns([1, 2])
+    with col_gen:
+        gen_top = st.button("Generate plans for top 10 pages", type="primary")
+    with col_info:
+        st.markdown(
+            "<span style='font-size:0.75rem; color:#6b6b8a;'>"
+            "~20 seconds per page. Plans are cached — you only pay once per page.</span>",
+            unsafe_allow_html=True,
+        )
+
+    if gen_top:
+        from utils.ai_generator import get_client, generate_page_implementation_plan
+        client = get_client(get_anthropic_key())
+
+        with st.status(f"Generating AI plans for top 10 pages...", expanded=True) as status:
+            progress = st.progress(0)
+            log = st.empty()
+
+            top_pages = pages[:10]
+            for i, p in enumerate(top_pages):
+                plan_key = f"_ai_plan_{hash(p['url']) & 0xFFFFFF}"
+                if plan_key in st.session_state:
+                    log.write(f"[{i+1}/10] {p['url']} — already cached")
+                    progress.progress((i + 1) / 10)
+                    continue
+
+                log.write(f"[{i+1}/10] {p['url']}...")
+                try:
+                    page_r = next((r for r in audit_results if r["url"] == p["url"]), {})
+                    result = generate_page_implementation_plan(
+                        client, page_r, site_context, language,
+                    )
+                    st.session_state[plan_key] = result
+                except Exception as e:
+                    st.session_state[plan_key] = {"error": str(e), "steps": []}
+                progress.progress((i + 1) / 10)
+
+            status.update(label="Plans generated", state="complete", expanded=False)
+        st.rerun()
+
     # ── Pagination ────────────────────────────────────────────────
     PAGES_PER_VIEW = 10
-    total_pages_count = len(plans)
-    max_page = max(1, (total_pages_count + PAGES_PER_VIEW - 1) // PAGES_PER_VIEW)
+    total_count = len(pages)
+    max_page = max(1, (total_count + PAGES_PER_VIEW - 1) // PAGES_PER_VIEW)
     current_page = st.number_input("Page", min_value=1, max_value=max_page, value=1, key="impl_page")
     start = (current_page - 1) * PAGES_PER_VIEW
-    visible_plans = plans[start:start + PAGES_PER_VIEW]
+    visible = pages[start:start + PAGES_PER_VIEW]
 
-    st.markdown(f"**Showing pages {start+1}-{min(start+PAGES_PER_VIEW, total_pages_count)} of {total_pages_count}**")
+    st.markdown(f"**Showing {start+1}-{min(start+PAGES_PER_VIEW, total_count)} of {total_count} pages**")
 
     # ── Page cards ────────────────────────────────────────────────
-    for plan_idx, plan in enumerate(visible_plans):
-        url = plan["url"]
-        ptype = plan["page_type"].upper()
-        lost = plan["lost_clicks"]
-        impr = plan["impressions"]
-        meta_s = plan["meta_score"]
-        content_s = plan["content_score"]
-        n_steps = len(plan["steps"])
-        est_time = plan["total_time"]
+    for p in visible:
+        url = p["url"]
+        plan_key = f"_ai_plan_{hash(url) & 0xFFFFFF}"
+        has_plan = plan_key in st.session_state
+        ptype = p["page_type"].upper()
+        lost = p["lost_clicks"]
+        impr = p["impressions"]
+        meta_s = p["meta_score"]
+        content_s = p["content_score"]
 
-        # Determine card border color
-        if lost > 1000:
-            border = "#ff4455"
-        elif lost > 200:
-            border = "#ffaa33"
-        else:
-            border = "#2a2a40"
+        border = "#ff4455" if lost > 1000 else "#ffaa33" if lost > 200 else "#2a2a40"
+        plan_badge = "<span style='color:#33dd88; font-size:0.65rem;'>PLAN READY</span>" if has_plan else "<span style='color:#6b6b8a; font-size:0.65rem;'>NO PLAN YET</span>"
 
         # Card header
         st.markdown(
@@ -531,14 +141,14 @@ def render():
             f"border-radius:6px; padding:1rem; margin-bottom:0.3rem;'>"
             f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;'>"
             f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; color:{border}; "
-            f"text-transform:uppercase;'>{ptype} · {n_steps} steps · ~{est_time} min</span>"
+            f"text-transform:uppercase;'>{ptype}</span>"
+            f"<div>{plan_badge} · "
             f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#6b6b8a;'>"
-            f"{impr:,} impr · {lost:,.0f} lost clicks</span>"
+            f"{impr:,} impr · {lost:,.0f} lost clicks</span></div>"
             f"</div>"
             f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600;'>{url}</div>"
             f"<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.2rem;'>"
-            f"Meta: {meta_s if meta_s is not None else '?'}/100 · Content: {content_s if content_s is not None else '?'}/100 · "
-            f"Primary KW: {plan.get('primary_keyword', plan['target_keywords'][0] if plan['target_keywords'] else '?')}"
+            f"Meta: {meta_s if meta_s is not None else '?'}/100 · Content: {content_s if content_s is not None else '?'}/100"
             f"</div>"
             f"</div>",
             unsafe_allow_html=True,
@@ -546,200 +156,208 @@ def render():
 
         url_hash = hash(url) & 0xFFFFFF
 
-        with st.expander(f"Open implementation plan for {shorten_url(url)}", expanded=(plan_idx == 0)):
-
-            for step_idx, step in enumerate(plan["steps"], 1):
-                time_str = f"{step['time']} min" if step['time'] < 60 else f"{step['time'] // 60}h {step['time'] % 60}m"
-
-                # Step card
-                st.markdown(
-                    f"<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.7rem 1rem; "
-                    f"border-radius:0 6px 6px 0; margin-bottom:0.6rem;'>"
-                    f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem;'>"
-                    f"<span style='color:#5533ff; font-weight:700; font-size:0.95rem;'>Step {step_idx}: {step['action']}</span>"
-                    f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#6b6b8a;'>~{time_str}</span>"
-                    f"</div>"
-                    f"<div style='font-size:0.82rem; color:#9b9bb8; margin-bottom:0.4rem;'>{step['detail']}</div>"
-                    f"<div style='font-size:0.85rem; color:#c8b4ff; line-height:1.5;'>{step['what_to_do']}</div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-
-                # AI buttons per step type
-                ai_type = step.get("ai_type")
-                result_key = f"impl_{url_hash}_{step_idx}"
-
-                if ai_type == "meta" and has_anthropic_key():
-                    if st.button(f"AI: Generate meta for this page", key=f"btn_impl_meta_{url_hash}_{step_idx}"):
-                        with st.spinner("Generating meta..."):
-                            try:
-                                from utils.ai_generator import get_client, generate_meta_suggestions
-                                client = get_client(get_anthropic_key())
-                                page_data = dict(
-                                    url=url, title=plan.get("title", ""),
-                                    meta_description=plan.get("meta_description", ""),
-                                    h1=plan.get("h1", ""), page_type=plan["page_type"],
-                                )
-                                # Find page_data from audit
-                                for ar in audit_results:
-                                    if ar["url"] == url:
-                                        page_data = ar
-                                        break
-                                result = generate_meta_suggestions(
-                                    client, page_data, plan["target_keywords"],
-                                    site_context, language, 2,
-                                )
-                                st.session_state[result_key] = result
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-
-                elif ai_type == "keywords" and has_anthropic_key():
-                    if st.button(f"AI: Generate text with keywords", key=f"btn_impl_kw_{url_hash}_{step_idx}"):
-                        with st.spinner("Generating keyword-optimized text..."):
-                            try:
-                                from utils.ai_generator import get_client, generate_keyword_text
-                                client = get_client(get_anthropic_key())
-                                missing = step.get("missing_keywords", plan.get("target_keywords", []))
-                                result = generate_keyword_text(
-                                    client, missing, plan["body_text_snippet"],
-                                    plan["page_type"], site_context, language,
-                                )
-                                st.session_state[result_key] = result
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-
-                elif ai_type == "links" and has_anthropic_key():
-                    if st.button(f"AI: Generate link paragraphs", key=f"btn_impl_link_{url_hash}_{step_idx}"):
-                        with st.spinner("Generating link text..."):
-                            try:
-                                from utils.ai_generator import get_client, generate_link_text
-                                client = get_client(get_anthropic_key())
-                                # Generate for first link action
-                                link_actions = step.get("link_actions", [])
-                                results = []
-                                for la in link_actions[:3]:
-                                    # Extract target URL from action text
-                                    import re
-                                    target_match = re.search(r'`([^`]+)`', la)
-                                    anchor_match = re.search(r'\*\*"([^"]+)"\*\*', la)
-                                    if target_match and anchor_match:
-                                        r = generate_link_text(
-                                            client, url, target_match.group(1),
-                                            anchor_match.group(1), "page text",
-                                            plan["target_keywords"], site_context, language,
-                                        )
-                                        results.append(r)
-                                st.session_state[result_key] = results
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-
-                elif ai_type == "schema":
-                    if st.button(f"Generate schema markup", key=f"btn_impl_schema_{url_hash}_{step_idx}"):
+        with st.expander(f"Implementation plan for {shorten_url(url)}", expanded=False):
+            # Generate plan button (per page)
+            if not has_plan:
+                if st.button(f"Generate AI plan", key=f"btn_gen_plan_{url_hash}", type="primary"):
+                    with st.spinner(f"AI analyzing {url}..."):
                         try:
-                            from utils.ai_generator import generate_schema_markup
-                            # Find page data
-                            page_r = next((ar for ar in audit_results if ar["url"] == url), {})
-                            faq_items_for_schema = None
-                            # Check if we have generated FAQ in session
-                            for sk, sv in st.session_state.items():
-                                if sk.startswith(f"impl_{url_hash}_") and isinstance(sv, dict) and "faq_items" in sv:
-                                    faq_items_for_schema = sv["faq_items"]
-                                    break
-
-                            result = generate_schema_markup(
-                                page_type=plan["page_type"],
-                                url=url,
-                                title=page_r.get("title", ""),
-                                description=page_r.get("meta_description", ""),
-                                h1=page_r.get("h1", ""),
-                                faq_items=faq_items_for_schema,
-                                site_name=st.session_state.get("site_context", ""),
-                                site_url=st.session_state.get("gsc_site", ""),
+                            from utils.ai_generator import get_client, generate_page_implementation_plan
+                            client = get_client(get_anthropic_key())
+                            page_r = next((r for r in audit_results if r["url"] == url), {})
+                            result = generate_page_implementation_plan(
+                                client, page_r, site_context, language,
                             )
-                            st.session_state[result_key] = result
+                            st.session_state[plan_key] = result
+                            st.rerun()
                         except Exception as e:
                             st.error(f"Error: {e}")
+            else:
+                plan = st.session_state[plan_key]
 
-                elif ai_type == "faq" and has_anthropic_key():
-                    if st.button(f"AI: Generate FAQ section", key=f"btn_impl_faq_{url_hash}_{step_idx}"):
-                        with st.spinner("Generating FAQ..."):
-                            try:
-                                from utils.ai_generator import get_client, generate_keyword_faq
-                                client = get_client(get_anthropic_key())
-                                subtopics = step.get("subtopics", plan["target_keywords"][:5])
-                                result = generate_keyword_faq(
-                                    client, subtopics, plan["target_keywords"],
-                                    site_context, language,
-                                )
-                                st.session_state[result_key] = result
-                            except Exception as e:
-                                st.error(f"Error: {e}")
+                if plan.get("error"):
+                    st.error(f"Plan generation failed: {plan['error']}")
+                    if st.button("Retry", key=f"btn_retry_{url_hash}"):
+                        del st.session_state[plan_key]
+                        st.rerun()
+                    continue
 
-                # Display AI results
-                if result_key in st.session_state:
-                    res = st.session_state[result_key]
+                # Overall assessment
+                assessment = plan.get("overall_assessment", "")
+                primary_kw = plan.get("primary_keyword", "")
+                if assessment:
                     st.markdown(
-                        "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
-                        "margin:0.3rem 0;'>COPY THIS INTO YOUR CMS</div>",
+                        f"<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.8rem; "
+                        f"border-radius:0 6px 6px 0; margin-bottom:1rem;'>"
+                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#5533ff; "
+                        f"margin-bottom:0.3rem;'>AI ASSESSMENT · Primary keyword: {primary_kw}</div>"
+                        f"<div style='font-size:0.85rem; color:#c8b4ff;'>{assessment}</div>"
+                        f"</div>",
                         unsafe_allow_html=True,
                     )
 
-                    if ai_type == "meta" and isinstance(res, dict):
-                        for i, v in enumerate(res.get("variants", []), 1):
-                            st.markdown(f"**Variant {i}:**")
-                            st.code(f"Title: {v.get('title','')}\nDescription: {v.get('description','')}", language="text")
+                # Steps
+                steps = plan.get("steps", [])
+                if not steps:
+                    st.success("No issues found — this page looks good!")
+                    continue
 
-                    elif ai_type == "keywords" and isinstance(res, dict):
+                total_time = sum(s.get("time_minutes", 0) for s in steps)
+                st.markdown(f"**{len(steps)} steps · ~{total_time} minutes total**")
+
+                for step_idx, step in enumerate(steps, 1):
+                    time_str = f"{step.get('time_minutes', 0)} min"
+                    step_type = step.get("type", "content")
+                    type_colors = {
+                        "meta": "#c8b4ff",
+                        "content": "#5533ff",
+                        "links": "#ffaa33",
+                        "schema": "#33dd88",
+                        "structure": "#6b6baa",
+                    }
+                    type_color = type_colors.get(step_type, "#6b6b8a")
+
+                    st.markdown(
+                        f"<div style='background:#0d0d15; border-left:3px solid {type_color}; padding:0.7rem 1rem; "
+                        f"border-radius:0 6px 6px 0; margin-bottom:0.6rem;'>"
+                        f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem;'>"
+                        f"<span style='color:{type_color}; font-weight:700; font-size:0.95rem;'>"
+                        f"Step {step_idx}: {step.get('action', '')}</span>"
+                        f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#6b6b8a;'>"
+                        f"{step_type.upper()} · ~{time_str}</span>"
+                        f"</div>"
+                        f"<div style='font-size:0.82rem; color:#9b9bb8; margin-bottom:0.4rem;'>"
+                        f"{step.get('detail', '')}</div>"
+                        f"<div style='font-size:0.85rem; color:#c8b4ff; line-height:1.5;'>"
+                        f"{step.get('instruction', '')}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    # AI generate buttons for content/meta/links steps
+                    ai_result_key = f"impl_ai_{url_hash}_{step_idx}"
+
+                    if step_type == "meta":
+                        if st.button("AI: Generate meta", key=f"btn_ai_meta_{url_hash}_{step_idx}"):
+                            with st.spinner("Generating..."):
+                                try:
+                                    from utils.ai_generator import get_client, generate_meta_suggestions
+                                    client = get_client(get_anthropic_key())
+                                    page_r = next((r for r in audit_results if r["url"] == url), {})
+                                    result = generate_meta_suggestions(
+                                        client, page_r,
+                                        page_r.get("target_keywords", []),
+                                        site_context, language, 2,
+                                    )
+                                    st.session_state[ai_result_key] = ("meta", result)
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+
+                    elif step_type == "content":
+                        if st.button("AI: Generate text", key=f"btn_ai_content_{url_hash}_{step_idx}"):
+                            with st.spinner("Generating..."):
+                                try:
+                                    from utils.ai_generator import get_client, generate_keyword_text
+                                    client = get_client(get_anthropic_key())
+                                    page_r = next((r for r in audit_results if r["url"] == url), {})
+                                    kw_list = page_r.get("target_keywords", [])[:10]
+                                    body = (page_r.get("body_text") or "")[:800]
+                                    result = generate_keyword_text(
+                                        client, kw_list, body,
+                                        page_r.get("page_type", "unknown"),
+                                        site_context, language,
+                                    )
+                                    st.session_state[ai_result_key] = ("content", result)
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+
+                    elif step_type == "links":
+                        if st.button("AI: Generate link text", key=f"btn_ai_links_{url_hash}_{step_idx}"):
+                            with st.spinner("Generating..."):
+                                try:
+                                    from utils.ai_generator import get_client, generate_link_text
+                                    client = get_client(get_anthropic_key())
+                                    # Extract target URL from instruction text
+                                    import re
+                                    target_match = re.search(r'https?://[^\s"<>]+', step.get("instruction", ""))
+                                    if target_match:
+                                        target = target_match.group(0).rstrip(".,)")
+                                        result = generate_link_text(
+                                            client, url, target,
+                                            target.split("/")[-1].replace("-", " "),
+                                            "page text",
+                                            [primary_kw] if primary_kw else [],
+                                            site_context, language,
+                                        )
+                                        st.session_state[ai_result_key] = ("links", result)
+                                    else:
+                                        st.warning("Could not extract target URL from instruction")
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+
+                    elif step_type == "schema":
+                        if st.button("Generate schema", key=f"btn_ai_schema_{url_hash}_{step_idx}"):
+                            try:
+                                from utils.ai_generator import generate_schema_markup
+                                page_r = next((r for r in audit_results if r["url"] == url), {})
+                                result = generate_schema_markup(
+                                    page_type=page_r.get("page_type", "unknown"),
+                                    url=url,
+                                    title=page_r.get("title", ""),
+                                    description=page_r.get("meta_description", ""),
+                                    h1=page_r.get("h1", ""),
+                                    site_name=site_context,
+                                    site_url=st.session_state.get("gsc_site", ""),
+                                )
+                                st.session_state[ai_result_key] = ("schema", result)
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+
+                    # Display AI results
+                    if ai_result_key in st.session_state:
+                        ai_type, res = st.session_state[ai_result_key]
                         st.markdown(
-                            f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
-                            f"border-radius:0 4px 4px 0;'>{res.get('optimized_text', '')}</div>",
+                            "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
+                            "margin:0.3rem 0;'>COPY THIS INTO YOUR CMS</div>",
                             unsafe_allow_html=True,
                         )
-                        st.code(res.get("optimized_text", ""), language="text")
 
-                    elif ai_type == "links" and isinstance(res, list):
-                        for lr in res:
-                            st.markdown(
-                                f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
-                                f"border-radius:0 4px 4px 0; margin-bottom:0.3rem;'>{lr.get('paragraph', '')}</div>",
-                                unsafe_allow_html=True,
-                            )
-                            st.code(lr.get("html", ""), language="html")
+                        if ai_type == "meta" and isinstance(res, dict):
+                            for i, v in enumerate(res.get("variants", []), 1):
+                                st.code(f"Title: {v.get('title','')}\nDescription: {v.get('description','')}", language="text")
 
-                    elif ai_type == "schema" and isinstance(res, dict):
-                        st.markdown(f"**Schema types:** {', '.join(res.get('types', []))}")
-                        st.code(res.get("json_ld", ""), language="html")
+                        elif ai_type == "content" and isinstance(res, dict):
+                            st.code(res.get("optimized_text", ""), language="text")
 
-                    elif ai_type == "faq" and isinstance(res, dict):
-                        faq_text = ""
-                        for faq in res.get("faq_items", []):
-                            st.markdown(f"**Q: {faq.get('question', '')}**")
-                            st.markdown(faq.get("answer", ""))
-                            faq_text += f"Q: {faq.get('question','')}\nA: {faq.get('answer','')}\n\n"
-                        st.code(faq_text, language="text")
+                        elif ai_type == "links" and isinstance(res, dict):
+                            st.markdown(f"<div style='color:#e8e8f0;'>{res.get('paragraph','')}</div>", unsafe_allow_html=True)
+                            st.code(res.get("html", ""), language="html")
 
-    # ── Download full plan ────────────────────────────────────────
+                        elif ai_type == "schema" and isinstance(res, dict):
+                            st.code(res.get("json_ld", ""), language="html")
+
+                # Regenerate plan button
+                if st.button("Regenerate plan", key=f"btn_regen_{url_hash}"):
+                    del st.session_state[plan_key]
+                    st.rerun()
+
+    # ── Download ──────────────────────────────────────────────────
     st.markdown("---")
-    export = []
-    for plan in plans:
-        for step in plan["steps"]:
-            export.append({
-                "url": plan["url"],
-                "page_type": plan["page_type"],
-                "lost_clicks": plan["lost_clicks"],
-                "step": step["action"],
-                "time_minutes": step["time"],
-                "detail": step["detail"],
-                "what_to_do": step["what_to_do"],
-            })
+    all_plans = {}
+    for p in pages:
+        pk = f"_ai_plan_{hash(p['url']) & 0xFFFFFF}"
+        if pk in st.session_state:
+            plan = st.session_state[pk]
+            if not plan.get("error"):
+                all_plans[p["url"]] = plan
 
-    import json
-    st.download_button(
-        "Download full implementation plan (JSON)",
-        json.dumps(export, ensure_ascii=False, indent=2).encode("utf-8"),
-        "implementation_plan.json",
-        "application/json",
-    )
+    if all_plans:
+        st.download_button(
+            f"Download all plans ({len(all_plans)} pages)",
+            json.dumps(all_plans, ensure_ascii=False, indent=2).encode("utf-8"),
+            "implementation_plans.json",
+            "application/json",
+        )
 
     st.session_state["action_plan"] = True
 

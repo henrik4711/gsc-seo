@@ -676,6 +676,117 @@ Write in {language}
     return _parse_ai_json(message)
 
 
+def generate_page_implementation_plan(
+    client: anthropic.Anthropic,
+    page_data: dict,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """
+    Generate a complete, verified implementation plan for a single page.
+    AI evaluates ALL data (meta, content, keywords, links, structure) and
+    returns only actions that make sense for this specific page.
+    """
+    url = page_data.get("url", "")
+    title = page_data.get("title") or ""
+    meta_desc = page_data.get("meta_description") or ""
+    h1 = page_data.get("h1") or ""
+    h2s = page_data.get("h2s", [])[:10]
+    page_type = page_data.get("page_type", "unknown")
+    word_count = page_data.get("word_count", 0)
+    body_snippet = (page_data.get("body_text") or page_data.get("intro_text") or "")[:1500]
+    target_keywords = page_data.get("target_keywords", [])[:15]
+    impressions = page_data.get("impressions", 0)
+    lost_clicks = page_data.get("lost_clicks_estimate", 0)
+
+    # Content audit data
+    content_audit = page_data.get("content_audit") or {}
+    kw_coverage = content_audit.get("keyword_coverage") or {}
+    missing_kws = kw_coverage.get("missing", [])[:30]
+    topic_coverage = content_audit.get("topic_coverage") or {}
+    missing_subtopics = [
+        s.get("topic", "") for s in (topic_coverage.get("subtopics") or [])
+        if s.get("status") in ("missing", "partial")
+    ][:10]
+    linking = content_audit.get("linking") or {}
+    link_suggestions = linking.get("link_fix_suggestions") or []
+    missing_crosslinks = linking.get("missing_crosslinks") or []
+    schema_types = page_data.get("schema_types", [])
+    trust = content_audit.get("trust") or {}
+    meta_score = page_data.get("meta_score")
+    content_score = page_data.get("content_score")
+
+    # Internal links this page has
+    internal_links = page_data.get("internal_links", 0)
+    link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
+
+    prompt = f"""You are a senior SEO strategist reviewing a single page. Based on ALL the data below, create a precise implementation plan with ONLY actions that are correct and relevant for THIS specific page.
+
+## PAGE DATA
+URL: {url}
+Page type: {page_type}
+Title: "{title}" ({len(title)} chars)
+Meta description: "{meta_desc}" ({len(meta_desc)} chars)
+H1: "{h1}"
+H2s: {', '.join(h2s) if h2s else 'None'}
+Word count: {word_count}
+Internal links on page: {link_count}
+Schema types present: {', '.join(schema_types) if schema_types else 'None'}
+Meta score: {meta_score}/100
+Content score: {content_score}/100
+Impressions: {impressions:,}
+Lost clicks estimate: {lost_clicks:.0f}
+Site context: {site_context}
+Language: {language}
+
+## GSC KEYWORDS (sorted by impressions, these are queries users search to find this page)
+{', '.join(target_keywords)}
+
+## MISSING KEYWORDS (from audit — keywords in GSC but NOT found on page text)
+{', '.join(missing_kws) if missing_kws else 'None'}
+
+## MISSING TOPIC SECTIONS (subtopics not covered in page text)
+{', '.join(missing_subtopics) if missing_subtopics else 'None'}
+
+## CURRENT PAGE TEXT (first 1500 chars)
+{body_snippet}
+
+## YOUR TASK
+Create a step-by-step implementation plan. For each step, be SPECIFIC — tell the user exactly what to change and why.
+
+CRITICAL RULES:
+1. Only include RELEVANT missing keywords — keywords that a user searching for them would expect to find on THIS page. Filter out keywords that belong on other pages.
+2. Do NOT recommend adding a keyword to H1 if H1 already contains it (handle Swedish chars: ä=a, ö=o, å=a)
+3. For internal links: only suggest links to pages that are topically related (same category, parent/child, or genuinely complementary)
+4. Meta title MUST be under 60 chars. Primary keyword should be the most important keyword for THIS page (not a brand name)
+5. Only suggest schema types that are appropriate for this page type (no Product schema on category pages)
+6. Be honest: if the page is already good, say so. Don't invent problems.
+7. Each step must have a time estimate in minutes
+
+## OUTPUT FORMAT (JSON only):
+{{
+  "primary_keyword": "the single most important keyword for this page",
+  "steps": [
+    {{
+      "action": "Short action title",
+      "time_minutes": 5,
+      "detail": "What is wrong / current state",
+      "instruction": "Exactly what to do, step by step",
+      "type": "meta|content|links|schema|structure"
+    }}
+  ],
+  "overall_assessment": "2-3 sentences about this page's SEO status and priority"
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    return _parse_ai_json(message)
+
+
 def filter_relevant_keywords(
     client: anthropic.Anthropic,
     url: str,
