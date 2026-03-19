@@ -352,10 +352,11 @@ def render():
                 new_content = plan.get("new_content_suggestions", [])
                 if new_content:
                     st.markdown("#### New Content to Create")
-                    for nc in new_content:
+                    for nc_idx, nc in enumerate(new_content):
                         nc_type = nc.get("type", "blog").upper()
                         nc_title = nc.get("suggested_title", "")
-                        nc_kws = ", ".join(nc.get("target_keywords", []))
+                        nc_kws = nc.get("target_keywords", [])
+                        nc_kws_str = ", ".join(nc_kws)
                         nc_why = nc.get("why", "")
                         nc_link = nc.get("link_from", "")
                         st.markdown(
@@ -363,12 +364,85 @@ def render():
                             f"border-radius:0 6px 6px 0; margin-bottom:0.5rem;'>"
                             f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#c8b4ff;'>{nc_type}</span>"
                             f"<div style='font-size:0.95rem; color:#e8e8f0; font-weight:600; margin:0.3rem 0;'>{nc_title}</div>"
-                            f"<div style='font-size:0.8rem; color:#9b9bb8;'>Keywords: {nc_kws}</div>"
+                            f"<div style='font-size:0.8rem; color:#9b9bb8;'>Keywords: {nc_kws_str}</div>"
                             f"<div style='font-size:0.8rem; color:#9b9bb8;'>Why: {nc_why}</div>"
                             f"{'<div style=\"font-size:0.8rem; color:#5533ff;\">Link from: ' + nc_link + '</div>' if nc_link else ''}"
                             f"</div>",
                             unsafe_allow_html=True,
                         )
+
+                        # Generate full article button
+                        article_key = f"_gen_article_{url_hash}_{nc_idx}"
+                        if st.button(f"Generate full article with products", key=f"btn_gen_article_{url_hash}_{nc_idx}", type="primary"):
+                            with st.spinner("Scraping products + generating article... (~60 sec)"):
+                                try:
+                                    from utils.product_scraper import scrape_products_from_page
+                                    from utils.ai_generator import get_client, generate_full_article_html
+
+                                    client = get_client(get_anthropic_key())
+
+                                    # Scrape products from the linked category page
+                                    products = []
+                                    if nc_link:
+                                        products = scrape_products_from_page(nc_link, max_products=8)
+
+                                    # Get tone of voice sample from existing page
+                                    tone_sample = ""
+                                    if nc_link:
+                                        page_r = next((r for r in audit_results if r["url"] == nc_link), {})
+                                        tone_sample = (page_r.get("body_text") or "")[:500]
+
+                                    result = generate_full_article_html(
+                                        client,
+                                        title=nc_title,
+                                        keywords=nc_kws,
+                                        content_type=nc.get("type", "blog"),
+                                        products=products,
+                                        link_from_url=nc_link,
+                                        tone_sample=tone_sample,
+                                        site_context=site_context,
+                                        language=language,
+                                    )
+                                    st.session_state[article_key] = result
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+
+                        if article_key in st.session_state:
+                            art = st.session_state[article_key]
+                            wc = art.get("word_count", 0)
+                            prods = art.get("products_featured", [])
+
+                            st.markdown(
+                                f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
+                                f"border-radius:0 6px 6px 0; margin-bottom:0.3rem;'>"
+                                f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88;'>"
+                                f"ARTICLE READY · {wc} words · {len(prods)} products</span></div>",
+                                unsafe_allow_html=True,
+                            )
+
+                            # Meta tags
+                            st.code(
+                                f"Meta title: {art.get('meta_title', '')}\n"
+                                f"Meta description: {art.get('meta_description', '')}",
+                                language="text",
+                            )
+
+                            # Preview
+                            with st.expander("Preview article", expanded=True):
+                                st.markdown(art.get("html", ""), unsafe_allow_html=True)
+
+                            # Copy HTML
+                            with st.expander("Copy HTML source"):
+                                st.code(art.get("html", ""), language="html")
+
+                            # Download
+                            st.download_button(
+                                "Download HTML",
+                                art.get("html", "").encode("utf-8"),
+                                f"article_{nc_idx}.html",
+                                "text/html",
+                                key=f"dl_article_{url_hash}_{nc_idx}",
+                            )
 
                 # Text rewrite suggestions
                 rewrites = plan.get("text_rewrites", [])

@@ -803,6 +803,103 @@ Check ALL of these and report issues + fixes:
     return _parse_ai_json(message)
 
 
+def generate_full_article_html(
+    client: anthropic.Anthropic,
+    title: str,
+    keywords: list,
+    content_type: str,
+    products: list = None,
+    link_from_url: str = "",
+    tone_sample: str = "",
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Generate a complete article as HTML with embedded products and images."""
+
+    products_section = ""
+    if products:
+        product_lines = []
+        for p in products[:8]:
+            product_lines.append(
+                f"  - {p.get('name','')}: {p.get('price','')} | "
+                f"Image: {p.get('image_url','')} | "
+                f"URL: {p.get('product_url','')} | "
+                f"Desc: {p.get('description','')}"
+            )
+        products_section = f"""
+
+## PRODUCTS TO FEATURE IN THE ARTICLE (use these real products with real images)
+{chr(10).join(product_lines)}
+
+Include 3-5 of these products naturally in the article:
+- In a 'Top picks' or 'Our recommendations' section with product cards
+- Each product card should have: image, name, short description, price, link to product page
+- Do NOT just list products — weave them into the narrative with genuine recommendations"""
+
+    tone_section = ""
+    if tone_sample:
+        tone_section = f"""
+
+## TONE OF VOICE (match this style)
+Sample from the site:
+{tone_sample[:500]}
+
+Match this tone: level of formality, how they address the customer, vocabulary, sentence length."""
+
+    prompt = f"""You are a senior content writer. Write a complete, ready-to-publish article as HTML.
+
+## ARTICLE DETAILS
+Title: {title}
+Content type: {content_type}
+Target keywords: {', '.join(keywords[:10])}
+This article should be linked FROM: {link_from_url}
+Site: {site_context}
+Language: {language}
+{products_section}{tone_section}
+
+## REQUIREMENTS
+- Write as clean, semantic HTML (h1, h2, h3, p, ul, li, strong, a, img tags)
+- Include the H1 title at the top
+- Write an engaging intro (100-150 words) that hooks the reader
+- 3-5 H2 sections with substantial content (200-300 words each)
+- Naturally integrate target keywords (1-2% density)
+- If products are provided: include a product recommendation section with HTML cards using the real image URLs and product links
+- Include a FAQ section with 3-5 questions (use <details>/<summary> for accordion)
+- Include a conclusion with CTA
+- Add internal link back to {link_from_url} with natural anchor text
+- Total: 1500-2500 words
+- Make it genuinely helpful, not SEO spam
+- Language: {language}
+
+## PRODUCT CARD HTML TEMPLATE (use this format for each featured product):
+<div class="product-card" style="border:1px solid #eee; border-radius:8px; padding:16px; margin:12px 0; display:flex; gap:16px; align-items:center;">
+  <img src="PRODUCT_IMAGE_URL" alt="PRODUCT_NAME" style="width:120px; height:120px; object-fit:contain; border-radius:4px;">
+  <div>
+    <h3 style="margin:0 0 4px 0;"><a href="PRODUCT_URL">PRODUCT_NAME</a></h3>
+    <p style="margin:0 0 4px 0; color:#666; font-size:14px;">SHORT_DESCRIPTION</p>
+    <p style="margin:0; font-weight:bold;">PRICE</p>
+  </div>
+</div>
+
+## OUTPUT FORMAT (JSON only):
+{{
+  "html": "<h1>Title</h1>\\n<p>Full article as HTML...</p>",
+  "word_count": 0,
+  "meta_title": "SEO title (50-60 chars)",
+  "meta_description": "Meta description (140-160 chars)",
+  "keywords_used": ["list of keywords naturally included"],
+  "products_featured": ["product names included in article"]
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=8000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    return _parse_ai_json(message)
+
+
 def generate_page_implementation_plan(
     client: anthropic.Anthropic,
     page_data: dict,
