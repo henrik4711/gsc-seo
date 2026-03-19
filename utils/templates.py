@@ -63,24 +63,45 @@ BLOG_TEMPLATE_INSTRUCTIONS = """
 - Do NOT wrap in <html><body> tags — output only the content HTML
 """
 
-CATEGORY_CONTENT_TEMPLATE_INSTRUCTIONS = """
-## MSHOP CATEGORY PAGE HTML FORMAT
+CATEGORY_BOTTOM_TEXT_INSTRUCTIONS = """
+## MSHOP CATEGORY PAGE BOTTOM TEXT FORMAT
+
+This is the SEO content that appears BELOW the product grid on category pages.
+It is the most important text for Google on category pages.
 
 ### Structure:
-- Intro text in <p> tags (80-150 words, explains the category)
-- Use xmx grid for layout if needed:
-  <div class="xmx-section">
-    <div class="xmx-page">
-      <div class="xmx-title-area">
-        <div class="xmx-title-area-label">Section label</div>
-        <div class="xmx-title-area-title">
-          <h2 class="xmx-title-area-headline">Section Title</h2>
-        </div>
-      </div>
-    </div>
-  </div>
-- Bottom text with buying guide and FAQ (300-500 words)
+- NO H1 (CMS has that above the product grid)
+- Start with a <h2> buying guide section: "Hur väljer man [category]?"
+  or "Guide till [category]" — help the customer choose
+- Use <h3 style="font-size:25px"> with linked subcategory names:
+  <h3 style="font-size:25px"><a href="/SUBCATEGORY-URL"><strong>Subcategory Name</strong></a></h3>
+- After each subcategory section, add expert recommendation:
+  <p class="xmx--high-emphasis">– Välj [product type] om du [benefit].</p>
+- Add a FAQ section with <h2>Vanliga frågor om [category]</h2>
+  and 3-5 H3 questions with <p> answers
+- Add product carousel cards for top recommended products
+- End with trust signals: mention 40+ years experience, discreet shipping,
+  sexologist customer service, Trustpilot rating
 
-### Tone: Same as blog — warm, knowledgeable, helpful, Swedish, "du/dig"
-### DO NOT add <h1> — CMS handles that
+### Content Requirements:
+- 800-1500 words total
+- ALL relevant keywords must be naturally integrated
+- ALL subcategory pages must be linked with descriptive anchor text
+- ALL related category pages (siblings) should be cross-linked
+- Use the EXACT URLs from the site URL list
+- Expert quotes in xmx--high-emphasis format
+- Product cards in xmx-carousel format with real product data
+
+### Tone of Voice:
+- Warm, knowledgeable, Swedish — like a trusted sexologist friend
+- "du/dig" addressing, slightly playful but respectful
+- Genuinely helpful — guide the customer, don't just list keywords
+- NEVER keyword-stuff or sound robotic
+
+### DO NOT:
+- Do NOT add <h1>
+- Do NOT use markdown
+- Do NOT wrap in <html><body>
+- Do NOT invent URLs — use only real URLs from the site URL list
+- Do NOT write generic filler text — every sentence must add value
 """

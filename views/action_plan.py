@@ -460,6 +460,102 @@ def render():
                             unsafe_allow_html=True,
                         )
 
+                # Generate category bottom text button (for category pages)
+                page_r = next((r for r in audit_results if r["url"] == url), {})
+                if page_r.get("page_type") in ("category", "unknown"):
+                    st.markdown("---")
+                    st.markdown("#### Rewrite Category Bottom Text")
+                    st.markdown(
+                        "<p style='font-size:0.8rem; color:#9b9bb8;'>"
+                        "Generate new SEO bottom text with all keywords, internal links to subcategories, "
+                        "product recommendations, buying guide, and FAQ — in Mshop's format.</p>",
+                        unsafe_allow_html=True,
+                    )
+
+                    bottom_key = f"_bottom_text_{url_hash}"
+                    if st.button("Generate bottom text with products & links", key=f"btn_bottom_{url_hash}", type="primary"):
+                        with st.spinner("Scraping products + generating bottom text... (~60 sec)"):
+                            try:
+                                from utils.product_scraper import scrape_products_from_page
+                                from utils.ai_generator import get_client, generate_category_bottom_text
+                                from urllib.parse import urlparse as _up_bt
+
+                                client = get_client(get_anthropic_key())
+
+                                # Scrape products from this category
+                                products = scrape_products_from_page(url, max_products=6)
+
+                                # Find subcategory URLs (children in URL hierarchy)
+                                page_path = _up_bt(url).path.lower().rstrip("/")
+                                subcategory_urls = [
+                                    u for u in all_site_urls
+                                    if _up_bt(u).path.lower().rstrip("/").startswith(page_path + "/")
+                                    and _up_bt(u).path.lower().rstrip("/").count("/") == page_path.count("/") + 1
+                                ]
+
+                                # Find sibling URLs (same parent)
+                                parent_path = "/".join(page_path.split("/")[:-1])
+                                sibling_urls = [
+                                    u for u in all_site_urls
+                                    if u != url
+                                    and _up_bt(u).path.lower().rstrip("/").startswith(parent_path + "/")
+                                    and _up_bt(u).path.lower().rstrip("/").count("/") == page_path.count("/")
+                                ] if parent_path else []
+
+                                result = generate_category_bottom_text(
+                                    client, url,
+                                    page_r.get("title", ""),
+                                    page_r.get("h1", ""),
+                                    page_r.get("bottom_text", "") or (page_r.get("body_text") or "")[-2000:],
+                                    page_r.get("target_keywords", []),
+                                    subcategory_urls=subcategory_urls[:20],
+                                    sibling_urls=sibling_urls[:10],
+                                    products=products,
+                                    all_site_urls=all_site_urls,
+                                    site_context=site_context,
+                                    language=language,
+                                )
+                                st.session_state[bottom_key] = result
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+
+                    if bottom_key in st.session_state:
+                        bt = st.session_state[bottom_key]
+                        wc = bt.get("word_count", 0)
+                        kws = bt.get("keywords_integrated", [])
+                        links = bt.get("internal_links_added", [])
+                        prods = bt.get("products_featured", [])
+
+                        st.markdown(
+                            f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
+                            f"border-radius:0 6px 6px 0; margin-bottom:0.3rem;'>"
+                            f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88;'>"
+                            f"BOTTOM TEXT READY · {wc} words · {len(kws)} keywords · {len(links)} links · {len(prods)} products</span></div>",
+                            unsafe_allow_html=True,
+                        )
+
+                        with st.expander("Preview", expanded=True):
+                            st.markdown(bt.get("html", ""), unsafe_allow_html=True)
+
+                        with st.expander("Copy HTML source"):
+                            st.code(bt.get("html", ""), language="html")
+
+                        st.download_button(
+                            "Download HTML",
+                            bt.get("html", "").encode("utf-8"),
+                            f"bottom_text_{url_hash}.html",
+                            "text/html",
+                            key=f"dl_bottom_{url_hash}",
+                        )
+
+                        if kws:
+                            with st.expander(f"Keywords integrated ({len(kws)})"):
+                                st.markdown(", ".join(kws))
+                        if links:
+                            with st.expander(f"Internal links ({len(links)})"):
+                                for lk in links:
+                                    st.markdown(f"- `{lk}`")
+
                 # Regenerate plan button
                 if st.button("Regenerate plan", key=f"btn_regen_{url_hash}"):
                     del st.session_state[plan_key]

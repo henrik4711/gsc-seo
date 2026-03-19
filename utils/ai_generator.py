@@ -884,6 +884,83 @@ Language: {language}
     return _parse_ai_json(message)
 
 
+def generate_category_bottom_text(
+    client: anthropic.Anthropic,
+    url: str,
+    page_title: str,
+    h1: str,
+    current_bottom_text: str,
+    target_keywords: list,
+    subcategory_urls: list = None,
+    sibling_urls: list = None,
+    products: list = None,
+    all_site_urls: list = None,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """Generate optimized category bottom text with all keywords, links, and products."""
+    from utils.templates import CATEGORY_BOTTOM_TEXT_INSTRUCTIONS
+
+    products_section = ""
+    if products:
+        product_lines = []
+        for p in products[:6]:
+            product_lines.append(
+                f"  - Name: {p.get('name','')}, Price: {p.get('price','')}, "
+                f"Image: {p.get('image_url','')}, URL: {p.get('product_url','')}, "
+                f"Desc: {p.get('description','')}"
+            )
+        products_section = f"\n\n## TOP PRODUCTS TO FEATURE\n{chr(10).join(product_lines)}"
+
+    subcats = ""
+    if subcategory_urls:
+        subcats = "\n\n## SUBCATEGORY PAGES (MUST link to ALL of these)\n" + "\n".join(subcategory_urls[:20])
+
+    siblings = ""
+    if sibling_urls:
+        siblings = "\n\n## SIBLING/RELATED CATEGORIES (cross-link to these)\n" + "\n".join(sibling_urls[:15])
+
+    url_list = ""
+    if all_site_urls:
+        url_list = f"\n\n## ALL SITE URLs\n{chr(10).join(all_site_urls[:150])}"
+
+    prompt = f"""You are a senior SEO copywriter for Mshop.se.
+Rewrite the category page bottom text following the EXACT format below.
+
+## PAGE
+URL: {url}
+Title: {page_title}
+H1: {h1}
+Language: {language}
+Site: {site_context}
+
+## ALL KEYWORDS THAT MUST APPEAR IN THE TEXT
+{', '.join(target_keywords[:25])}
+
+## CURRENT BOTTOM TEXT (rewrite this — it may be bad/thin/spammy)
+{current_bottom_text[:2000]}
+
+{CATEGORY_BOTTOM_TEXT_INSTRUCTIONS}
+{subcats}{siblings}{products_section}{url_list}
+
+## OUTPUT (JSON only):
+{{
+  "html": "<h2>Guide section...</h2>\\n<p>Content...</p>\\n<h2>FAQ...</h2>",
+  "word_count": 0,
+  "keywords_integrated": ["list of keywords naturally included"],
+  "internal_links_added": ["URLs linked to in the text"],
+  "products_featured": ["product names included"]
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=6000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    return _parse_ai_json(message)
+
+
 def generate_page_implementation_plan(
     client: anthropic.Anthropic,
     page_data: dict,
