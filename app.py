@@ -281,9 +281,10 @@ STEPS = [
     ("7. Internal Linking",   "linking",      "linking_fixes",     "Fix internal links"),
     ("8. Missing Keywords",   "keywords",     "keyword_fixes",     "Fill keyword gaps"),
     ("9. New Articles",       "articles",     "new_articles",      "Plan new content"),
-    ("10. Content Generator", "content",      "generated_content", "AI-generated content"),
-    ("11. All Tasks",         "tasks",        "tasks_viewed",      "Unified priority list"),
-    ("12. Implementation",    "action",       "action_plan",       "Step-by-step fix guide"),
+    ("10. Cluster Health",    "health",       "clusters_checked",  "AI cluster evaluation"),
+    ("11. Content Generator", "content",      "generated_content", "AI-generated content"),
+    ("12. All Tasks",         "tasks",        "tasks_viewed",      "Unified priority list"),
+    ("13. Implementation",    "action",       "action_plan",       "Step-by-step fix guide"),
 ]
 
 # Figure out which step the user should be on
@@ -393,6 +394,9 @@ elif "Missing Keywords" in selected:
 elif "New Articles" in selected:
     from views import new_articles
     new_articles.render()
+elif "Cluster Health" in selected:
+    from views import cluster_health
+    cluster_health.render()
 elif "Content" in selected:
     from views import content_generator
     content_generator.render()

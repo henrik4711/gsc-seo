@@ -676,6 +676,125 @@ Write in {language}
     return _parse_ai_json(message)
 
 
+def evaluate_cluster_health(
+    client: anthropic.Anthropic,
+    cluster_data: dict,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """
+    AI evaluates an entire topic cluster: structure, linking, keyword distribution,
+    content coverage, and hub-spoke relationships.
+    """
+    prompt = f"""You are a senior SEO architect specializing in topic cluster strategy (Google 2026 best practices).
+
+Evaluate this ENTIRE topic cluster and identify problems + fixes. You must check EVERY aspect of cluster health.
+
+## SITE CONTEXT
+{site_context}
+Language: {language}
+
+## CLUSTER OVERVIEW
+Topic: {cluster_data.get('topic', '')}
+Core terms: {', '.join(cluster_data.get('core_terms', []))}
+Total queries: {cluster_data.get('query_count', 0)}
+Total impressions: {cluster_data.get('total_impressions', 0):,}
+Total clicks: {cluster_data.get('total_clicks', 0):,}
+
+## HUB/PILLAR PAGE
+URL: {cluster_data.get('hub_url', 'Not identified')}
+Title: {cluster_data.get('hub_title', '')}
+H1: {cluster_data.get('hub_h1', '')}
+Word count: {cluster_data.get('hub_word_count', 0)}
+Internal links out: {cluster_data.get('hub_outlinks', 0)}
+Content snippet: {cluster_data.get('hub_content', '')[:500]}
+
+## SPOKE/CLUSTER PAGES ({len(cluster_data.get('spokes', []))} pages)
+{json.dumps(cluster_data.get('spokes', []), ensure_ascii=False, indent=1)}
+
+## INTERNAL LINK MAP WITHIN CLUSTER
+Hub links TO these spokes: {json.dumps(cluster_data.get('hub_to_spoke_links', []), ensure_ascii=False)}
+Spokes linking BACK to hub: {json.dumps(cluster_data.get('spoke_to_hub_links', []), ensure_ascii=False)}
+Horizontal links between spokes: {json.dumps(cluster_data.get('horizontal_links', []), ensure_ascii=False)}
+
+## KEYWORD DISTRIBUTION
+Hub page keywords: {', '.join(cluster_data.get('hub_keywords', [])[:10])}
+Per-spoke keywords:
+{json.dumps(cluster_data.get('spoke_keywords', {{}}), ensure_ascii=False, indent=1)}
+
+## CANNIBALIZATION WITHIN CLUSTER
+Keywords appearing on multiple pages in this cluster:
+{json.dumps(cluster_data.get('cannibalized_keywords', []), ensure_ascii=False, indent=1)}
+
+## YOUR EVALUATION
+Check ALL of these and report issues + fixes:
+
+1. **Hub/Pillar Quality**: Is the hub page comprehensive enough (3000-5000 words)? Does it cover ALL subtopics at summary level? Does the H1/title target the right head keyword?
+
+2. **Vertical Linking (Hub ↔ Spoke)**:
+   - Does the hub link DOWN to every spoke page? Which spokes are missing a link FROM the hub?
+   - Does every spoke link UP/BACK to the hub? Which spokes are missing a link TO the hub?
+
+3. **Horizontal Linking (Spoke ↔ Spoke)**: Are related spokes cross-linked? Which pairs should link to each other but don't?
+
+4. **Keyword Distribution**:
+   - Is each keyword assigned to the RIGHT page?
+   - Are there keywords on spoke pages that should be on the hub (or vice versa)?
+   - Any cannibalization where the same keyword is targeted by multiple pages?
+
+5. **Content Gaps**: What subtopics are NOT covered by any page in the cluster? What new pages should be created?
+
+6. **Content Quality**: Are spoke pages deep enough (1500-3000 words)? Do they have proper H2/H3 structure?
+
+7. **Overall Cluster Health Score**: Rate the cluster 1-100 based on completeness, linking, keyword distribution, and content quality.
+
+## OUTPUT (JSON only):
+{{
+  "health_score": 0,
+  "health_summary": "2-3 sentences about the cluster's overall health",
+  "hub_assessment": {{
+    "is_adequate": true/false,
+    "issues": ["issue 1", "issue 2"],
+    "fixes": ["fix 1", "fix 2"]
+  }},
+  "vertical_linking": {{
+    "hub_to_spoke_missing": ["spoke URL that hub should link to but doesn't"],
+    "spoke_to_hub_missing": ["spoke URL that doesn't link back to hub"],
+    "fixes": ["fix 1"]
+  }},
+  "horizontal_linking": {{
+    "missing_connections": [{{"from": "url", "to": "url", "why": "reason"}}],
+    "fixes": ["fix 1"]
+  }},
+  "keyword_issues": {{
+    "misplaced_keywords": [{{"keyword": "kw", "current_page": "url", "should_be_on": "url", "reason": "why"}}],
+    "cannibalization": [{{"keyword": "kw", "pages": ["url1", "url2"], "fix": "what to do"}}],
+    "fixes": ["fix 1"]
+  }},
+  "content_gaps": {{
+    "missing_subtopics": ["subtopic that needs a new page"],
+    "thin_pages": [{{"url": "url", "word_count": 0, "target": 1500}}],
+    "fixes": ["fix 1"]
+  }},
+  "priority_actions": [
+    {{
+      "action": "What to do",
+      "page": "Which page",
+      "impact": "high/medium/low",
+      "time_minutes": 0
+    }}
+  ]
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    return _parse_ai_json(message)
+
+
 def generate_page_implementation_plan(
     client: anthropic.Anthropic,
     page_data: dict,

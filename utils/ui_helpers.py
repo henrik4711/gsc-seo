@@ -22,9 +22,10 @@ STEP_ORDER = [
     ("linking_fixes",     "7. Internal Linking",   "Review and fix internal linking issues"),
     ("keyword_fixes",     "8. Missing Keywords",   "Fill keyword gaps with AI-generated text"),
     ("new_articles",      "9. New Articles",       "Plan and generate new articles"),
-    ("generated_content", "10. Content Generator",  "Select a page and generate AI-optimized content"),
-    ("tasks_viewed",      "11. All Tasks",           "Review unified task list across all analyses"),
-    ("action_plan",       "12. Implementation",      "Step-by-step fix guide for every page"),
+    ("clusters_checked",  "10. Cluster Health",     "AI evaluates topic cluster health"),
+    ("generated_content", "11. Content Generator",  "Select a page and generate AI-optimized content"),
+    ("tasks_viewed",      "12. All Tasks",           "Review unified task list across all analyses"),
+    ("action_plan",       "13. Implementation",      "Step-by-step fix guide for every page"),
 ]
 
 
