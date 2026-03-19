@@ -352,6 +352,158 @@ def render():
 
     results = st.session_state["audit_results"]
 
+    # ── AI Content Quality Check ─────────────────────────────────
+    st.markdown("---")
+    st.markdown("### AI Content Quality Check")
+    st.markdown(
+        "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+        "AI evaluates text quality on category and blog pages — finds generic filler, "
+        "keyword spam, thin content, and repetitive text. Skips product pages.</p>",
+        unsafe_allow_html=True,
+    )
+
+    # Filter to category + blog pages only (not products)
+    quality_candidates = [
+        r for r in results
+        if r.get("page_type") in ("category", "blog", "faq")
+        and r.get("word_count", 0) > 50
+    ]
+    already_checked = sum(1 for r in quality_candidates if f"_quality_{hash(r['url']) & 0xFFFFFF}" in st.session_state)
+
+    q1, q2, q3 = st.columns(3)
+    q1.metric("Category + blog pages", len(quality_candidates))
+    q2.metric("Already checked", already_checked)
+    q3.metric("Remaining", len(quality_candidates) - already_checked)
+
+    col_qgen, col_qinfo = st.columns([1, 2])
+    with col_qgen:
+        run_quality = st.button("Run AI quality check", type="primary", key="btn_quality_check")
+    with col_qinfo:
+        st.markdown(
+            "<span style='font-size:0.75rem; color:#6b6b8a;'>"
+            "Checks 5 pages per API call. ~10 seconds per batch. Results cached.</span>",
+            unsafe_allow_html=True,
+        )
+
+    if run_quality:
+        from config import get_anthropic_key, has_anthropic_key
+        if not has_anthropic_key():
+            st.warning("Add Anthropic API key in Setup")
+        else:
+            from utils.ai_generator import get_client, assess_content_quality_batch
+            client = get_client(get_anthropic_key())
+            site_context = st.session_state.get("site_context", "")
+            language = st.session_state.get("content_language", "Swedish")
+
+            # Only check pages not yet assessed
+            unchecked = [r for r in quality_candidates if f"_quality_{hash(r['url']) & 0xFFFFFF}" not in st.session_state]
+
+            if not unchecked:
+                st.success("All pages already checked!")
+            else:
+                with st.status(f"Checking {len(unchecked)} pages...", expanded=True) as qstatus:
+                    progress_q = st.progress(0)
+                    log_q = st.empty()
+
+                    # Process in batches of 5
+                    for batch_start in range(0, len(unchecked), 5):
+                        batch = unchecked[batch_start:batch_start + 5]
+                        batch_num = batch_start // 5 + 1
+                        total_batches = (len(unchecked) + 4) // 5
+
+                        log_q.write(f"Batch {batch_num}/{total_batches}: {', '.join(r['url'].split('/')[-1] or r['url'].split('/')[-2] for r in batch)}")
+
+                        try:
+                            assessments = assess_content_quality_batch(client, batch, site_context, language)
+                            for assessment in assessments:
+                                aurl = assessment.get("url", "")
+                                # Match assessment to page
+                                for r in batch:
+                                    if r["url"] in aurl or aurl in r["url"] or r["url"].rstrip("/").endswith(aurl.rstrip("/").split("/")[-1]):
+                                        st.session_state[f"_quality_{hash(r['url']) & 0xFFFFFF}"] = assessment
+                                        break
+                        except Exception as e:
+                            log_q.write(f"Error on batch {batch_num}: {e}")
+
+                        progress_q.progress(min(1.0, (batch_start + 5) / len(unchecked)))
+
+                    qstatus.update(label=f"Quality check complete", state="complete", expanded=False)
+                st.rerun()
+
+    # Display quality results
+    quality_results = []
+    for r in quality_candidates:
+        qkey = f"_quality_{hash(r['url']) & 0xFFFFFF}"
+        if qkey in st.session_state:
+            q = st.session_state[qkey]
+            quality_results.append({
+                "url": r["url"],
+                "page_type": r.get("page_type", "?"),
+                "word_count": r.get("word_count", 0),
+                "verdict": q.get("verdict", "?"),
+                "score": q.get("score", 0),
+                "summary": q.get("summary", ""),
+                "main_issues": q.get("main_issues", []),
+                "specific_fixes": q.get("specific_fixes", []),
+            })
+
+    if quality_results:
+        # Sort: REWRITE first, then IMPROVE, then KEEP
+        verdict_order = {"REWRITE": 0, "IMPROVE": 1, "KEEP": 2}
+        quality_results.sort(key=lambda x: (verdict_order.get(x["verdict"], 1), -x.get("word_count", 0)))
+
+        # Summary counts
+        rewrite_count = sum(1 for q in quality_results if q["verdict"] == "REWRITE")
+        improve_count = sum(1 for q in quality_results if q["verdict"] == "IMPROVE")
+        keep_count = sum(1 for q in quality_results if q["verdict"] == "KEEP")
+
+        qc1, qc2, qc3 = st.columns(3)
+        qc1.metric("REWRITE", rewrite_count)
+        qc2.metric("IMPROVE", improve_count)
+        qc3.metric("KEEP", keep_count)
+
+        # Pagination
+        QR_PER_PAGE = 15
+        qr_total = len(quality_results)
+        qr_max_pg = max(1, (qr_total + QR_PER_PAGE - 1) // QR_PER_PAGE)
+        qr_pg = st.number_input("Page", min_value=1, max_value=qr_max_pg, value=1, key="quality_page")
+        qr_start = (qr_pg - 1) * QR_PER_PAGE
+        qr_visible = quality_results[qr_start:qr_start + QR_PER_PAGE]
+
+        for q in qr_visible:
+            verdict = q["verdict"]
+            v_color = {"REWRITE": "#ff4455", "IMPROVE": "#ffaa33", "KEEP": "#33dd88"}.get(verdict, "#6b6b8a")
+            score = q["score"]
+            ptype = q["page_type"].upper()
+
+            st.markdown(
+                f"<div style='background:#12121f; border-left:4px solid {v_color}; "
+                f"border-radius:6px; padding:0.8rem; margin-bottom:0.5rem;'>"
+                f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem;'>"
+                f"<div>"
+                f"<span style='font-weight:800; color:{v_color}; font-size:1rem;'>{verdict}</span>"
+                f"<span style='font-size:0.7rem; color:#6b6b8a; margin-left:0.5rem;'>{ptype} · {q['word_count']} words</span>"
+                f"</div>"
+                f"<span style='font-size:1.2rem; font-weight:800; color:{v_color};'>{score}/10</span>"
+                f"</div>"
+                f"<div style='font-size:0.9rem; color:#e8e8f0; margin-bottom:0.3rem;'>{q['url']}</div>"
+                f"<div style='font-size:0.8rem; color:#9b9bb8;'>{q['summary']}</div>",
+                unsafe_allow_html=True,
+            )
+
+            if q["main_issues"]:
+                issues_html = " ".join(f"<span style='color:#ff4455; font-size:0.75rem;'>✗ {iss}</span><br>" for iss in q["main_issues"][:3])
+                st.markdown(f"<div style='margin-top:0.3rem;'>{issues_html}</div>", unsafe_allow_html=True)
+
+            if q["specific_fixes"]:
+                fixes_html = " ".join(f"<span style='color:#c8b4ff; font-size:0.75rem;'>→ {fix}</span><br>" for fix in q["specific_fixes"][:3])
+                st.markdown(f"<div>{fixes_html}</div>", unsafe_allow_html=True)
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Results display ───────────────────────────────────────────
+    st.markdown("---")
+
     # Summary table
     st.markdown("### Overview")
 

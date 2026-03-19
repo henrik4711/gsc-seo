@@ -238,6 +238,77 @@ Return ONLY JSON (no markdown):
     return _parse_ai_json(message)
 
 
+def assess_content_quality_batch(
+    client: anthropic.Anthropic,
+    pages: list,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> list:
+    """
+    Batch assess content quality for multiple pages in a single call.
+    Evaluates up to 5 pages at once to reduce API calls.
+    """
+    page_sections = []
+    for i, p in enumerate(pages):
+        body = _clean_body_text(p, 800)
+        page_sections.append(
+            f"### PAGE {i+1}\n"
+            f"URL: {p.get('url', '')}\n"
+            f"Page type: {p.get('page_type', 'unknown')}\n"
+            f"Title: {(p.get('title') or '')[:80]}\n"
+            f"H1: {(p.get('h1') or '')[:80]}\n"
+            f"Word count: {p.get('word_count', 0)}\n"
+            f"Target keywords: {', '.join(p.get('target_keywords', [])[:5])}\n"
+            f"Text sample:\n{body}\n"
+        )
+
+    prompt = f"""You are a Google Search Quality Rater evaluating page content quality.
+
+For EACH page below, assess the text quality using Google's Helpful Content guidelines.
+
+## SITE CONTEXT
+{site_context}
+Language: {language}
+
+## PAGES TO EVALUATE
+{chr(10).join(page_sections)}
+
+## EVALUATE EACH PAGE ON:
+1. **Helpfulness**: Does the text actually help the user? Does it answer questions, guide decisions, or provide unique value? Or is it generic filler anyone could write?
+2. **Originality**: Is this unique content with real insights? Or is it template text / obvious AI spam / keyword-stuffed?
+3. **Depth**: Does it cover the topic thoroughly? Or is it thin and superficial?
+4. **Readability**: Is it well-structured, easy to scan, clear language? Or is it a wall of repetitive text?
+5. **E-E-A-T**: Does it show experience, expertise? Does it feel like it was written by someone who knows the products? Or is it generic marketing fluff?
+
+## VERDICTS:
+- **KEEP** (7-10): Good content, minor improvements only
+- **IMPROVE** (4-6): Has value but needs specific fixes
+- **REWRITE** (1-3): Poor quality, should be replaced entirely
+
+## OUTPUT (JSON only):
+{{
+  "assessments": [
+    {{
+      "url": "page URL",
+      "verdict": "KEEP|IMPROVE|REWRITE",
+      "score": 0,
+      "summary": "1-2 sentences explaining the verdict",
+      "main_issues": ["issue 1", "issue 2"],
+      "specific_fixes": ["exact fix 1", "exact fix 2"]
+    }}
+  ]
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    result = _parse_ai_json(message)
+    return result.get("assessments", [])
+
+
 def assess_content_quality(
     client: anthropic.Anthropic,
     url: str,
