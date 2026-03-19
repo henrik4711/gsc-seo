@@ -571,8 +571,15 @@ def render():
                         # Show current text snippet
                         current_text = _clean_body_text(page_r, 1000) if page_r else ""
                         if current_text:
-                            with st.expander(f"Current text on page"):
-                                st.text(current_text[:500] + ("..." if len(current_text) > 500 else ""))
+                            show_current = st.toggle("Show current text", key=f"toggle_current_{url_hash}_{rw_idx}")
+                            if show_current:
+                                st.markdown(
+                                    f"<div style='background:#1a0d0d; border:1px solid #2a2a40; border-radius:6px; padding:0.6rem; margin:0.3rem 0;'>"
+                                    f"<div style='font-size:0.6rem; color:#ff4455; font-family:\"IBM Plex Mono\",monospace;'>CURRENT TEXT</div>"
+                                    f"<div style='font-size:0.8rem; color:#9b9bb8;'>{current_text[:500]}{'...' if len(current_text) > 500 else ''}</div>"
+                                    f"</div>",
+                                    unsafe_allow_html=True,
+                                )
 
                         # AI rewrite button
                         rewrite_key = f"_rewrite_{url_hash}_{rw_idx}"
