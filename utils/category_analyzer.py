@@ -90,43 +90,48 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             result["signals"].append("FAQPage schema detected")
 
         # ── 3. HTML structure signals ─────────────────────────
+        # Order matters: check CATEGORY first (many links/products),
+        # then BLOG (long text), then PRODUCT last (single item)
 
-        # Product page signals: single item focus, price, add to cart
-        add_to_cart_signals = ["lägg i varukorg", "add to cart", "köp", "buy now", "add to bag"]
-        has_add_to_cart = any(s in body[:3000] for s in add_to_cart_signals)
-        if has_add_to_cart and has_price and product_count <= 1:
-            if result["page_type"] == "unknown":
-                result["page_type"] = "product"
-            result["signals"].append("Has add-to-cart + price = single product page")
-
-        # Category page signals: many products, product grid, filters
-        filter_signals = ["filtrera", "sortera", "filter", "sort by", "visa", "show"]
+        filter_signals = ["filtrera", "sortera", "filter", "sort by", "visa alla", "show all"]
         has_filters = any(s in body[:3000] for s in filter_signals)
+        add_to_cart_signals = ["lägg i varukorg", "add to cart", "buy now", "add to bag"]
+        has_add_to_cart = any(s in body[:3000] for s in add_to_cart_signals)
+        # "köp" is too generic for Swedish sites — used everywhere, not just product pages
+
+        # Category page signals: many links, products, or filters
         if product_count >= 3:
             if result["page_type"] == "unknown":
                 result["page_type"] = "category"
             result["signals"].append(f"Shows {product_count} products = category/listing page")
-        elif internal_links > 20 and h2_count <= 3:
+        elif internal_links > 20:
             if result["page_type"] == "unknown":
                 result["page_type"] = "category"
-            result["signals"].append(f"Many links ({internal_links}) with few headings = product grid")
+            result["signals"].append(f"Many internal links ({internal_links}) = listing/hub page")
         elif has_filters and internal_links > 10:
             if result["page_type"] == "unknown":
                 result["page_type"] = "category"
             result["signals"].append("Has filter/sort UI = listing page")
 
-        # Blog/guide signals: long text, many headings, article structure
-        if word_count > 500 and h2_count >= 3 and product_count == 0 and not has_add_to_cart:
+        # Blog/guide signals: long text, many headings
+        if word_count > 500 and h2_count >= 3 and product_count == 0:
             if result["page_type"] == "unknown":
                 result["page_type"] = "blog"
             result["signals"].append(f"Long text ({word_count} words) + {h2_count} H2s + no products = article/guide")
 
+        # Product page signals: single item focus, add to cart, few links
+        if has_add_to_cart and has_price and product_count <= 1 and internal_links < 30:
+            if result["page_type"] == "unknown":
+                result["page_type"] = "product"
+            result["signals"].append("Has add-to-cart + price + few links = single product page")
+
         # FAQ signals: question patterns in headings
+        # Only override to FAQ if not already classified by URL pattern
         question_h2s = sum(1 for h in h2s if h.startswith(("vad ", "hur ", "vilk", "när ", "var ", "what ", "how ", "why ", "when ", "?")) or "?" in h)
         if question_h2s >= 3:
-            if result["page_type"] in ("unknown", "blog"):
+            if result["page_type"] == "unknown":
                 result["page_type"] = "faq"
-            result["signals"].append(f"{question_h2s} question-style H2s = FAQ page")
+            result["signals"].append(f"{question_h2s} question-style H2s")
 
         # ── 4. URL depth heuristic ────────────────────────────
         if result["page_type"] == "unknown":
