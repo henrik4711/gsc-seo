@@ -96,11 +96,25 @@ def scrape_page(url: str, timeout: int = 10) -> dict:
             for tag in soup.find_all(["div", "section", "aside"], sel):
                 tag.decompose()
 
-        # 3. Remove mega-menu / dropdown nav content
-        for tag in soup.find_all(["div", "ul"], class_=re.compile(r"mega-?menu|dropdown|nav-menu|mobile-menu|menu-overlay", re.I)):
+        # 3. Remove mega-menu / dropdown / navigation content
+        nav_class_patterns = re.compile(
+            r"mega-?menu|dropdown|nav-menu|mobile-menu|menu-overlay|"
+            r"site-nav|main-nav|primary-nav|header-menu|"
+            r"xmx-nav|xmx-menu|xmx-header|xmx-topbar|"
+            r"search-overlay|search-suggest|autocomplete|"
+            r"cart-dropdown|mini-cart|varukorg",
+            re.I
+        )
+        for tag in soup.find_all(["div", "ul", "section"], class_=nav_class_patterns):
+            tag.decompose()
+        for tag in soup.find_all(["div", "ul", "section"], id=nav_class_patterns):
             tag.decompose()
 
-        # 4. Find main content container
+        # 4. Remove elements with role="navigation" or role="search"
+        for tag in soup.find_all(attrs={"role": re.compile(r"^(navigation|search|banner|complementary)$", re.I)}):
+            tag.decompose()
+
+        # 5. Find main content container
         main_content = (
             soup.find("main")
             or soup.find("article")
@@ -112,6 +126,22 @@ def scrape_page(url: str, timeout: int = 10) -> dict:
         if main_content:
             raw_text = main_content.get_text(separator=" ", strip=True)
             body_text = re.sub(r'\s+', ' ', raw_text).strip()
+
+            # Post-process: find first real sentence (skip any remaining nav text)
+            # Look for H1 text as content anchor, but use second occurrence
+            # (first is often in breadcrumb/nav)
+            h1_text = result.get("h1") or ""
+            if h1_text and body_text.count(h1_text) >= 2:
+                # Use second occurrence (actual H1, not nav link)
+                first = body_text.index(h1_text)
+                second = body_text.index(h1_text, first + len(h1_text))
+                body_text = body_text[second:]
+            elif h1_text and h1_text in body_text:
+                # Only one occurrence — check if it's in first 25% (likely nav)
+                idx = body_text.index(h1_text)
+                if idx < len(body_text) * 0.25:
+                    # Find the next sentence after the H1
+                    body_text = body_text[idx:]
             result["body_text"] = body_text[:8000]
             result["word_count"] = len(body_text.split())
         
