@@ -1,30 +1,45 @@
 """
-Page auditor: fetches landing pages, extracts meta tags, and analyses content
+Page scraper: fetches landing pages using Playwright (headless Chrome),
+extracts meta tags, content, links, and schema markup.
+Renders JavaScript — gets the REAL page content, not raw HTML.
 """
 
 import re
-import streamlit as st
+import json
 from urllib.parse import urlparse
 from typing import Optional
 
 try:
-    import requests
     from bs4 import BeautifulSoup
-    SCRAPING_AVAILABLE = True
+    BS4_AVAILABLE = True
 except ImportError:
-    SCRAPING_AVAILABLE = False
+    BS4_AVAILABLE = False
+
+# Playwright browser instance — reused across scrapes
+_browser = None
+_playwright = None
 
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (compatible; SEOBot/1.0)"
-    )
-}
+def _get_browser():
+    """Get or create a shared Playwright browser instance."""
+    global _browser, _playwright
+    if _browser and _browser.is_connected():
+        return _browser
+    try:
+        from playwright.sync_api import sync_playwright
+        _playwright = sync_playwright().start()
+        _browser = _playwright.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        return _browser
+    except Exception:
+        return None
 
 
-def scrape_page(url: str, timeout: int = 10) -> dict:
+def scrape_page(url: str, timeout: int = 15) -> dict:
     """
-    Scrape a URL and return structured page data
+    Scrape a URL using Playwright (headless Chrome).
     Returns: dict with title, description, h1, h2s, body_text, word_count, etc.
     """
     result = {
@@ -40,164 +55,225 @@ def scrape_page(url: str, timeout: int = 10) -> dict:
         "word_count": 0,
         "canonical": None,
         "schema_types": [],
-        "internal_links": 0,
+        "internal_links": [],
+        "internal_link_count": 0,
         "external_links": 0,
         "images_without_alt": 0,
         "title_length": 0,
         "description_length": 0,
     }
-    
-    if not SCRAPING_AVAILABLE:
-        result["error"] = "requests and beautifulsoup4 not installed"
+
+    if not BS4_AVAILABLE:
+        result["error"] = "beautifulsoup4 not installed"
         return result
-    
+
+    browser = _get_browser()
+    if not browser:
+        # Fallback to requests if Playwright not available
+        return _scrape_with_requests(url, timeout, result)
+
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=timeout)
+        page = browser.new_page(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+        page.set_default_timeout(timeout * 1000)
+
+        # Navigate and wait for content to load
+        page.goto(url, wait_until="domcontentloaded")
+
+        # Dismiss cookie consent if present
+        try:
+            for selector in [
+                "button:has-text('Acceptera')", "button:has-text('Accept')",
+                "button:has-text('Godkänn')", "button:has-text('OK')",
+                "[class*='cookie'] button", "[class*='consent'] button",
+            ]:
+                btn = page.locator(selector).first
+                if btn.is_visible(timeout=1000):
+                    btn.click()
+                    page.wait_for_timeout(500)
+                    break
+        except Exception:
+            pass  # No cookie popup or couldn't dismiss
+
+        # Wait for main content
+        try:
+            page.wait_for_selector("div.xmx-page-content, main, article, [role='main']", timeout=5000)
+        except Exception:
+            pass  # Content might already be there
+
+        # Get rendered HTML
+        html = page.content()
+        page.close()
+
+    except Exception as e:
+        result["error"] = str(e)
+        try:
+            page.close()
+        except Exception:
+            pass
+        return result
+
+    # Parse rendered HTML with BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    result["success"] = True
+
+    # Title
+    title_tag = soup.find("title")
+    if title_tag:
+        result["title"] = title_tag.get_text(strip=True)
+        result["title_length"] = len(result["title"])
+
+    # Meta description
+    meta_desc = soup.find("meta", attrs={"name": re.compile("description", re.I)})
+    if meta_desc:
+        result["meta_description"] = meta_desc.get("content", "").strip()
+        result["description_length"] = len(result["meta_description"])
+
+    # Canonical
+    canonical = soup.find("link", attrs={"rel": "canonical"})
+    if canonical:
+        result["canonical"] = canonical.get("href", "")
+
+    # Headings
+    h1 = soup.find("h1")
+    if h1:
+        result["h1"] = h1.get_text(strip=True)
+
+    result["h2s"] = [h.get_text(strip=True) for h in soup.find_all("h2")][:15]
+    result["h3s"] = [h.get_text(strip=True) for h in soup.find_all("h3")][:15]
+
+    # Schema types
+    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        try:
+            data = json.loads(tag.string or "{}")
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and "@type" in item:
+                        result["schema_types"].append(item["@type"])
+            elif "@type" in data:
+                result["schema_types"].append(data["@type"])
+            if "@graph" in data:
+                for item in data["@graph"]:
+                    if isinstance(item, dict) and "@type" in item:
+                        result["schema_types"].append(item["@type"])
+        except Exception:
+            pass
+
+    # ── Body text: extract from content area ──────────────────
+    # Work on a copy for text extraction
+    text_soup = BeautifulSoup(html, "html.parser")
+
+    # Remove non-content elements
+    for tag in text_soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "svg"]):
+        tag.decompose()
+
+    # Remove cookie/GDPR
+    for sel in [
+        {"class_": re.compile(r"cookie|consent|gdpr|cc-|privacy-banner", re.I)},
+        {"id": re.compile(r"cookie|consent|gdpr", re.I)},
+    ]:
+        for tag in text_soup.find_all(["div", "section"], sel):
+            tag.decompose()
+
+    # Find main content container
+    main_content = (
+        text_soup.find("div", class_="xmx-page-content")
+        or text_soup.find("main")
+        or text_soup.find("article")
+        or text_soup.find("div", role="main")
+        or text_soup.find("div", class_=re.compile(r"^(main|page-content|content-area)", re.I))
+        or text_soup.body
+    )
+
+    if main_content:
+        raw_text = main_content.get_text(separator=" ", strip=True)
+        body_text = re.sub(r'\s+', ' ', raw_text).strip()
+        result["body_text"] = body_text[:8000]
+        result["word_count"] = len(body_text.split())
+
+    # ── Links: extract from content area ──────────────────────
+    link_soup = BeautifulSoup(html, "html.parser")
+    content_for_links = (
+        link_soup.find("div", class_="xmx-page-content")
+        or link_soup.find("main")
+        or link_soup.body
+    )
+
+    domain = urlparse(url).netloc
+    internal_links = []
+    seen_urls = set()
+    ext_count = 0
+
+    if content_for_links:
+        for a in content_for_links.find_all("a", href=True):
+            href = a["href"]
+            anchor = a.get_text(strip=True)[:80]
+            if href.startswith("/") and not href.startswith("//"):
+                href = f"https://{domain}{href}"
+            if href.startswith("http"):
+                if domain in href:
+                    norm = href.rstrip("/").lower().split("?")[0].split("#")[0]
+                    if norm not in seen_urls:
+                        seen_urls.add(norm)
+                        internal_links.append({"url": href, "anchor": anchor})
+                else:
+                    ext_count += 1
+
+    result["internal_links"] = internal_links
+    result["internal_link_count"] = len(internal_links)
+    result["external_links"] = ext_count
+
+    # Images without alt
+    if main_content:
+        result["images_without_alt"] = sum(
+            1 for img in main_content.find_all("img")
+            if not img.get("alt", "").strip()
+        )
+
+    return result
+
+
+def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
+    """Fallback scraper using requests (no JS rendering)."""
+    try:
+        import requests
+        resp = requests.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; SEOBot/1.0)"
+        }, timeout=timeout)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
         result["success"] = True
-        
-        # Title
+
         title_tag = soup.find("title")
         if title_tag:
             result["title"] = title_tag.get_text(strip=True)
             result["title_length"] = len(result["title"])
-        
-        # Meta description
+
         meta_desc = soup.find("meta", attrs={"name": re.compile("description", re.I)})
         if meta_desc:
             result["meta_description"] = meta_desc.get("content", "").strip()
             result["description_length"] = len(result["meta_description"])
-        
-        # Canonical
-        canonical = soup.find("link", attrs={"rel": "canonical"})
-        if canonical:
-            result["canonical"] = canonical.get("href", "")
-        
-        # Headings
+
         h1 = soup.find("h1")
         if h1:
             result["h1"] = h1.get_text(strip=True)
-        
-        result["h2s"] = [h.get_text(strip=True) for h in soup.find_all("h2")][:10]
-        result["h3s"] = [h.get_text(strip=True) for h in soup.find_all("h3")][:10]
-        
-        # Body text — remove non-content elements
-        # 1. Remove script, style, nav, footer, header, aside
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "svg"]):
+
+        result["h2s"] = [h.get_text(strip=True) for h in soup.find_all("h2")][:15]
+        result["h3s"] = [h.get_text(strip=True) for h in soup.find_all("h3")][:15]
+
+        # Body text from content area
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
             tag.decompose()
+        main = soup.find("div", class_="xmx-page-content") or soup.find("main") or soup.body
+        if main:
+            raw = re.sub(r'\s+', ' ', main.get_text(separator=" ", strip=True))
+            result["body_text"] = raw[:8000]
+            result["word_count"] = len(raw.split())
 
-        # 2. Remove cookie consent / GDPR popups
-        cookie_selectors = [
-            {"class_": re.compile(r"cookie|consent|gdpr|cc-|privacy-banner|cookie-bar", re.I)},
-            {"id": re.compile(r"cookie|consent|gdpr|cc-", re.I)},
-        ]
-        for sel in cookie_selectors:
-            for tag in soup.find_all(["div", "section", "aside"], sel):
-                tag.decompose()
-
-        # 3. Remove mega-menu / dropdown / navigation content
-        nav_class_patterns = re.compile(
-            r"mega-?menu|dropdown|nav-menu|mobile-menu|menu-overlay|"
-            r"site-nav|main-nav|primary-nav|header-menu|"
-            r"xmx-nav|xmx-menu|xmx-header|xmx-topbar|"
-            r"search-overlay|search-suggest|autocomplete|"
-            r"cart-dropdown|mini-cart|varukorg",
-            re.I
-        )
-        for tag in soup.find_all(["div", "ul", "section"], class_=nav_class_patterns):
-            tag.decompose()
-        for tag in soup.find_all(["div", "ul", "section"], id=nav_class_patterns):
-            tag.decompose()
-
-        # 4. Remove elements with role="navigation" or role="search"
-        for tag in soup.find_all(attrs={"role": re.compile(r"^(navigation|search|banner|complementary)$", re.I)}):
-            tag.decompose()
-
-        # 5. Find main content container — site-specific first, then generic
-        main_content = (
-            soup.find("div", class_="xmx-page-content")  # Mshop specific
-            or soup.find("main")
-            or soup.find("article")
-            or soup.find("div", role="main")
-            or soup.find("div", class_=re.compile(r"^(main|page-content|content-area|product-detail|category-content)", re.I))
-            or soup.body
-        )
-
-        if main_content:
-            raw_text = main_content.get_text(separator=" ", strip=True)
-            body_text = re.sub(r'\s+', ' ', raw_text).strip()
-
-            # Post-process: find first real sentence (skip any remaining nav text)
-            # Look for H1 text as content anchor, but use second occurrence
-            # (first is often in breadcrumb/nav)
-            h1_text = result.get("h1") or ""
-            if h1_text and body_text.count(h1_text) >= 2:
-                # Use second occurrence (actual H1, not nav link)
-                first = body_text.index(h1_text)
-                second = body_text.index(h1_text, first + len(h1_text))
-                body_text = body_text[second:]
-            elif h1_text and h1_text in body_text:
-                # Only one occurrence — check if it's in first 25% (likely nav)
-                idx = body_text.index(h1_text)
-                if idx < len(body_text) * 0.25:
-                    # Find the next sentence after the H1
-                    body_text = body_text[idx:]
-            result["body_text"] = body_text[:8000]
-            result["word_count"] = len(body_text.split())
-        
-        # Schema types
-        schema_tags = soup.find_all("script", attrs={"type": "application/ld+json"})
-        for tag in schema_tags:
-            try:
-                import json
-                data = json.loads(tag.string or "{}")
-                if "@type" in data:
-                    result["schema_types"].append(data["@type"])
-            except Exception:
-                pass
-        
-        # Link analysis — count from content area, not full page
-        # Use xmx-page-content to get CONTENT links (not nav)
-        content_for_links = (
-            BeautifulSoup(resp.text, "html.parser").find("div", class_="xmx-page-content")
-            or main_content
-        )
-
-        domain = urlparse(url).netloc
-        internal_link_list = []
-        seen_urls = set()
-        ext_count = 0
-        if content_for_links:
-            for a in content_for_links.find_all("a", href=True):
-                href = a["href"]
-                anchor = a.get_text(strip=True)[:80]
-                if href.startswith("/") and not href.startswith("//"):
-                    href = f"https://{domain}{href}"
-                if href.startswith("http"):
-                    if domain in href:
-                        norm = href.rstrip("/").lower().split("?")[0].split("#")[0]
-                        if norm not in seen_urls:
-                            seen_urls.add(norm)
-                            internal_link_list.append({"url": href, "anchor": anchor})
-                    else:
-                        ext_count += 1
-
-        result["internal_links"] = internal_link_list  # unique content links only
-        result["internal_link_count"] = len(internal_link_list)
-        result["external_links"] = ext_count
-        
-        # Images without alt
-        result["images_without_alt"] = sum(
-            1 for img in soup.find_all("img")
-            if not img.get("alt", "").strip()
-        )
-        
-    except requests.exceptions.RequestException as e:
-        result["error"] = str(e)
     except Exception as e:
-        result["error"] = f"Parse error: {e}"
-    
+        result["error"] = str(e)
+
     return result
 
 
@@ -208,13 +284,12 @@ def evaluate_meta(page_data: dict, target_keywords: list) -> dict:
     """
     issues = []
     score = 100
-    
+
     title = page_data.get("title") or ""
     desc = page_data.get("meta_description") or ""
     title_len = len(title)
     desc_len = len(desc)
-    
-    # Title checks
+
     if not title:
         issues.append({"type": "critical", "field": "title", "msg": "Missing meta title"})
         score -= 30
@@ -224,8 +299,7 @@ def evaluate_meta(page_data: dict, target_keywords: list) -> dict:
     elif title_len > 65:
         issues.append({"type": "warn", "field": "title", "msg": f"Title too long ({title_len} chars, max ~60)"})
         score -= 8
-    
-    # Description checks
+
     if not desc:
         issues.append({"type": "critical", "field": "description", "msg": "Missing meta description"})
         score -= 25
@@ -235,35 +309,33 @@ def evaluate_meta(page_data: dict, target_keywords: list) -> dict:
     elif desc_len > 165:
         issues.append({"type": "warn", "field": "description", "msg": f"Description truncated in SERP ({desc_len} chars, max ~160)"})
         score -= 5
-    
-    # Keyword presence
+
     kw_in_title = sum(1 for kw in target_keywords if kw.lower() in title.lower())
     kw_in_desc = sum(1 for kw in target_keywords if kw.lower() in desc.lower())
-    
+
     if target_keywords and kw_in_title == 0:
         issues.append({"type": "warn", "field": "title", "msg": "Primary keywords not in title"})
         score -= 15
-    
+
     if target_keywords and kw_in_desc == 0:
         issues.append({"type": "warn", "field": "description", "msg": "Primary keywords not in description"})
         score -= 10
-    
-    # CTR-optimization signals
+
     cta_words = ["köp", "beställ", "bestall", "se", "hitta", "bäst", "billig", "fri frakt", "snabb",
                   "kob", "bestil", "bedst", "gratis fragt",
                   "top", "test", "buy", "order", "shop", "find", "best", "cheap",
                   "free shipping", "fast", "deal", "save", "discount", "offer"]
     has_cta_title = any(w in title.lower() for w in cta_words)
     has_cta_desc = any(w in desc.lower() for w in cta_words)
-    
+
     if not has_cta_title:
         issues.append({"type": "info", "field": "title", "msg": "No call-to-action signals in title"})
         score -= 5
-    
+
     if not has_cta_desc:
         issues.append({"type": "info", "field": "description", "msg": "No USP/CTA in description (free shipping, fast delivery, etc.)"})
         score -= 5
-    
+
     return {
         "score": max(0, score),
         "issues": issues,
