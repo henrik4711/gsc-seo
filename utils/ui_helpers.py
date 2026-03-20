@@ -6,6 +6,12 @@ import streamlit as st
 from urllib.parse import urlparse
 
 
+def stable_hash(text: str) -> str:
+    """Deterministic hash that stays the same across process restarts."""
+    import hashlib
+    return hashlib.md5(text.encode()).hexdigest()[:8]
+
+
 def shorten_url(url: str) -> str:
     """Strip the domain from a URL, returning just the path."""
     parsed = urlparse(url)

@@ -6,6 +6,7 @@ Every item = one page to fix, with exact keywords to add and AI to write the tex
 import streamlit as st
 import json
 from config import get_anthropic_key, has_anthropic_key
+from utils.ui_helpers import stable_hash
 
 
 def _get_clean_snippet(r, max_chars=800):
@@ -32,7 +33,7 @@ def _build_action_list(audit_results):
         coverage_pct = kw_cov.get("coverage_pct", 100)
 
         # Use AI to filter keywords by relevance (cached per page)
-        ai_filter_key = f"_kw_filter_{hash(url) & 0xFFFFFF}"
+        ai_filter_key = f"_kw_filter_{stable_hash(url)}"
         if missing_kws_raw and ai_filter_key not in st.session_state:
             try:
                 from utils.ai_generator import get_client, filter_relevant_keywords
@@ -208,7 +209,7 @@ def render():
     # ── Action cards ──────────────────────────────────────────────
     for idx, a in enumerate(visible):
         # Use a stable key based on URL hash, not filtered index
-        url_hash = hash(a["url"]) & 0xFFFFFF  # 6-digit stable ID
+        url_hash = stable_hash(a["url"])  # 6-digit stable ID
         url = a["url"]
         pri = a["priority"]
         pri_color = {"high": "#ff4455", "medium": "#ffaa33", "low": "#33dd88"}[pri]

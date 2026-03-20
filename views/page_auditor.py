@@ -7,7 +7,7 @@ Now with page-type detection and deep category analysis.
 import streamlit as st
 import pandas as pd
 import time
-from utils.ui_helpers import shorten_url
+from utils.ui_helpers import shorten_url, stable_hash
 
 
 def score_badge(score: int) -> str:
@@ -395,7 +395,7 @@ def render():
         if r.get("page_type") in ("category", "blog", "faq")
         and r.get("word_count", 0) > 50
     ]
-    already_checked = sum(1 for r in quality_candidates if f"_quality_{hash(r['url']) & 0xFFFFFF}" in st.session_state)
+    already_checked = sum(1 for r in quality_candidates if f"_quality_{stable_hash(r['url'])}" in st.session_state)
 
     q1, q2, q3 = st.columns(3)
     q1.metric("Category + blog pages", len(quality_candidates))
@@ -423,7 +423,7 @@ def render():
             language = st.session_state.get("content_language", "Swedish")
 
             # Only check pages not yet assessed
-            unchecked = [r for r in quality_candidates if f"_quality_{hash(r['url']) & 0xFFFFFF}" not in st.session_state]
+            unchecked = [r for r in quality_candidates if f"_quality_{stable_hash(r['url'])}" not in st.session_state]
 
             if not unchecked:
                 st.success("All pages already checked!")
@@ -447,7 +447,7 @@ def render():
                             for idx_a, assessment in enumerate(assessments):
                                 if idx_a < len(batch):
                                     r = batch[idx_a]
-                                    st.session_state[f"_quality_{hash(r['url']) & 0xFFFFFF}"] = assessment
+                                    st.session_state[f"_quality_{stable_hash(r['url'])}"] = assessment
 
                             # Save to disk after EVERY batch — never lose results
                             from utils.persistence import save_ai_cache
@@ -466,7 +466,7 @@ def render():
     # Display quality results
     quality_results = []
     for r in quality_candidates:
-        qkey = f"_quality_{hash(r['url']) & 0xFFFFFF}"
+        qkey = f"_quality_{stable_hash(r['url'])}"
         if qkey in st.session_state:
             q = st.session_state[qkey]
             quality_results.append({

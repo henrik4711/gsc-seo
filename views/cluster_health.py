@@ -7,6 +7,7 @@ import streamlit as st
 import json
 from urllib.parse import urlparse
 from config import get_anthropic_key, has_anthropic_key
+from utils.ui_helpers import stable_hash
 
 
 def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_link_map=None):
@@ -166,7 +167,7 @@ def render():
     clusters_sorted = sorted(clusters, key=lambda c: -c.get("total_impressions", 0))
 
     # ── Summary ───────────────────────────────────────────────────
-    evaluated = sum(1 for c in clusters_sorted if f"_cluster_health_{hash(c.get('topic','')) & 0xFFFFFF}" in st.session_state)
+    evaluated = sum(1 for c in clusters_sorted if f"_cluster_health_{stable_hash(c.get('topic',''))}" in st.session_state)
 
     # Build site URL list for AI
     all_site_urls = sorted(set(r["url"] for r in audit_results if r.get("url")))
@@ -207,7 +208,7 @@ def render():
 
             for i, cluster in enumerate(clusters_sorted[:5]):
                 topic = cluster.get("topic", f"Cluster {i}")
-                health_key = f"_cluster_health_{hash(topic) & 0xFFFFFF}"
+                health_key = f"_cluster_health_{stable_hash(topic)}"
 
                 if health_key in st.session_state:
                     log.write(f"[{i+1}/5] {topic} — cached")
@@ -239,7 +240,7 @@ def render():
 
     for cluster in visible:
         topic = cluster.get("topic", "?")
-        health_key = f"_cluster_health_{hash(topic) & 0xFFFFFF}"
+        health_key = f"_cluster_health_{stable_hash(topic)}"
         has_eval = health_key in st.session_state
         impr = cluster.get("total_impressions", 0)
         pages_count = cluster.get("page_count", len(cluster.get("pages", [])))
@@ -270,7 +271,7 @@ def render():
 
         with st.expander(f"Health check: {topic}", expanded=False):
             if not has_eval:
-                if st.button(f"Evaluate this cluster", key=f"btn_eval_{hash(topic) & 0xFFFFFF}", type="primary"):
+                if st.button(f"Evaluate this cluster", key=f"btn_eval_{stable_hash(topic)}", type="primary"):
                     with st.spinner(f"AI evaluating {topic}..."):
                         try:
                             from utils.ai_generator import get_client, evaluate_cluster_health
@@ -289,7 +290,7 @@ def render():
 
                 if health.get("error"):
                     st.error(f"Evaluation failed: {health['error']}")
-                    if st.button("Retry", key=f"btn_retry_cl_{hash(topic) & 0xFFFFFF}"):
+                    if st.button("Retry", key=f"btn_retry_cl_{stable_hash(topic)}"):
                         del st.session_state[health_key]
                         st.rerun()
                     continue
@@ -408,6 +409,6 @@ def render():
                         )
 
                 # Regenerate
-                if st.button("Regenerate evaluation", key=f"btn_regen_cl_{hash(topic) & 0xFFFFFF}"):
+                if st.button("Regenerate evaluation", key=f"btn_regen_cl_{stable_hash(topic)}"):
                     del st.session_state[health_key]
                     st.rerun()

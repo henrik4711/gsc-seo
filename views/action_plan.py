@@ -8,13 +8,13 @@ import streamlit as st
 import json
 import pandas as pd
 from config import get_anthropic_key, has_anthropic_key
-from utils.ui_helpers import shorten_url
+from utils.ui_helpers import shorten_url, stable_hash
 from utils.ai_generator import _clean_body_text
 
 
 def _get_ai_quality_badge(url):
     """Get cached AI quality score if available."""
-    qkey = f"_quality_{hash(url) & 0xFFFFFF}"
+    qkey = f"_quality_{stable_hash(url)}"
     q = st.session_state.get(qkey)
     if not q:
         return "<span style='color:#6b6b8a;'>AI text: —</span>"
@@ -91,7 +91,7 @@ def render():
     c1, c2, c3 = st.columns(3)
     c1.metric("Pages audited", len(pages))
     c2.metric("Total lost clicks", f"{total_lost:,.0f}")
-    c3.metric("Pages with plan", sum(1 for p in pages if f"_ai_plan_{hash(p['url']) & 0xFFFFFF}" in st.session_state))
+    c3.metric("Pages with plan", sum(1 for p in pages if f"_ai_plan_{stable_hash(p['url'])}" in st.session_state))
 
     st.markdown("---")
 
@@ -122,7 +122,7 @@ def render():
 
             top_pages = pages[:10]
             for i, p in enumerate(top_pages):
-                plan_key = f"_ai_plan_{hash(p['url']) & 0xFFFFFF}"
+                plan_key = f"_ai_plan_{stable_hash(p['url'])}"
                 if plan_key in st.session_state:
                     log.write(f"[{i+1}/10] {p['url']} — already cached")
                     progress.progress((i + 1) / 10)
@@ -158,7 +158,7 @@ def render():
     # ── Page cards ────────────────────────────────────────────────
     for p in visible:
         url = p["url"]
-        plan_key = f"_ai_plan_{hash(url) & 0xFFFFFF}"
+        plan_key = f"_ai_plan_{stable_hash(url)}"
         has_plan = plan_key in st.session_state
         ptype = p["page_type"].upper()
         lost = p["lost_clicks"]
@@ -205,7 +205,7 @@ def render():
             unsafe_allow_html=True,
         )
 
-        url_hash = hash(url) & 0xFFFFFF
+        url_hash = stable_hash(url)
 
         with st.expander(f"Implementation plan for {shorten_url(url)}", expanded=False):
             # Generate plan button (per page)
@@ -779,7 +779,7 @@ def render():
     st.markdown("---")
     all_plans = {}
     for p in pages:
-        pk = f"_ai_plan_{hash(p['url']) & 0xFFFFFF}"
+        pk = f"_ai_plan_{stable_hash(p['url'])}"
         if pk in st.session_state:
             plan = st.session_state[pk]
             if not plan.get("error"):
