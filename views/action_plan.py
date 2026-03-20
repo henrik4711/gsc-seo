@@ -137,11 +137,12 @@ def render():
                     st.session_state[plan_key] = result
                 except Exception as e:
                     st.session_state[plan_key] = {"error": str(e), "steps": []}
+                # Save after EACH page — never lose results
+                from utils.persistence import save_ai_cache
+                save_ai_cache()
                 progress.progress((i + 1) / 10)
 
             status.update(label="Plans generated", state="complete", expanded=False)
-            from utils.persistence import save_ai_cache
-            save_ai_cache()
         st.rerun()
 
     # ── Pagination ────────────────────────────────────────────────

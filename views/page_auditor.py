@@ -444,11 +444,14 @@ def render():
                             tc = st.session_state.get("topic_clusters")
                             assessments = assess_content_quality_batch(client, batch, site_context, language, tc)
                             # Match assessments to pages by order (most reliable)
-                            # AI returns assessments in same order as input pages
                             for idx_a, assessment in enumerate(assessments):
                                 if idx_a < len(batch):
                                     r = batch[idx_a]
                                     st.session_state[f"_quality_{hash(r['url']) & 0xFFFFFF}"] = assessment
+
+                            # Save to disk after EVERY batch — never lose results
+                            from utils.persistence import save_ai_cache
+                            save_ai_cache()
                         except Exception as e:
                             log_q.write(f"Error on batch {batch_num}: {e}")
 
