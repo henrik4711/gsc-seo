@@ -443,13 +443,12 @@ def render():
                         try:
                             tc = st.session_state.get("topic_clusters")
                             assessments = assess_content_quality_batch(client, batch, site_context, language, tc)
-                            for assessment in assessments:
-                                aurl = assessment.get("url", "")
-                                # Match assessment to page
-                                for r in batch:
-                                    if r["url"] in aurl or aurl in r["url"] or r["url"].rstrip("/").endswith(aurl.rstrip("/").split("/")[-1]):
-                                        st.session_state[f"_quality_{hash(r['url']) & 0xFFFFFF}"] = assessment
-                                        break
+                            # Match assessments to pages by order (most reliable)
+                            # AI returns assessments in same order as input pages
+                            for idx_a, assessment in enumerate(assessments):
+                                if idx_a < len(batch):
+                                    r = batch[idx_a]
+                                    st.session_state[f"_quality_{hash(r['url']) & 0xFFFFFF}"] = assessment
                         except Exception as e:
                             log_q.write(f"Error on batch {batch_num}: {e}")
 
