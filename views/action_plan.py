@@ -327,70 +327,10 @@ def render():
                         unsafe_allow_html=True,
                     )
 
-                    # AI generate buttons for content/meta/links steps
-                    ai_result_key = f"impl_ai_{url_hash}_{step_idx}"
-
-                    if step_type == "meta":
-                        if st.button("AI: Generate meta", key=f"btn_ai_meta_{url_hash}_{step_idx}"):
-                            with st.spinner("Generating..."):
-                                try:
-                                    from utils.ai_generator import get_client, generate_meta_suggestions
-                                    client = get_client(get_anthropic_key())
-                                    page_r = next((r for r in audit_results if r["url"] == url), {})
-                                    result = generate_meta_suggestions(
-                                        client, page_r,
-                                        page_r.get("target_keywords", []),
-                                        site_context, language, 2,
-                                    )
-                                    st.session_state[ai_result_key] = ("meta", result)
-                                except Exception as e:
-                                    st.error(f"Error: {e}")
-
-                    elif step_type == "content":
-                        if st.button("AI: Generate text", key=f"btn_ai_content_{url_hash}_{step_idx}"):
-                            with st.spinner("Generating..."):
-                                try:
-                                    from utils.ai_generator import get_client, generate_keyword_text
-                                    client = get_client(get_anthropic_key())
-                                    page_r = next((r for r in audit_results if r["url"] == url), {})
-                                    kw_list = page_r.get("target_keywords", [])[:10]
-                                    # Clean body text — strip ALL nav/header/trust-bar text
-                                    body = _clean_body_text(page_r, 800)
-                                    result = generate_keyword_text(
-                                        client, kw_list, body,
-                                        page_r.get("page_type", "unknown"),
-                                        site_context, language,
-                                    )
-                                    st.session_state[ai_result_key] = ("content", result)
-                                except Exception as e:
-                                    st.error(f"Error: {e}")
-
-                    elif step_type == "links":
-                        if st.button("AI: Generate link text", key=f"btn_ai_links_{url_hash}_{step_idx}"):
-                            with st.spinner("Generating..."):
-                                try:
-                                    from utils.ai_generator import get_client, generate_link_text
-                                    client = get_client(get_anthropic_key())
-                                    # Extract target URL from instruction text
-                                    import re
-                                    target_match = re.search(r'https?://[^\s"<>]+', step.get("instruction", ""))
-                                    if target_match:
-                                        target = target_match.group(0).rstrip(".,)")
-                                        result = generate_link_text(
-                                            client, url, target,
-                                            target.split("/")[-1].replace("-", " "),
-                                            "page text",
-                                            [primary_kw] if primary_kw else [],
-                                            site_context, language,
-                                        )
-                                        st.session_state[ai_result_key] = ("links", result)
-                                    else:
-                                        st.warning("Could not extract target URL from instruction")
-                                except Exception as e:
-                                    st.error(f"Error: {e}")
-
-                    elif step_type == "schema":
-                        if st.button("Generate schema", key=f"btn_ai_schema_{url_hash}_{step_idx}"):
+                    # Only show schema button per step — content/links handled by bottom text generator
+                    if step_type == "schema":
+                        ai_result_key = f"impl_ai_{url_hash}_{step_idx}"
+                        if st.button("Generate schema markup", key=f"btn_ai_schema_{url_hash}_{step_idx}"):
                             try:
                                 from utils.ai_generator import generate_schema_markup
                                 page_r = next((r for r in audit_results if r["url"] == url), {})
@@ -407,81 +347,15 @@ def render():
                             except Exception as e:
                                 st.error(f"Error: {e}")
 
-                    # Display AI results
-                    if ai_result_key in st.session_state:
-                        ai_type, res = st.session_state[ai_result_key]
-                        page_r = next((r for r in audit_results if r["url"] == url), {})
-
-                        if ai_type == "meta" and isinstance(res, dict):
-                            # Show current vs new
-                            current_t = page_r.get("title") or ""
-                            current_d = page_r.get("meta_description") or ""
-                            st.markdown(
-                                f"<div style='background:#1a0d0d; border:1px solid #2a2a40; border-radius:6px; padding:0.6rem; margin:0.3rem 0;'>"
-                                f"<div style='font-size:0.6rem; color:#ff4455; font-family:\"IBM Plex Mono\",monospace;'>CURRENT</div>"
-                                f"<div style='font-size:0.8rem; color:#9b9bb8;'>Title: {current_t}</div>"
-                                f"<div style='font-size:0.8rem; color:#9b9bb8;'>Desc: {current_d}</div>"
-                                f"</div>",
-                                unsafe_allow_html=True,
-                            )
-                            st.markdown(
-                                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
-                                "margin:0.3rem 0;'>COPY THIS — NEW META</div>",
-                                unsafe_allow_html=True,
-                            )
-                            for i, v in enumerate(res.get("variants", []), 1):
-                                st.code(f"Title: {v.get('title','')}\nDescription: {v.get('description','')}", language="text")
-                            if res.get("analysis"):
-                                st.markdown(f"<div style='font-size:0.75rem; color:#6b6b8a;'>Why: {res['analysis']}</div>", unsafe_allow_html=True)
-
-                        elif ai_type == "content" and isinstance(res, dict):
-                            # Show current text vs new
-                            current_text = _clean_body_text(page_r, 500)
-                            if current_text:
+                        if ai_result_key in st.session_state:
+                            _, res = st.session_state[ai_result_key]
+                            if isinstance(res, dict):
                                 st.markdown(
-                                    f"<div style='background:#1a0d0d; border:1px solid #2a2a40; border-radius:6px; padding:0.6rem; margin:0.3rem 0;'>"
-                                    f"<div style='font-size:0.6rem; color:#ff4455; font-family:\"IBM Plex Mono\",monospace;'>CURRENT TEXT</div>"
-                                    f"<div style='font-size:0.8rem; color:#9b9bb8;'>{current_text[:300]}{'...' if len(current_text) > 300 else ''}</div>"
-                                    f"</div>",
+                                    f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88;'>"
+                                    f"PASTE THIS IN &lt;head&gt; — SCHEMA ({', '.join(res.get('types', []))})</div>",
                                     unsafe_allow_html=True,
                                 )
-                            st.markdown(
-                                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
-                                "margin:0.3rem 0;'>COPY THIS — NEW TEXT</div>",
-                                unsafe_allow_html=True,
-                            )
-                            st.markdown(
-                                f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
-                                f"border-radius:0 4px 4px 0;'><div style='color:#e8e8f0; line-height:1.6;'>"
-                                f"{res.get('optimized_text', '')}</div></div>",
-                                unsafe_allow_html=True,
-                            )
-                            kws = res.get("keywords_integrated", [])
-                            if kws:
-                                st.markdown(f"<span style='font-size:0.7rem; color:#33dd88;'>Keywords added: {', '.join(kws)}</span>", unsafe_allow_html=True)
-                            st.code(res.get("optimized_text", ""), language="text")
-
-                        elif ai_type == "links" and isinstance(res, dict):
-                            st.markdown(
-                                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; "
-                                "margin:0.3rem 0;'>COPY THIS — LINK PARAGRAPH</div>",
-                                unsafe_allow_html=True,
-                            )
-                            st.markdown(
-                                f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
-                                f"border-radius:0 4px 4px 0;'><div style='color:#e8e8f0; line-height:1.6;'>"
-                                f"{res.get('paragraph', '')}</div></div>",
-                                unsafe_allow_html=True,
-                            )
-                            st.code(res.get("html", ""), language="html")
-
-                        elif ai_type == "schema" and isinstance(res, dict):
-                            st.markdown(
-                                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88;'>"
-                                f"PASTE THIS IN &lt;head&gt; — SCHEMA MARKUP ({', '.join(res.get('types', []))})</div>",
-                                unsafe_allow_html=True,
-                            )
-                            st.code(res.get("json_ld", ""), language="html")
+                                st.code(res.get("json_ld", ""), language="html")
 
                 # New content suggestions
                 new_content = plan.get("new_content_suggestions", [])
@@ -666,17 +540,35 @@ def render():
                                 st.markdown(f"<span style='font-size:0.7rem; color:#33dd88;'>Keywords: {', '.join(kws)}</span>", unsafe_allow_html=True)
                             st.code(res.get("optimized_text", ""), language="text")
 
-                # Generate category bottom text button (for category pages)
+                # ── MAIN ACTION: Generate complete page text ─────────
                 page_r = next((r for r in audit_results if r["url"] == url), {})
-                if page_r.get("page_type") in ("category", "unknown"):
+                if page_r.get("page_type") in ("category", "unknown", "blog", "faq"):
                     st.markdown("---")
-                    st.markdown("#### Rewrite Category Bottom Text")
                     st.markdown(
-                        "<p style='font-size:0.8rem; color:#9b9bb8;'>"
-                        "Generate new SEO bottom text with all keywords, internal links to subcategories, "
-                        "product recommendations, buying guide, and FAQ — in Mshop's format.</p>",
+                        "<div style='background:#0d0d15; border:2px solid #5533ff; border-radius:8px; padding:1rem; margin:0.5rem 0;'>"
+                        "<div style='font-family:\"Syne\",sans-serif; font-size:1.1rem; font-weight:700; color:#c8b4ff; margin-bottom:0.5rem;'>"
+                        "Generate Complete Page Text</div>"
+                        "<div style='font-size:0.85rem; color:#9b9bb8;'>"
+                        "This generates the FULL page text with all fixes from the steps above included: "
+                        "keywords, internal links, product recommendations, buying guide, FAQ — everything in one go. "
+                        "Ready to paste into CMS.</div>"
+                        "</div>",
                         unsafe_allow_html=True,
                     )
+
+                    # Show current text
+                    current_body = _clean_body_text(page_r, 2000)
+                    if current_body:
+                        show_current = st.toggle("Show current page text", key=f"toggle_body_{url_hash}")
+                        if show_current:
+                            st.markdown(
+                                f"<div style='background:#1a0d0d; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin:0.3rem 0;'>"
+                                f"<div style='font-size:0.6rem; color:#ff4455; font-family:\"IBM Plex Mono\",monospace; margin-bottom:0.3rem;'>"
+                                f"CURRENT TEXT ({len(current_body.split())} words)</div>"
+                                f"<div style='font-size:0.8rem; color:#9b9bb8; line-height:1.5;'>{current_body}</div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
 
                     bottom_key = f"_bottom_text_{url_hash}"
                     if st.button("Generate bottom text with products & links", key=f"btn_bottom_{url_hash}", type="primary"):
@@ -732,19 +624,45 @@ def render():
                         links = bt.get("internal_links_added", [])
                         prods = bt.get("products_featured", [])
 
+                        # Summary of what changed
                         st.markdown(
-                            f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.6rem; "
-                            f"border-radius:0 6px 6px 0; margin-bottom:0.3rem;'>"
-                            f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88;'>"
-                            f"BOTTOM TEXT READY · {wc} words · {len(kws)} keywords · {len(links)} links · {len(prods)} products</span></div>",
+                            f"<div style='background:#0d1a0d; border:2px solid #33dd88; border-radius:8px; padding:1rem; margin:0.5rem 0;'>"
+                            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88; margin-bottom:0.5rem;'>"
+                            f"NEW TEXT READY — COPY THIS TO REPLACE CURRENT TEXT</div>"
+                            f"<div style='font-size:0.85rem; color:#e8e8f0; margin-bottom:0.5rem;'>"
+                            f"<strong>{wc} words</strong> · "
+                            f"<strong>{len(kws)} keywords</strong> integrated · "
+                            f"<strong>{len(links)} internal links</strong> · "
+                            f"<strong>{len(prods)} products</strong> featured</div>"
+                            f"</div>",
                             unsafe_allow_html=True,
                         )
 
-                        with st.expander("Preview", expanded=True):
-                            st.markdown(bt.get("html", ""), unsafe_allow_html=True)
+                        # What changed and why
+                        st.markdown("**What's different from current text:**")
+                        changes = []
+                        if kws:
+                            changes.append(f"Keywords added: {', '.join(kws[:10])}")
+                        if links:
+                            changes.append(f"Internal links to: {', '.join(l.replace('https://www.mshop.se', '') for l in links[:8])}")
+                        if prods:
+                            changes.append(f"Products featured: {', '.join(prods[:5])}")
+                        # Get step summaries as change reasons
+                        for s in steps:
+                            if s.get("type") in ("content", "links"):
+                                changes.append(f"Fix: {s.get('action', '')}")
+                        for c in changes[:8]:
+                            st.markdown(f"<div style='font-size:0.8rem; color:#c8b4ff; padding:1px 0;'>+ {c}</div>", unsafe_allow_html=True)
 
-                        with st.expander("Copy HTML source"):
-                            st.code(bt.get("html", ""), language="html")
+                        # Preview
+                        st.markdown("---")
+                        st.markdown("**New text preview:**")
+                        st.markdown(bt.get("html", ""), unsafe_allow_html=True)
+
+                        # Copy HTML
+                        st.markdown("---")
+                        st.markdown("**Copy HTML source:**")
+                        st.code(bt.get("html", ""), language="html")
 
                         st.download_button(
                             "Download HTML",
