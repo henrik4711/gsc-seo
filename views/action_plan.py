@@ -571,50 +571,90 @@ def render():
                             )
 
                     # ── Intro text (above product grid) ──────────────
-                    st.markdown("**Intro text** (above product grid, 80-150 words)")
                     intro_key = f"_intro_text_{url_hash}"
+                    current_intro = _clean_body_text(page_r.get("intro_text") or "", 500)
 
-                    # Show current intro
-                    current_intro = page_r.get("intro_text") or ""
-                    if current_intro:
+                    # Check if AI plan mentions intro issues
+                    intro_needs_fix = False
+                    intro_reason = ""
+                    for s in steps:
+                        s_text = (s.get("action", "") + " " + s.get("detail", "") + " " + s.get("instruction", "")).lower()
+                        if "intro" in s_text or "introduction" in s_text or "first paragraph" in s_text:
+                            intro_needs_fix = True
+                            intro_reason = s.get("detail", "")
+                            break
+                    # Also check text_rewrites
+                    for rw in plan.get("text_rewrites", []):
+                        if "intro" in rw.get("section", "").lower():
+                            intro_needs_fix = True
+                            intro_reason = rw.get("current_problem", "")
+                            break
+                    # Also flag if intro is too short or empty
+                    if current_intro and len(current_intro.split()) < 30:
+                        intro_needs_fix = True
+                        intro_reason = f"Intro is only {len(current_intro.split())} words — too short"
+                    elif not current_intro:
+                        intro_needs_fix = True
+                        intro_reason = "No intro text found above product grid"
+
+                    if intro_needs_fix:
                         st.markdown(
-                            f"<div style='background:#1a0d0d; border:1px solid #2a2a40; border-radius:6px; padding:0.5rem; margin:0.3rem 0;'>"
-                            f"<div style='font-size:0.6rem; color:#ff4455; font-family:\"IBM Plex Mono\",monospace;'>CURRENT INTRO ({len(current_intro.split())} words)</div>"
-                            f"<div style='font-size:0.8rem; color:#9b9bb8;'>{current_intro[:500]}</div>"
+                            f"<div style='background:#1a0d0d; border-left:3px solid #ffaa33; padding:0.6rem; border-radius:0 6px 6px 0; margin:0.5rem 0;'>"
+                            f"<div style='font-size:0.85rem; color:#ffaa33; font-weight:600;'>Intro needs improvement</div>"
+                            f"<div style='font-size:0.8rem; color:#9b9bb8;'>{intro_reason}</div>"
                             f"</div>",
                             unsafe_allow_html=True,
                         )
 
-                    if st.button("Generate new intro text", key=f"btn_intro_{url_hash}"):
-                        with st.spinner("Generating intro..."):
-                            try:
-                                from utils.ai_generator import get_client, generate_intro_rewrite
-                                client = get_client(get_anthropic_key())
-                                result = generate_intro_rewrite(
-                                    client,
-                                    page_r.get("target_keywords", []),
-                                    current_intro or _clean_body_text(page_r, 500),
-                                    page_r.get("page_type", "category"),
-                                    url, site_context, language,
-                                )
-                                st.session_state[intro_key] = result
-                            except Exception as e:
-                                st.error(f"Error: {e}")
+                        if current_intro:
+                            st.markdown(
+                                f"<div style='background:#1a0d0d; border:1px solid #2a2a40; border-radius:6px; padding:0.5rem; margin:0.3rem 0;'>"
+                                f"<div style='font-size:0.6rem; color:#ff4455; font-family:\"IBM Plex Mono\",monospace;'>CURRENT INTRO ({len(current_intro.split())} words)</div>"
+                                f"<div style='font-size:0.8rem; color:#9b9bb8;'>{current_intro}</div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
 
-                    if intro_key in st.session_state:
-                        intro_res = st.session_state[intro_key]
-                        st.markdown(
-                            f"<div style='background:#0d1a0d; border:2px solid #33dd88; border-radius:6px; padding:0.8rem; margin:0.5rem 0;'>"
-                            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; margin-bottom:0.3rem;'>"
-                            f"NEW INTRO — PASTE ABOVE PRODUCT GRID</div>"
-                            f"<div style='font-size:0.9rem; color:#e8e8f0; line-height:1.6;'>{intro_res.get('optimized_text', '')}</div>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-                        kws = intro_res.get("keywords_integrated", [])
-                        if kws:
-                            st.markdown(f"<span style='font-size:0.7rem; color:#33dd88;'>Keywords: {', '.join(kws)}</span>", unsafe_allow_html=True)
-                        st.code(intro_res.get("optimized_text", ""), language="text")
+                        if st.button("Generate new intro text", key=f"btn_intro_{url_hash}"):
+                            with st.spinner("Generating intro..."):
+                                try:
+                                    from utils.ai_generator import get_client, generate_intro_rewrite
+                                    client = get_client(get_anthropic_key())
+                                    result = generate_intro_rewrite(
+                                        client,
+                                        page_r.get("target_keywords", []),
+                                        current_intro or _clean_body_text(page_r, 500),
+                                        page_r.get("page_type", "category"),
+                                        url, site_context, language,
+                                    )
+                                    st.session_state[intro_key] = result
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+
+                        if intro_key in st.session_state:
+                            intro_res = st.session_state[intro_key]
+                            st.markdown(
+                                f"<div style='background:#0d1a0d; border:2px solid #33dd88; border-radius:6px; padding:0.8rem; margin:0.5rem 0;'>"
+                                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; margin-bottom:0.3rem;'>"
+                                f"NEW INTRO — PASTE ABOVE PRODUCT GRID</div>"
+                                f"<div style='font-size:0.9rem; color:#e8e8f0; line-height:1.6;'>{intro_res.get('optimized_text', '')}</div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                            kws = intro_res.get("keywords_integrated", [])
+                            if kws:
+                                st.markdown(f"<span style='font-size:0.7rem; color:#33dd88;'>Keywords: {', '.join(kws)}</span>", unsafe_allow_html=True)
+                            st.code(intro_res.get("optimized_text", ""), language="text")
+                    else:
+                        # Intro is OK
+                        if current_intro:
+                            st.markdown(
+                                f"<div style='border-left:3px solid #33dd88; padding:0.5rem 0.8rem; margin:0.3rem 0;'>"
+                                f"<span style='color:#33dd88; font-size:0.8rem; font-weight:600;'>Intro text OK</span> "
+                                f"<span style='color:#6b6b8a; font-size:0.75rem;'>({len(current_intro.split())} words)</span>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
 
                     st.markdown("---")
 
