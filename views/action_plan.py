@@ -200,7 +200,7 @@ def render():
                             client = get_client(get_anthropic_key())
                             page_r = next((r for r in audit_results if r["url"] == url), {})
                             result = generate_page_implementation_plan(
-                                client, page_r, site_context, language,
+                                client, page_r, site_context, all_site_urls, language, topic_clusters,
                             )
                             st.session_state[plan_key] = result
                             st.rerun()
