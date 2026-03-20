@@ -51,6 +51,7 @@ AI_CACHE_PREFIXES = [
     "_gen_article_",      # AI-generated full articles
     "_rewrite_",          # AI-generated text rewrites
     "_bottom_text_",      # AI-generated category bottom text
+    "_intro_text_",       # AI-generated category intro text
     "art_outline_",       # AI article outlines
     "art_full_",          # AI full articles
     "art_meta_",          # AI article meta

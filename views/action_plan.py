@@ -570,6 +570,56 @@ def render():
                                 unsafe_allow_html=True,
                             )
 
+                    # ── Intro text (above product grid) ──────────────
+                    st.markdown("**Intro text** (above product grid, 80-150 words)")
+                    intro_key = f"_intro_text_{url_hash}"
+
+                    # Show current intro
+                    current_intro = page_r.get("intro_text") or ""
+                    if current_intro:
+                        st.markdown(
+                            f"<div style='background:#1a0d0d; border:1px solid #2a2a40; border-radius:6px; padding:0.5rem; margin:0.3rem 0;'>"
+                            f"<div style='font-size:0.6rem; color:#ff4455; font-family:\"IBM Plex Mono\",monospace;'>CURRENT INTRO ({len(current_intro.split())} words)</div>"
+                            f"<div style='font-size:0.8rem; color:#9b9bb8;'>{current_intro[:500]}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    if st.button("Generate new intro text", key=f"btn_intro_{url_hash}"):
+                        with st.spinner("Generating intro..."):
+                            try:
+                                from utils.ai_generator import get_client, generate_intro_rewrite
+                                client = get_client(get_anthropic_key())
+                                result = generate_intro_rewrite(
+                                    client,
+                                    page_r.get("target_keywords", []),
+                                    current_intro or _clean_body_text(page_r, 500),
+                                    page_r.get("page_type", "category"),
+                                    url, site_context, language,
+                                )
+                                st.session_state[intro_key] = result
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+
+                    if intro_key in st.session_state:
+                        intro_res = st.session_state[intro_key]
+                        st.markdown(
+                            f"<div style='background:#0d1a0d; border:2px solid #33dd88; border-radius:6px; padding:0.8rem; margin:0.5rem 0;'>"
+                            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; margin-bottom:0.3rem;'>"
+                            f"NEW INTRO — PASTE ABOVE PRODUCT GRID</div>"
+                            f"<div style='font-size:0.9rem; color:#e8e8f0; line-height:1.6;'>{intro_res.get('optimized_text', '')}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                        kws = intro_res.get("keywords_integrated", [])
+                        if kws:
+                            st.markdown(f"<span style='font-size:0.7rem; color:#33dd88;'>Keywords: {', '.join(kws)}</span>", unsafe_allow_html=True)
+                        st.code(intro_res.get("optimized_text", ""), language="text")
+
+                    st.markdown("---")
+
+                    # ── Bottom text (below product grid) ──────────────
+                    st.markdown("**Bottom text** (below product grid, 800-1500 words)")
                     bottom_key = f"_bottom_text_{url_hash}"
                     if st.button("Generate bottom text with products & links", key=f"btn_bottom_{url_hash}", type="primary"):
                         with st.spinner("Scraping products + generating bottom text... (~60 sec)"):
