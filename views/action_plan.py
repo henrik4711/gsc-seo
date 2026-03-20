@@ -68,6 +68,7 @@ def render():
         return
 
     audit_results = st.session_state["audit_results"]
+    topic_clusters = st.session_state.get("topic_clusters", {})
     site_context = st.session_state.get("site_context", "")
     language = st.session_state.get("content_language", "Swedish")
 
