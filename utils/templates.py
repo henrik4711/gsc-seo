@@ -80,15 +80,48 @@ It is the most important text for Google on category pages.
 - Add a FAQ section with <h2>Vanliga frågor om [category]</h2>
   and 3-5 H3 questions with <p> answers
 - Add product carousel cards for top recommended products
-- End with trust signals: mention 40+ years experience, discreet shipping,
-  sexologist customer service, Trustpilot rating
+- End with trust signals
+
+### INTERNAL LINKING RULES (critical for Google):
+- ONLY link to pages that belong in this page's topic cluster:
+  - Child/subcategory pages (vertical DOWN)
+  - Parent/hub page (vertical UP)
+  - Sibling pages in same category (horizontal)
+- Do NOT link to unrelated categories (e.g. don't link from /sexleksaker-for-man to /julkalender)
+- Every link must have descriptive anchor text that matches the target page's topic
+- REMOVE/don't include links that would confuse Google about this page's topic
+- Check the SUBCATEGORY and SIBLING URL lists — link to ALL of these, they are the cluster
+
+### E-E-A-T & GOOGLE HELPFUL CONTENT (critical):
+- **Experience**: Write as if from someone who has tested and used these products.
+  Use phrases like "vår erfarenhet visar", "vi har hjälpt tusentals kunder"
+- **Expertise**: Include specific, detailed advice that only an expert would know.
+  Not "vibratorer är bra" but "en G-punktsvibrator med böjd topp ger mer riktad stimulering"
+- **Authority**: Reference Mshop's 40+ years, sexologist-trained customer service,
+  Trustpilot rating. These are real authority signals.
+- **Trust**: Mention discreet shipping, secure payment, return policy, quality guarantees.
+  Build trust through specifics, not generic claims.
+
+### HELPFUL CONTENT (Google's standard):
+- Every paragraph must HELP the reader make a decision or learn something
+- Answer the questions a real customer would have BEFORE buying
+- Address common concerns and hesitations honestly
+- Compare product types to help the customer choose the RIGHT one
+- Include practical tips: how to use, how to clean, what material to choose
+- Don't just describe products — guide the customer through their decision
+
+### NUDGING & CONVERSION:
+- Subtle nudging toward trying products — never pushy
+- Address fears/taboos directly: "det är helt normalt att...", "många män upplever att..."
+- Social proof: "vår mest populära", "tusentals nöjda kunder"
+- Reduce friction: mention easy returns, discreet packaging, expert support
 
 ### Content Requirements:
 - 800-1500 words total
-- ALL relevant keywords must be naturally integrated
+- ALL relevant keywords must be naturally integrated (never stuffed)
 - ALL subcategory pages must be linked with descriptive anchor text
-- ALL related category pages (siblings) should be cross-linked
-- Use the EXACT URLs from the site URL list
+- ALL sibling category pages should be cross-linked where relevant
+- Use the EXACT URLs from the site URL list — do NOT invent URLs
 - Expert quotes in xmx--high-emphasis format
 - Product cards in xmx-carousel format with real product data
 
@@ -96,12 +129,16 @@ It is the most important text for Google on category pages.
 - Warm, knowledgeable, Swedish — like a trusted sexologist friend
 - "du/dig" addressing, slightly playful but respectful
 - Genuinely helpful — guide the customer, don't just list keywords
-- NEVER keyword-stuff or sound robotic
+- Normalize exploring sexuality — remove shame and stigma
+- NEVER keyword-stuff or sound robotic or AI-generated
 
 ### DO NOT:
 - Do NOT add <h1>
-- Do NOT use markdown
+- Do NOT use markdown — pure HTML only
 - Do NOT wrap in <html><body>
 - Do NOT invent URLs — use only real URLs from the site URL list
 - Do NOT write generic filler text — every sentence must add value
+- Do NOT link to pages outside this topic cluster
+- Do NOT use generic anchor text like "klicka här" or "läs mer"
+- Do NOT repeat the same information in different words (Google detects this)
 """
