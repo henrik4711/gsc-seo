@@ -255,6 +255,34 @@ def render():
         for name, is_set in env_list:
             status_row(name, is_set, "Set" if is_set else "Not set")
 
+        # Storage debug info
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### Disk Storage")
+        from utils.persistence import get_storage_info
+        storage = get_storage_info()
+        if storage.get("available"):
+            for key, info in storage.get("files", {}).items():
+                if key == "ai_cache":
+                    status_row(f"AI Cache ({info.get('count', 0)} files)", True, f"{info.get('size_mb', 0)} MB")
+                else:
+                    status_row(key, True, f"{info.get('size_mb', 0)} MB")
+            st.markdown(f"<div style='font-size:0.72rem; color:#6b6b8a;'>Total: {storage.get('total_mb', 0)} MB</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='color:#ff4455;'>Volume /data NOT available</div>", unsafe_allow_html=True)
+
+        # Playwright status
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### Scraper Status")
+        try:
+            from utils.page_scraper import _get_browser
+            browser = _get_browser()
+            if browser:
+                status_row("Playwright (Chrome)", True, "Ready")
+            else:
+                status_row("Playwright (Chrome)", False, "Unavailable — using requests fallback")
+        except Exception as e:
+            status_row("Playwright (Chrome)", False, f"Error: {str(e)[:50]}")
+
         if gsc_connected:
             df = st.session_state["gsc_data"]
 
