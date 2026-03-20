@@ -47,8 +47,14 @@ def _get_browser():
         )
         return _browser
     except Exception as e:
-        print(f"[scraper] Playwright unavailable, falling back to requests: {e}")
+        import traceback
+        _playwright_error = str(e)
+        print(f"[scraper] Playwright unavailable: {e}")
+        print(traceback.format_exc())
         _playwright_failed = True
+        # Store error for debug display
+        import streamlit as _st
+        _st.session_state["_playwright_error"] = f"{e}\n{traceback.format_exc()}"
         return None
 
 
@@ -85,7 +91,10 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
     browser = _get_browser()
     if not browser:
         # Fallback to requests if Playwright not available
+        result["_scraper"] = "requests (Playwright unavailable)"
         return _scrape_with_requests(url, timeout, result)
+
+    result["_scraper"] = "playwright"
 
     try:
         page = browser.new_page(

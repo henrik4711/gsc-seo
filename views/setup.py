@@ -274,14 +274,22 @@ def render():
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### Scraper Status")
         try:
-            from utils.page_scraper import _get_browser
-            browser = _get_browser()
-            if browser:
-                status_row("Playwright (Chrome)", True, "Ready")
+            from utils.page_scraper import _get_browser, _playwright_failed
+            if _playwright_failed:
+                pw_error = st.session_state.get("_playwright_error", "Unknown error")
+                status_row("Playwright (Chrome)", False, "FAILED — using requests fallback")
+                st.code(pw_error, language="text")
             else:
-                status_row("Playwright (Chrome)", False, "Unavailable — using requests fallback")
+                browser = _get_browser()
+                if browser:
+                    status_row("Playwright (Chrome)", True, "Ready")
+                else:
+                    pw_error = st.session_state.get("_playwright_error", "Unknown error")
+                    status_row("Playwright (Chrome)", False, "Unavailable")
+                    st.code(pw_error, language="text")
         except Exception as e:
-            status_row("Playwright (Chrome)", False, f"Error: {str(e)[:50]}")
+            status_row("Playwright (Chrome)", False, f"Import error: {str(e)[:80]}")
+            st.code(str(e), language="text")
 
         if gsc_connected:
             df = st.session_state["gsc_data"]
