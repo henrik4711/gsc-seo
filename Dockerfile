@@ -38,8 +38,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium
 
 COPY . .
+RUN chmod +x start.sh
 
-ENV PORT=8501
 EXPOSE 8501
 
-CMD ["sh", "-c", "streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true"]
+CMD ["./start.sh"]
