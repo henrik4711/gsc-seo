@@ -1,9 +1,7 @@
 FROM python:3.12-slim
 
 # Install system dependencies for Playwright/Chromium
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 \
     libatk-bridge2.0-0 \
     libdrm2 \
@@ -16,6 +14,10 @@ RUN apt-get update && apt-get install -y \
     libcairo2 \
     libatspi2.0-0 \
     libxshmfence1 \
+    libx11-xcb1 \
+    libxcb-dri3-0 \
+    libxkbcommon0 \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -24,14 +26,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright Chromium
-RUN playwright install chromium
+# Install Playwright Chromium browser
+RUN playwright install --with-deps chromium
 
 # Copy app
 COPY . .
 
-# Expose port
+# Railway sets PORT env var
+ENV PORT=8501
+
 EXPOSE 8501
 
-# Run
-CMD streamlit run app.py --server.port=$PORT --server.address=0.0.0.0
+CMD streamlit run app.py --server.port=${PORT} --server.address=0.0.0.0 --server.headless=true
