@@ -15,25 +15,40 @@ try:
 except ImportError:
     BS4_AVAILABLE = False
 
-# Playwright browser instance — reused across scrapes
+# Playwright browser instance — created on-demand, not at import
 _browser = None
 _playwright = None
+_playwright_failed = False  # Don't retry if it failed once
 
 
 def _get_browser():
-    """Get or create a shared Playwright browser instance."""
-    global _browser, _playwright
-    if _browser and _browser.is_connected():
-        return _browser
+    """Get or create a shared Playwright browser instance. Returns None if unavailable."""
+    global _browser, _playwright, _playwright_failed
+    if _playwright_failed:
+        return None
+    if _browser:
+        try:
+            if _browser.is_connected():
+                return _browser
+        except Exception:
+            pass
     try:
         from playwright.sync_api import sync_playwright
         _playwright = sync_playwright().start()
         _browser = _playwright.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--single-process",
+            ],
         )
         return _browser
-    except Exception:
+    except Exception as e:
+        print(f"[scraper] Playwright unavailable, falling back to requests: {e}")
+        _playwright_failed = True
         return None
 
 
