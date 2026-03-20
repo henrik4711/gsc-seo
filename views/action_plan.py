@@ -12,6 +12,18 @@ from utils.ui_helpers import shorten_url
 from utils.ai_generator import _clean_body_text
 
 
+def _get_ai_quality_badge(url):
+    """Get cached AI quality score if available."""
+    qkey = f"_quality_{hash(url) & 0xFFFFFF}"
+    q = st.session_state.get(qkey)
+    if not q:
+        return "<span style='color:#6b6b8a;'>AI text: —</span>"
+    verdict = q.get("verdict", "?")
+    score = q.get("score", 0)
+    v_color = {"REWRITE": "#ff4455", "IMPROVE": "#ffaa33", "KEEP": "#33dd88"}.get(verdict, "#6b6b8a")
+    return f"<span style='color:{v_color}; font-weight:600;'>AI text: {score}/10 ({verdict})</span>"
+
+
 def _sort_pages_by_impact(audit_results):
     """Sort audited pages by potential impact (lost clicks)."""
     pages = []
@@ -181,7 +193,8 @@ def render():
             f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600;'>{url}</div>"
             f"<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.2rem;'>"
             f"Meta: {meta_s if meta_s is not None else '?'}/100 · "
-            f"Content: {content_s if content_s is not None else '?'}/100 · "
+            f"Algo: {content_s if content_s is not None and content_s > 0 else '?'}/100 · "
+            f"{_get_ai_quality_badge(url)} · "
             f"Backlinks: <span style='color:{bl_color}; font-weight:600;'>{rd} domains ({bl_label})</span>"
             f"</div>"
             f"</div>",

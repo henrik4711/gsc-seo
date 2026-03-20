@@ -352,6 +352,33 @@ def render():
 
     results = st.session_state["audit_results"]
 
+    # ── Recalculate content scores (no re-scrape) ──────────────────
+    st.markdown("---")
+    if st.button("Recalculate content scores (no re-scrape)", key="btn_recalc"):
+        from utils.category_analyzer import audit_category_content
+        recalc_count = 0
+        with st.status("Recalculating...", expanded=True) as recalc_status:
+            for i, r in enumerate(results):
+                if r.get("body_text") or r.get("full_body_text"):
+                    try:
+                        cat_audit = audit_category_content(
+                            r,
+                            r.get("cluster_keywords", []),
+                            r.get("target_keywords", []),
+                            topic_clusters=st.session_state.get("topic_clusters"),
+                            page_authority=st.session_state.get("page_authority"),
+                        )
+                        r["content_score"] = cat_audit["score"]
+                        r["content_audit"] = cat_audit
+                        recalc_count += 1
+                    except Exception:
+                        pass
+            st.session_state["audit_results"] = results
+            from utils.persistence import save_key
+            save_key("audit_results")
+            recalc_status.update(label=f"Recalculated {recalc_count} pages", state="complete")
+        st.rerun()
+
     # ── AI Content Quality Check ─────────────────────────────────
     st.markdown("---")
     st.markdown("### AI Content Quality Check")
