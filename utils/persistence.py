@@ -40,6 +40,16 @@ PERSIST_KEYS = {
     "action_plan": "json",            # AI-generated action plan
 }
 
+# Prefixes for dynamic AI cache keys that should be persisted
+AI_CACHE_PREFIXES = [
+    "_quality_",          # AI content quality check results
+    "_ai_plan_",          # AI implementation plans per page
+    "_cluster_health_",   # AI cluster health evaluations
+    "_kw_filter_",        # AI keyword relevance filters
+]
+
+AI_CACHE_FILE = "ai_cache.json"
+
 
 def _volume_available() -> bool:
     """Check if the Railway volume is mounted."""
@@ -85,8 +95,56 @@ def save_key(key: str):
         print(f"[persistence] Failed to save {key}: {e}")
 
 
+def save_ai_cache():
+    """Save all dynamic AI results (quality checks, plans, etc.) to disk."""
+    if not _volume_available():
+        return
+    path = os.path.join(DATA_DIR, AI_CACHE_FILE)
+    cache = {}
+    for key in list(st.session_state.keys()):
+        if any(key.startswith(prefix) for prefix in AI_CACHE_PREFIXES):
+            val = st.session_state[key]
+            if val is not None:
+                cache[key] = val
+    if cache:
+        try:
+            def _convert(obj):
+                if hasattr(obj, 'item'):
+                    return obj.item()
+                if isinstance(obj, (set, frozenset)):
+                    return list(obj)
+                raise TypeError(f"Type {type(obj)}")
+
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=1, default=_convert)
+            print(f"[persistence] AI cache saved: {len(cache)} items")
+        except Exception as e:
+            print(f"[persistence] Failed to save AI cache: {e}")
+
+
+def load_ai_cache():
+    """Load cached AI results from disk into session state."""
+    if not _volume_available():
+        return
+    path = os.path.join(DATA_DIR, AI_CACHE_FILE)
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+        loaded = 0
+        for key, val in cache.items():
+            if key not in st.session_state:
+                st.session_state[key] = val
+                loaded += 1
+        if loaded:
+            print(f"[persistence] AI cache loaded: {loaded} items")
+    except Exception as e:
+        print(f"[persistence] Failed to load AI cache: {e}")
+
+
 def save_all():
-    """Save all persisted keys to disk."""
+    """Save all persisted keys + AI cache to disk."""
     if not _volume_available():
         return
     saved = []
@@ -94,6 +152,7 @@ def save_all():
         if key in st.session_state:
             save_key(key)
             saved.append(key)
+    save_ai_cache()
     if saved:
         print(f"[persistence] Saved: {', '.join(saved)}")
 
@@ -134,6 +193,9 @@ def load_all():
                     loaded.append(key)
         except Exception as e:
             print(f"[persistence] Failed to load {key}: {e}")
+
+    # Also load AI cache
+    load_ai_cache()
 
     st.session_state["_persistence_loaded"] = True
     if loaded:

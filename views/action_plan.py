@@ -139,6 +139,8 @@ def render():
                 progress.progress((i + 1) / 10)
 
             status.update(label="Plans generated", state="complete", expanded=False)
+            from utils.persistence import save_ai_cache
+            save_ai_cache()
         st.rerun()
 
     # ── Pagination ────────────────────────────────────────────────
@@ -216,6 +218,8 @@ def render():
                                 client, page_r, site_context, all_site_urls, language, topic_clusters,
                             )
                             st.session_state[plan_key] = result
+                            from utils.persistence import save_ai_cache
+                            save_ai_cache()
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error: {e}")

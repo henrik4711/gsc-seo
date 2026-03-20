@@ -456,6 +456,9 @@ def render():
                         progress_q.progress(min(1.0, (batch_start + 5) / len(unchecked)))
 
                     qstatus.update(label=f"Quality check complete", state="complete", expanded=False)
+                    # Save AI results to disk
+                    from utils.persistence import save_ai_cache
+                    save_ai_cache()
                 st.rerun()
 
     # Display quality results

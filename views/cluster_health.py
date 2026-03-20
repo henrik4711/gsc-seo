@@ -225,6 +225,8 @@ def render():
                 progress.progress((i + 1) / 5)
 
             status.update(label="Evaluation complete", state="complete", expanded=False)
+            from utils.persistence import save_ai_cache
+            save_ai_cache()
         st.rerun()
 
     # ── Cluster cards ─────────────────────────────────────────────
@@ -277,6 +279,8 @@ def render():
                             if cd:
                                 result = evaluate_cluster_health(client, cd, site_context, language, all_site_urls)
                                 st.session_state[health_key] = result
+                                from utils.persistence import save_ai_cache
+                                save_ai_cache()
                                 st.rerun()
                         except Exception as e:
                             st.error(f"Error: {e}")
