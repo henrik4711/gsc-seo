@@ -1,6 +1,6 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
-# Install system dependencies for Playwright/Chromium
+# Install Playwright system dependencies manually (avoid --with-deps font issues)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 \
     libatk-bridge2.0-0 \
@@ -17,24 +17,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx11-xcb1 \
     libxcb-dri3-0 \
     libxkbcommon0 \
+    libcups2 \
+    libdbus-1-3 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxrender1 \
+    libxtst6 \
+    libglib2.0-0 \
     fonts-liberation \
+    fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright Chromium browser
-RUN playwright install --with-deps chromium
+# Install ONLY Chromium browser (no --with-deps to avoid font package errors)
+RUN playwright install chromium
 
-# Copy app
 COPY . .
 
-# Railway sets PORT env var
 ENV PORT=8501
-
 EXPOSE 8501
 
 CMD streamlit run app.py --server.port=${PORT} --server.address=0.0.0.0 --server.headless=true
