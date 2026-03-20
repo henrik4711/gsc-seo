@@ -420,3 +420,7 @@ elif "All Tasks" in selected:
 elif "Implementation" in selected:
     from views import action_plan
     action_plan.render()
+
+# Auto-save any AI results generated during this render
+from utils.persistence import save_ai_cache
+save_ai_cache()

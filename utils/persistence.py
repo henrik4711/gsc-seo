@@ -46,6 +46,18 @@ AI_CACHE_PREFIXES = [
     "_ai_plan_",          # AI implementation plans per page
     "_cluster_health_",   # AI cluster health evaluations
     "_kw_filter_",        # AI keyword relevance filters
+    "impl_ai_",           # AI-generated content/meta/links per step
+    "link_ai_",           # AI-generated link paragraphs
+    "_gen_article_",      # AI-generated full articles
+    "_rewrite_",          # AI-generated text rewrites
+    "_bottom_text_",      # AI-generated category bottom text
+    "art_outline_",       # AI article outlines
+    "art_full_",          # AI full articles
+    "art_meta_",          # AI article meta
+    "kw_text_",           # AI keyword-optimized text
+    "kw_intro_",          # AI intro rewrites
+    "kw_faq_",            # AI FAQ generation
+    "link_result_",       # AI link text results
 ]
 
 AI_CACHE_FILE = "ai_cache.json"
@@ -93,6 +105,12 @@ def save_key(key: str):
                 json.dump(data, f, ensure_ascii=False, indent=1, default=_convert)
     except Exception as e:
         print(f"[persistence] Failed to save {key}: {e}")
+
+
+def save_ai_result(key: str, value):
+    """Save a single AI result to session state + immediately to disk cache."""
+    st.session_state[key] = value
+    save_ai_cache()
 
 
 def save_ai_cache():
