@@ -10,60 +10,73 @@ import streamlit as st
 from typing import Optional
 
 
-def _clean_body_text(page_data: dict, max_chars: int = 1500) -> str:
+def _strip_nav_text(text: str) -> str:
+    """Remove navigation/header/trust-bar text from any string."""
+    import re
+    if not text:
+        return ""
+
+    patterns = [
+        # Mshop trust bar / header fragments
+        r'\d+\s*(?:kr frakt|dagars? (?:leverans|öppet köp))[^.]*',
+        r'\d+\s*(?:omdömen|recensioner|stjärnor)[^.]*',
+        r'(?:Fri (?:frakt )?över|Spara upp till)\s*\d+[^.]*',
+        r'100%\s*diskret[^.]*',
+        r'(?:Shoppa efter (?:märke|stil)\s*)+',
+        r'(?:Alla\s+)?(?:erbjudanden[a-z]*|Kategorier|Produkter|Populära (?:sökord|produkter)|Sök förslag)\s*',
+        r'(?:Varukorg|Vinterrea|REA)\s*',
+        r'Mshop\.se\s*(?:0\s*)?',
+        r'(?:Hjälp & Kontakt|Våra butiker)\s*',
+        r'(?:Intimleksaker|Underkläder & Förspel|Hälsotek)\s*',
+        r'(?:Basques & Bodies|Klänningar & Kjolar|Catsuits & Bodystockings)\s*',
+        r'(?:Sexiga Underkläder|Bondage|Rollspel)\s*',
+        r'(?:Effekt|Kroppsdel|Hälsa & Sexhjälpmedel)\s*',
+        r'Njutning på dina villkor\.?\s*',
+        r'Alla Sexdockor\s*',
+        r'(?:Lägg i varukorg|Köp hela kitet)\s*',
+    ]
+    cleaned = text
+    for pattern in patterns:
+        cleaned = re.sub(pattern, ' ', cleaned, flags=re.IGNORECASE)
+
+    # Remove repeated short capitalized fragments (menu items)
+    cleaned = re.sub(r'(?:\b[A-ZÅÄÖ][a-zåäö]+\b\s+){5,}', ' ', cleaned)
+    # Clean multiple spaces
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
+    return cleaned
+
+
+def _clean_body_text(page_data, max_chars: int = 1500) -> str:
     """
-    Get clean editorial text from a page, avoiding navigation/menu/footer pollution.
-    Priority: intro_text > bottom_text > body_text (with nav stripped).
+    Get clean editorial text from a page dict or raw string.
+    Strips navigation, header, trust-bar text.
     """
+    # Accept raw string too
+    if isinstance(page_data, str):
+        return _strip_nav_text(page_data)[:max_chars]
+
     # Best: use specific editorial text fields
     intro = page_data.get("intro_text") or ""
     bottom = page_data.get("bottom_text") or ""
     if intro or bottom:
         combined = (intro + "\n\n" + bottom).strip()
-        return combined[:max_chars]
+        return _strip_nav_text(combined)[:max_chars]
 
     body = page_data.get("body_text") or page_data.get("full_body_text") or ""
     if not body:
         return ""
 
-    # Strip known menu/nav patterns from the text
+    cleaned = _strip_nav_text(body)
+
+    # Find where real content starts — first sentence with >40 chars
     import re
-    # Remove runs of short menu items (capitalized words separated by spaces, no sentences)
-    # Pattern: sequences of 2-4 word fragments without periods
-    nav_patterns = [
-        r'(?:Shoppa efter (?:märke|stil)\s*)+',
-        r'(?:Alla\s+)?(?:erbjudanden[a-z]*|Kategorier|Produkter|Populära (?:sökord|produkter)|Sök förslag)\s*',
-        r'(?:Varukorg|Vinterrea|REA|Mshop\.se)\s*',
-        r'(?:Hjälp & Kontakt|Våra butiker)\s*',
-        r'(?:Intimleksaker|Underkläder & Förspel|Hälsotek)\s*',
-        r'\d+ kr frakt[^.]*',
-        r'\d+\*? dagar (?:leverans|öppet köp)[^.]*',
-        r'stjärnor på Trustpilot\s*',
-        r'(?:Basques & Bodies|Klänningar & Kjolar|Catsuits & Bodystockings)\s*',
-        r'(?:Sexiga Underkläder|Bondage|Rollspel)\s*',
-        r'(?:Effekt|Kroppsdel|Hälsa & Sexhjälpmedel)\s*',
-    ]
-    cleaned = body
-    for pattern in nav_patterns:
-        cleaned = re.sub(pattern, ' ', cleaned, flags=re.IGNORECASE)
-
-    # Remove repeated short fragments (menu-style: "Word Word Word Word")
-    # A line of many 1-2 word items with no punctuation = menu
-    cleaned = re.sub(r'(?:\b[A-ZÅÄÖ][a-zåäö]+\b\s+){5,}', ' ', cleaned)
-
-    # Clean multiple spaces
-    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
-
-    # Find where real content starts — first sentence with >20 chars
     sentences = re.split(r'(?<=[.!?])\s+', cleaned)
-    start_idx = 0
-    for i, sent in enumerate(sentences):
-        if len(sent) > 40 and not any(nav in sent.lower() for nav in ['shoppa', 'varukorg', 'mshop.se', 'populära']):
-            start_idx = cleaned.index(sent) if sent in cleaned else 0
-            break
+    for sent in sentences:
+        if len(sent) > 40 and not any(nav in sent.lower() for nav in ['shoppa', 'varukorg', 'mshop.se', 'populära', 'omdömen']):
+            idx = cleaned.index(sent) if sent in cleaned else 0
+            return cleaned[idx:idx + max_chars].strip()
 
-    result = cleaned[start_idx:start_idx + max_chars]
-    return result.strip()
+    return cleaned[:max_chars].strip()
 
 
 def _parse_ai_json(message) -> dict:
