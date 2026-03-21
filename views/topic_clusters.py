@@ -21,22 +21,90 @@ def render():
 
     df = st.session_state["gsc_data"]
 
+    # ── Clustering method ─────────────────────────────────────────
+    st.markdown(
+        "<div style='background:#0d0d15; border:2px solid #5533ff; border-radius:8px; padding:1rem; margin-bottom:1rem;'>"
+        "<div style='font-family:\"Syne\",sans-serif; font-size:1rem; font-weight:700; color:#c8b4ff; margin-bottom:0.5rem;'>"
+        "Choose clustering method</div>"
+        "<div style='font-size:0.85rem; color:#9b9bb8;'>"
+        "<strong>AI Clustering (recommended)</strong> — Claude analyzes all keywords semantically and groups by topic + intent. "
+        "40-80 meaningful clusters.<br>"
+        "<strong>Algorithm Clustering</strong> — word-overlap grouping. Fast but creates 200-500 noisy clusters.</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
     col1, col2 = st.columns([1, 1])
+
     with col1:
-        min_cluster = st.number_input("Min. queries per cluster", value=5, min_value=2, max_value=20)
+        if st.button("Build AI Clusters (recommended)", type="primary", use_container_width=True):
+            from config import get_anthropic_key, has_anthropic_key
+            if not has_anthropic_key():
+                st.warning("Add Anthropic API key in Setup")
+            else:
+                with st.spinner("AI analyzing keywords and building clusters... (~60 sec)"):
+                    try:
+                        from utils.ai_generator import get_client, ai_generate_clusters
+                        client = get_client(get_anthropic_key())
+                        site_context = st.session_state.get("site_context", "")
+                        language = st.session_state.get("content_language", "Swedish")
+
+                        # Prepare keyword data for AI
+                        kw_data = df.groupby("query").agg(
+                            impressions=("impressions", "sum"),
+                            clicks=("clicks", "sum"),
+                            pages=("page", lambda x: list(x.unique()[:3])),
+                            avg_position=("position", "mean"),
+                        ).sort_values("impressions", ascending=False).head(250)
+
+                        keywords_for_ai = []
+                        for kw, row in kw_data.iterrows():
+                            keywords_for_ai.append({
+                                "keyword": kw,
+                                "impressions": int(row["impressions"]),
+                                "clicks": int(row["clicks"]),
+                                "pages": row["pages"],
+                                "position": round(float(row["avg_position"]), 1),
+                            })
+
+                        result = ai_generate_clusters(client, keywords_for_ai, site_context, language)
+                        st.session_state["topic_clusters"] = result
+
+                        # Content gaps + roadmap
+                        from utils.topic_clusters import identify_content_gaps, generate_content_roadmap
+                        auth = st.session_state.get("page_authority")
+                        gaps = identify_content_gaps(result["clusters"], auth)
+                        st.session_state["content_gaps"] = gaps
+
+                        roadmap = generate_content_roadmap(
+                            clusters=result["clusters"],
+                            page_topics=result["page_topics"],
+                            gsc_data=df,
+                            authority_data=auth,
+                        )
+                        st.session_state["content_roadmap"] = roadmap
+
+                        from utils.persistence import save_key
+                        save_key("topic_clusters")
+                        save_key("content_roadmap")
+
+                        if result.get("ai_summary"):
+                            st.success(result["ai_summary"])
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
     with col2:
-        if st.button("Build Topic Clusters", type="primary", use_container_width=True):
+        min_cluster = st.number_input("Min. queries per cluster", value=5, min_value=2, max_value=20)
+        if st.button("Build Algorithm Clusters (fast)", use_container_width=True):
             with st.spinner("Analyzing keyword topics..."):
                 from utils.topic_clusters import build_topic_clusters, identify_content_gaps, generate_content_roadmap
                 result = build_topic_clusters(df, min_cluster_size=min_cluster)
                 st.session_state["topic_clusters"] = result
 
-                # Content gaps
                 auth = st.session_state.get("page_authority")
                 gaps = identify_content_gaps(result["clusters"], auth)
                 st.session_state["content_gaps"] = gaps
 
-                # Content roadmap (auto-generate)
                 roadmap = generate_content_roadmap(
                     clusters=result["clusters"],
                     page_topics=result["page_topics"],
@@ -45,7 +113,6 @@ def render():
                 )
                 st.session_state["content_roadmap"] = roadmap
 
-                # Auto-save to volume
                 from utils.persistence import save_key
                 save_key("topic_clusters")
                 save_key("content_roadmap")

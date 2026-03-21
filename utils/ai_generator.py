@@ -841,6 +841,138 @@ Write in {language}
     return _parse_ai_json(message)
 
 
+def ai_generate_clusters(
+    client: anthropic.Anthropic,
+    keywords_data: list,
+    site_context: str = "",
+    language: str = "Swedish",
+) -> dict:
+    """
+    AI generates topic clusters from keyword data.
+    Replaces word-overlap algorithm with semantic understanding.
+    Returns format compatible with the rest of the system.
+    """
+    prompt = f"""You are a senior SEO architect. Group these search keywords into topic clusters for an e-commerce site.
+
+## SITE CONTEXT
+{site_context}
+Language: {language}
+
+## KEYWORDS (sorted by impressions — top search demand)
+{json.dumps(keywords_data[:250], ensure_ascii=False, indent=1)}
+
+## YOUR TASK
+Group these keywords into 40-80 topic clusters. Each cluster = one topic that should have its own hub page.
+
+Rules:
+1. Each cluster must have a clear COMMERCIAL or INFORMATIONAL intent
+2. Brand keywords (site name, store names) should NOT be their own cluster — assign to relevant product clusters
+3. Don't create overlapping clusters — each keyword belongs to exactly ONE cluster
+4. Cluster names should be the main product category or topic (e.g. "vibratorer", "dildos", "sexleksaker för män")
+5. Separate by USER INTENT: "köpa vibrator" and "hur fungerar en vibrator" are different intents but same cluster
+6. A cluster should have at least 3 keywords to be meaningful
+7. Include which page(s) currently rank for each keyword (from the data)
+
+## OUTPUT (JSON):
+{{
+    "clusters": [
+        {{
+            "topic": "Cluster name (the main topic)",
+            "search_intent": "commercial|informational|mixed",
+            "core_terms": ["term1", "term2", "term3"],
+            "queries": ["full keyword 1", "full keyword 2"],
+            "pages": [
+                {{
+                    "page": "URL that currently ranks for keywords in this cluster",
+                    "query_count": 0,
+                    "relevance": "primary|secondary"
+                }}
+            ],
+            "suggested_hub_url": "The URL that SHOULD be the hub for this cluster",
+            "total_impressions": 0,
+            "total_clicks": 0
+        }}
+    ],
+    "unassigned_keywords": ["keywords that don't fit any cluster"],
+    "cluster_count": 0,
+    "summary": "2-3 sentences about the cluster structure"
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=8000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    ai_result = _parse_ai_json(message)
+
+    # Convert AI format to system format (compatible with rest of pipeline)
+    system_clusters = []
+    page_topics = {}
+
+    for c in ai_result.get("clusters", []):
+        pages_list = []
+        for p in c.get("pages", []):
+            page_url = p.get("page", "")
+            if not page_url:
+                continue
+            pages_list.append({
+                "page": page_url,
+                "query_count": p.get("query_count", len(c.get("queries", []))),
+                "total_clicks": 0,
+                "total_impressions": 0,
+                "avg_position": 0,
+            })
+
+            # Build page_topics mapping
+            if page_url not in page_topics:
+                page_topics[page_url] = []
+            page_topics[page_url].append({
+                "topic": c.get("topic", ""),
+                "queries_in_topic": p.get("query_count", 0),
+                "clicks": 0,
+            })
+
+        system_clusters.append({
+            "topic": c.get("topic", ""),
+            "core_terms": c.get("core_terms", []),
+            "query_count": len(c.get("queries", [])),
+            "queries": c.get("queries", []),
+            "total_clicks": c.get("total_clicks", 0),
+            "total_impressions": c.get("total_impressions", 0),
+            "pages": pages_list,
+            "page_count": len(pages_list),
+            "is_split": len(pages_list) > 3,
+            "search_intent": c.get("search_intent", "mixed"),
+            "suggested_hub_url": c.get("suggested_hub_url", ""),
+        })
+
+    # Build overlap matrix
+    overlap_matrix = []
+    for url, topics in page_topics.items():
+        topic_names = set(t["topic"] for t in topics)
+        for other_url, other_topics in page_topics.items():
+            if other_url <= url:
+                continue
+            other_names = set(t["topic"] for t in other_topics)
+            shared = topic_names & other_names
+            if shared:
+                overlap_matrix.append({
+                    "page_1": url,
+                    "page_2": other_url,
+                    "shared_topics": len(shared),
+                    "topic_names": list(shared),
+                })
+
+    return {
+        "clusters": system_clusters,
+        "page_topics": page_topics,
+        "overlap_matrix": overlap_matrix,
+        "ai_summary": ai_result.get("summary", ""),
+        "unassigned_keywords": ai_result.get("unassigned_keywords", []),
+    }
+
+
 def evaluate_cluster_health(
     client: anthropic.Anthropic,
     cluster_data: dict,
