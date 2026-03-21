@@ -300,7 +300,12 @@ def _build_new_content(content_roadmap):
             "Cluster": article.get("cluster_topic", ""),
         })
 
-    return pd.DataFrame(rows).sort_values("Est. Impressions", ascending=False)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    if "Est. Impressions" in df.columns:
+        return df.sort_values("Est. Impressions", ascending=False)
+    return df
 
 
 def render():
