@@ -286,6 +286,51 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
         result["h2s"] = [h.get_text(strip=True) for h in soup.find_all("h2")][:15]
         result["h3s"] = [h.get_text(strip=True) for h in soup.find_all("h3")][:15]
 
+        # Canonical
+        canonical = soup.find("link", attrs={"rel": "canonical"})
+        if canonical:
+            result["canonical"] = canonical.get("href", "")
+
+        # Schema types
+        for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+            try:
+                data = json.loads(tag.string or "{}")
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) and "@type" in item:
+                            result["schema_types"].append(item["@type"])
+                elif "@type" in data:
+                    result["schema_types"].append(data["@type"])
+                if isinstance(data, dict) and "@graph" in data:
+                    for item in data["@graph"]:
+                        if isinstance(item, dict) and "@type" in item:
+                            result["schema_types"].append(item["@type"])
+            except Exception:
+                pass
+
+        # Links from content area (before decomposing nav)
+        content_for_links = (
+            BeautifulSoup(resp.text, "html.parser").find("div", class_="xmx-page-content")
+            or soup.find("main")
+            or soup.body
+        )
+        domain = urlparse(url).netloc
+        seen_urls = set()
+        if content_for_links:
+            for a in content_for_links.find_all("a", href=True):
+                href = a["href"]
+                anchor = a.get_text(strip=True)[:80]
+                if href.startswith("/") and not href.startswith("//"):
+                    href = f"https://{domain}{href}"
+                if href.startswith("http") and domain in href:
+                    norm = href.rstrip("/").lower().split("?")[0].split("#")[0]
+                    if norm not in seen_urls:
+                        seen_urls.add(norm)
+                        result["internal_links"].append({"url": href, "anchor": anchor})
+                elif href.startswith("http"):
+                    result["external_links"] += 1
+        result["internal_link_count"] = len(result["internal_links"])
+
         # Body text from content area
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
             tag.decompose()
@@ -294,6 +339,12 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
             raw = re.sub(r'\s+', ' ', main.get_text(separator=" ", strip=True))
             result["body_text"] = raw[:8000]
             result["word_count"] = len(raw.split())
+
+        # Images
+        if main:
+            result["images_without_alt"] = sum(
+                1 for img in main.find_all("img") if not img.get("alt", "").strip()
+            )
 
     except Exception as e:
         result["error"] = str(e)

@@ -44,7 +44,7 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
 
     # ── 1. URL pattern matching ───────────────────────────────
     product_patterns = ["/products/", "/produkt/", "/product/", "/p/"]
-    category_patterns = ["/kategori/", "/category/", "/collections/", "/c/"]
+    category_patterns = ["/kategori/", "/category/", "/collections/", "/c/", "/alla/"]
     blog_patterns = ["/blog/", "/blogg/", "/artikel/", "/guide/", "/tips/", "/magazin/"]
     faq_patterns = ["/faq/", "/fragor/", "/hjalp/", "/help/", "/support/"]
 

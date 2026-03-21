@@ -23,7 +23,7 @@ def render():
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        min_cluster = st.number_input("Min. queries per cluster", value=2, min_value=2, max_value=10)
+        min_cluster = st.number_input("Min. queries per cluster", value=5, min_value=2, max_value=20)
     with col2:
         if st.button("Build Topic Clusters", type="primary", use_container_width=True):
             with st.spinner("Analyzing keyword topics..."):
