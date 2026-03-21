@@ -126,12 +126,17 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             result["signals"].append("Has add-to-cart + price + few links = single product page")
 
         # FAQ signals: question patterns in headings
-        # Only override to FAQ if not already classified by URL pattern
+        # Only classify as FAQ if MOST headings are questions (not just a FAQ section in bottom text)
         question_h2s = sum(1 for h in h2s if h.startswith(("vad ", "hur ", "vilk", "när ", "var ", "what ", "how ", "why ", "when ", "?")) or "?" in h)
-        if question_h2s >= 3:
+        if h2_count > 0 and question_h2s >= 3 and question_h2s / h2_count > 0.5:
             if result["page_type"] == "unknown":
                 result["page_type"] = "faq"
-            result["signals"].append(f"{question_h2s} question-style H2s")
+            result["signals"].append(f"{question_h2s}/{h2_count} H2s are questions = FAQ page")
+
+        # Single URL segment with many links = landing/category page
+        if result["page_type"] == "unknown" and len(segments) == 1 and internal_links > 5:
+            result["page_type"] = "category"
+            result["signals"].append(f"Single URL segment + {internal_links} links = landing page")
 
         # ── 4. URL depth heuristic ────────────────────────────
         if result["page_type"] == "unknown":
