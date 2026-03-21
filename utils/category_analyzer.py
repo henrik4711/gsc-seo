@@ -560,8 +560,11 @@ def audit_category_content(
     intro_words = page_data.get("intro_word_count", 0)
     bottom_text = page_data.get("bottom_text", "")
     bottom_words = page_data.get("bottom_word_count", 0)
+    full_text = (page_data.get("full_body_text") or page_data.get("body_text") or "").lower()
+    editorial_text = (intro_text + " " + bottom_text).lower()
+    if not editorial_text.strip() and full_text:
+        editorial_text = full_text
     total_editorial = page_data.get("total_editorial_words", 0)
-    # Fallback: if no editorial word count, use body_text word count
     if total_editorial == 0:
         total_editorial = page_data.get("word_count", 0) or len(full_text.split())
     h1 = (page_data.get("h1") or "").lower()
@@ -570,11 +573,6 @@ def audit_category_content(
     has_faq = page_data.get("has_faq", False)
     has_guide = page_data.get("has_buying_guide", False)
     product_count = page_data.get("product_count", 0)
-    full_text = (page_data.get("full_body_text") or page_data.get("body_text") or "").lower()
-    editorial_text = (intro_text + " " + bottom_text).lower()
-    # Fallback: if no editorial text, use full body text
-    if not editorial_text.strip() and full_text:
-        editorial_text = full_text
 
     # Filter keywords to only those relevant to this page's topic
     # Prevents "dildo" showing as missing on /sexleksaker-for-man
