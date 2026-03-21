@@ -539,3 +539,193 @@ Evaluate the OVERALL site health. Focus on:
                     f"</div>",
                     unsafe_allow_html=True,
                 )
+
+    # ── AI Plan Validation ────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### AI Plan Validation")
+    st.markdown(
+        "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+        "AI reviews ALL generated implementation plans against the site issues found above. "
+        "Checks: Will these plans actually fix the problems? Is anything missing? "
+        "Do any plans conflict with each other? Is the priority order correct?</p>",
+        unsafe_allow_html=True,
+    )
+
+    # Check how many plans exist
+    plan_count = sum(1 for k in st.session_state if k.startswith("_ai_plan_"))
+    plans_data = {}
+    for k, v in st.session_state.items():
+        if k.startswith("_ai_plan_") and isinstance(v, dict) and not v.get("error"):
+            # Find the URL for this plan
+            for r in audit_results:
+                if f"_ai_plan_{stable_hash(r['url'])}" == k:
+                    plans_data[r["url"]] = v
+                    break
+
+    st.markdown(f"**{len(plans_data)} implementation plans generated** ({plan_count} total including errors)")
+
+    if len(plans_data) == 0:
+        st.info("Generate implementation plans first in **14. Implementation** → then come back here to validate.")
+    elif validation_key not in st.session_state:
+        st.info("Run **AI Structure Validation** above first — the plan validation needs the site issues to check against.")
+    else:
+        plan_validation_key = "_plan_validation"
+
+        if st.button("Validate all implementation plans against site issues", type="primary", key="btn_validate_plans"):
+            with st.spinner("AI cross-checking all plans against site issues... (~30 sec)"):
+                try:
+                    from utils.ai_generator import get_client, _parse_ai_json
+                    client = get_client(get_anthropic_key())
+
+                    # Collect site issues from validation
+                    site_issues = st.session_state.get(validation_key, {})
+
+                    # Summarize all plans
+                    plan_summaries = []
+                    for url, plan in list(plans_data.items())[:20]:
+                        steps_summary = []
+                        for s in plan.get("steps", []):
+                            steps_summary.append(f"- [{s.get('type','')}] {s.get('action','')}")
+                        new_content = [nc.get("suggested_title", "") for nc in plan.get("new_content_suggestions", [])]
+                        rewrites = [rw.get("section", "") for rw in plan.get("text_rewrites", [])]
+
+                        plan_summaries.append({
+                            "url": url,
+                            "primary_keyword": plan.get("primary_keyword", ""),
+                            "steps": steps_summary[:6],
+                            "new_content": new_content,
+                            "rewrites": rewrites,
+                            "meta_changed": plan.get("meta_changed", False),
+                        })
+
+                    prompt = f"""You are a senior SEO strategist doing a final review.
+
+## SITE ISSUES FOUND (from site structure analysis)
+Health score: {site_issues.get('overall_health_score', '?')}/100
+Critical issues: {json.dumps(site_issues.get('critical_issues', []))}
+Structural problems: {json.dumps(site_issues.get('structural_problems', []))}
+Cluster issues: {json.dumps(site_issues.get('cluster_issues', []))}
+Link issues: {json.dumps(site_issues.get('link_issues', []))}
+Priority actions recommended: {json.dumps([a.get('action','') for a in site_issues.get('priority_actions', [])])}
+
+## IMPLEMENTATION PLANS GENERATED ({len(plan_summaries)} pages)
+{json.dumps(plan_summaries, ensure_ascii=False, indent=1)}
+
+## YOUR TASK
+Cross-check the implementation plans against the site issues. Answer:
+
+1. **Coverage**: Do the plans address ALL critical issues? Which critical issues are NOT covered by any plan?
+2. **Conflicts**: Do any plans conflict with each other? (e.g., two plans adding the same keyword, competing links)
+3. **Priority**: Is the order correct? Should any page be fixed before others?
+4. **Missing**: What actions are needed that NO plan includes? (e.g., orphan page integration, cluster consolidation)
+5. **Risks**: Will any recommended change potentially hurt rankings?
+6. **Sequence**: What is the correct order to implement these changes?
+
+## OUTPUT (JSON):
+{{
+    "plans_cover_issues": true/false,
+    "coverage_score": 0,
+    "uncovered_issues": ["critical issue not addressed by any plan"],
+    "conflicts": [{{"plan_a": "url", "plan_b": "url", "conflict": "description"}}],
+    "priority_corrections": ["plan X should be done before plan Y because..."],
+    "missing_actions": ["action needed but not in any plan"],
+    "risks": ["potential risk from recommended changes"],
+    "recommended_sequence": [
+        {{"order": 1, "action": "what to do first", "urls": ["url1"], "reason": "why first"}}
+    ],
+    "overall_verdict": "2-3 sentences: are these plans correct and complete?",
+    "confidence": 0
+}}"""
+
+                    message = client.messages.create(
+                        model="claude-sonnet-4-20250514",
+                        max_tokens=3000,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    result = _parse_ai_json(message)
+                    st.session_state[plan_validation_key] = result
+                    from utils.persistence import save_ai_cache
+                    save_ai_cache()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        if plan_validation_key in st.session_state:
+            pv = st.session_state[plan_validation_key]
+            conf = pv.get("confidence", 0)
+            cov = pv.get("coverage_score", 0)
+            covers = pv.get("plans_cover_issues", False)
+
+            cov_color = "#33dd88" if cov >= 70 else "#ffaa33" if cov >= 40 else "#ff4455"
+            verdict_border = "#33dd88" if covers else "#ff4455"
+
+            # Verdict
+            st.markdown(
+                f"<div style='background:#0d0d15; border:2px solid {verdict_border}; border-radius:8px; padding:1rem; margin:0.5rem 0;'>"
+                f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
+                f"<div>"
+                f"<div style='font-size:0.95rem; color:#e8e8f0; font-weight:600; margin-bottom:0.3rem;'>"
+                f"{'PLANS ARE CORRECT' if covers else 'PLANS HAVE GAPS'}</div>"
+                f"<div style='font-size:0.85rem; color:#9b9bb8;'>{pv.get('overall_verdict', '')}</div>"
+                f"</div>"
+                f"<div style='text-align:center;'>"
+                f"<div style='font-size:2rem; font-weight:800; color:{cov_color};'>{cov}%</div>"
+                f"<div style='font-size:0.6rem; color:#6b6b8a;'>COVERAGE</div>"
+                f"</div>"
+                f"</div></div>",
+                unsafe_allow_html=True,
+            )
+
+            # Uncovered issues
+            uncovered = pv.get("uncovered_issues", [])
+            if uncovered:
+                st.markdown("**Issues NOT covered by any plan:**")
+                for u in uncovered:
+                    st.markdown(f"<div style='color:#ff4455; font-size:0.85rem;'>✗ {u}</div>", unsafe_allow_html=True)
+
+            # Conflicts
+            conflicts = pv.get("conflicts", [])
+            if conflicts:
+                st.markdown("**Plan conflicts:**")
+                for c in conflicts:
+                    st.markdown(
+                        f"<div style='color:#ffaa33; font-size:0.85rem;'>"
+                        f"⚠ {c.get('plan_a','')} vs {c.get('plan_b','')}: {c.get('conflict','')}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            # Missing actions
+            missing = pv.get("missing_actions", [])
+            if missing:
+                st.markdown("**Missing actions (not in any plan):**")
+                for m in missing:
+                    st.markdown(f"<div style='color:#c8b4ff; font-size:0.85rem;'>+ {m}</div>", unsafe_allow_html=True)
+
+            # Risks
+            risks = pv.get("risks", [])
+            if risks:
+                st.markdown("**Risks:**")
+                for r in risks:
+                    st.markdown(f"<div style='color:#ffaa33; font-size:0.85rem;'>⚠ {r}</div>", unsafe_allow_html=True)
+
+            # Recommended sequence
+            sequence = pv.get("recommended_sequence", [])
+            if sequence:
+                st.markdown("**Recommended implementation sequence:**")
+                for s in sequence:
+                    urls = ", ".join(s.get("urls", [])[:3])
+                    st.markdown(
+                        f"<div style='background:#12121f; border-left:3px solid #5533ff; padding:0.4rem 0.8rem; "
+                        f"margin:0.3rem 0; border-radius:0 4px 4px 0;'>"
+                        f"<span style='color:#5533ff; font-weight:700;'>Step {s.get('order', '?')}:</span> "
+                        f"<span style='color:#e8e8f0; font-size:0.85rem;'>{s.get('action', '')}</span><br>"
+                        f"<span style='color:#6b6b8a; font-size:0.72rem;'>{urls} — {s.get('reason', '')}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            # Priority corrections
+            corrections = pv.get("priority_corrections", [])
+            if corrections:
+                st.markdown("**Priority corrections:**")
+                for c in corrections:
+                    st.markdown(f"<div style='color:#ffaa33; font-size:0.85rem;'>→ {c}</div>", unsafe_allow_html=True)
