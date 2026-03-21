@@ -540,9 +540,364 @@ Evaluate the OVERALL site health. Focus on:
                     unsafe_allow_html=True,
                 )
 
+    # ── AI Ideal Structure ────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Step 2: Ideal Site Structure")
+    st.markdown(
+        "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+        "AI designs the OPTIMAL site structure based on what users actually search for (GSC data). "
+        "Not based on current URLs — based on keyword demand, search intent, and topical authority.</p>",
+        unsafe_allow_html=True,
+    )
+
+    ideal_key = "_ideal_structure"
+
+    if st.button("Generate ideal site structure", type="primary", key="btn_ideal"):
+        if not has_anthropic_key():
+            st.warning("Add Anthropic API key")
+        else:
+            with st.spinner("AI designing optimal site architecture... (~60 sec)"):
+                try:
+                    from utils.ai_generator import get_client, _parse_ai_json
+                    client = get_client(get_anthropic_key())
+
+                    # Get top keywords by impressions
+                    top_keywords = []
+                    if gsc_data is not None and hasattr(gsc_data, "groupby"):
+                        kw_summary = gsc_data.groupby("query").agg(
+                            impressions=("impressions", "sum"),
+                            clicks=("clicks", "sum"),
+                            pages=("page", "nunique"),
+                            avg_pos=("position", "mean"),
+                        ).sort_values("impressions", ascending=False).head(100)
+                        for kw, row in kw_summary.iterrows():
+                            top_keywords.append({
+                                "keyword": kw,
+                                "impressions": int(row["impressions"]),
+                                "clicks": int(row["clicks"]),
+                                "pages_ranking": int(row["pages"]),
+                                "avg_position": round(float(row["avg_pos"]), 1),
+                            })
+
+                    # Get current page types summary
+                    page_types = df_structure["Page Type"].value_counts().to_dict()
+
+                    # Current clusters summary
+                    current_clusters = [
+                        {"topic": c.get("topic", ""), "queries": c.get("query_count", 0),
+                         "pages": c.get("page_count", 0), "impressions": c.get("total_impressions", 0)}
+                        for c in topic_clusters.get("clusters", [])[:30]
+                    ]
+
+                    # Site issues
+                    site_issues = st.session_state.get(validation_key, {})
+
+                    prompt = f"""You are a senior SEO architect designing the OPTIMAL site structure for an e-commerce webshop.
+
+## SITE CONTEXT
+{st.session_state.get('site_context', '')}
+
+## CURRENT SITE PROBLEMS (score: {site_issues.get('overall_health_score', '?')}/100)
+{json.dumps(site_issues.get('critical_issues', []), ensure_ascii=False)}
+{json.dumps(site_issues.get('structural_problems', []), ensure_ascii=False)}
+
+## CURRENT STRUCTURE
+Total pages: {len(df_structure)}
+Page types: {json.dumps(page_types)}
+Current clusters: {len(topic_clusters.get('clusters', []))}
+
+## TOP 100 KEYWORDS BY SEARCH DEMAND (what users actually search for)
+{json.dumps(top_keywords, ensure_ascii=False, indent=1)}
+
+## CURRENT CLUSTERS (top 30)
+{json.dumps(current_clusters, ensure_ascii=False, indent=1)}
+
+## YOUR TASK
+Design the IDEAL site structure. Forget the current URL structure — design based on what users SEARCH FOR.
+
+For each topic cluster:
+- Define the HUB/PILLAR page (broad topic, 3000-5000 words)
+- Define SPOKE pages (specific subtopics, 1500-3000 words)
+- Define what BLOG/GUIDE articles support the cluster
+- Define internal linking (hub↔spoke, horizontal between spokes)
+- Define which keywords belong on which page (no cannibalization)
+
+Rules:
+- 40-80 clusters maximum (not 500)
+- Each cluster needs a clear hub page
+- No keyword should appear as primary on more than one page
+- Every page must link to its hub and hub must link to all spokes
+- Blog/guide content supports commercial pages, not competes with them
+- Category pages for browsing intent, blog pages for informational intent
+
+## OUTPUT (JSON):
+{{
+    "recommended_clusters": [
+        {{
+            "cluster_name": "Name of the topic cluster",
+            "search_intent": "commercial|informational|navigational",
+            "total_search_demand": 0,
+            "hub_page": {{
+                "suggested_url": "/category-slug",
+                "page_type": "category",
+                "primary_keyword": "main keyword",
+                "secondary_keywords": ["kw2", "kw3"],
+                "word_count_target": 3000,
+                "content_brief": "What this page should cover"
+            }},
+            "spoke_pages": [
+                {{
+                    "suggested_url": "/category-slug/subcategory",
+                    "page_type": "category|product|blog",
+                    "primary_keyword": "specific keyword",
+                    "word_count_target": 1500,
+                    "content_brief": "What this page should cover"
+                }}
+            ],
+            "supporting_articles": [
+                {{
+                    "suggested_title": "Blog article title",
+                    "suggested_url": "/blog/article-slug",
+                    "target_keywords": ["kw1", "kw2"],
+                    "content_brief": "What to write about"
+                }}
+            ],
+            "internal_links": [
+                "hub links to all spokes",
+                "all spokes link back to hub",
+                "specific cross-links between related spokes"
+            ]
+        }}
+    ],
+    "pages_to_merge": [
+        {{"merge_from": ["url1", "url2"], "merge_to": "target_url", "reason": "why"}}
+    ],
+    "pages_to_delete": [
+        {{"url": "url", "reason": "why"}}
+    ],
+    "new_pages_needed": [
+        {{"url": "suggested_url", "type": "category|blog", "keyword": "target", "reason": "why"}}
+    ],
+    "keyword_assignments": [
+        {{"keyword": "important keyword", "current_page": "url or none", "ideal_page": "url", "action": "keep|move|create"}}
+    ],
+    "summary": "3-4 sentences describing the ideal structure vs current"
+}}"""
+
+                    message = client.messages.create(
+                        model="claude-sonnet-4-20250514",
+                        max_tokens=8000,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    result = _parse_ai_json(message)
+                    st.session_state[ideal_key] = result
+                    from utils.persistence import save_ai_cache
+                    save_ai_cache()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    if ideal_key in st.session_state:
+        ideal = st.session_state[ideal_key]
+
+        st.markdown(
+            f"<div style='background:#0d0d15; border:2px solid #5533ff; border-radius:8px; padding:1rem; margin:0.5rem 0;'>"
+            f"<div style='font-family:\"Syne\",sans-serif; font-size:1.1rem; font-weight:700; color:#c8b4ff; margin-bottom:0.5rem;'>"
+            f"Ideal Structure: {len(ideal.get('recommended_clusters', []))} clusters</div>"
+            f"<div style='font-size:0.85rem; color:#e8e8f0;'>{ideal.get('summary', '')}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        # Clusters
+        clusters = ideal.get("recommended_clusters", [])
+        if clusters:
+            st.markdown(f"#### Recommended Clusters ({len(clusters)})")
+            for i, c in enumerate(clusters[:30]):
+                intent_color = {"commercial": "#33dd88", "informational": "#c8b4ff", "navigational": "#ffaa33"}.get(c.get("search_intent", ""), "#6b6b8a")
+                hub = c.get("hub_page", {})
+                spokes = c.get("spoke_pages", [])
+                articles = c.get("supporting_articles", [])
+
+                with st.expander(f"{c.get('cluster_name', '')} — {len(spokes)} spokes + {len(articles)} articles"):
+                    st.markdown(
+                        f"<span style='color:{intent_color}; font-size:0.7rem; text-transform:uppercase;'>{c.get('search_intent', '')}</span>"
+                        f" · Search demand: {c.get('total_search_demand', 0):,}",
+                        unsafe_allow_html=True,
+                    )
+
+                    # Hub
+                    st.markdown(
+                        f"<div style='background:#12121f; border-left:4px solid #5533ff; padding:0.5rem; margin:0.5rem 0; border-radius:0 4px 4px 0;'>"
+                        f"<span style='font-size:0.65rem; color:#5533ff;'>HUB</span> "
+                        f"<span style='color:#e8e8f0; font-weight:600;'>{hub.get('suggested_url', '')}</span><br>"
+                        f"<span style='color:#c8b4ff; font-size:0.8rem;'>Primary: {hub.get('primary_keyword', '')}</span><br>"
+                        f"<span style='color:#6b6b8a; font-size:0.75rem;'>{hub.get('content_brief', '')}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    # Spokes
+                    for s in spokes:
+                        st.markdown(
+                            f"<div style='padding:0.3rem 0 0.3rem 1.5rem; border-left:2px solid #2a2a40;'>"
+                            f"<span style='font-size:0.65rem; color:#ffaa33;'>SPOKE</span> "
+                            f"<span style='color:#e8e8f0; font-size:0.85rem;'>{s.get('suggested_url', '')}</span> "
+                            f"<span style='color:#6b6b8a; font-size:0.72rem;'>— {s.get('primary_keyword', '')}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    # Articles
+                    for a in articles:
+                        st.markdown(
+                            f"<div style='padding:0.3rem 0 0.3rem 1.5rem; border-left:2px solid #33dd88;'>"
+                            f"<span style='font-size:0.65rem; color:#33dd88;'>ARTICLE</span> "
+                            f"<span style='color:#e8e8f0; font-size:0.85rem;'>{a.get('suggested_title', '')}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+        # Pages to merge/delete
+        merges = ideal.get("pages_to_merge", [])
+        deletes = ideal.get("pages_to_delete", [])
+        new_pages = ideal.get("new_pages_needed", [])
+
+        if merges:
+            st.markdown(f"#### Pages to Merge ({len(merges)})")
+            for m in merges[:10]:
+                from_urls = ", ".join(m.get("merge_from", []))
+                st.markdown(f"<div style='color:#ffaa33; font-size:0.85rem;'>{from_urls} → **{m.get('merge_to', '')}** — {m.get('reason', '')}</div>", unsafe_allow_html=True)
+
+        if deletes:
+            st.markdown(f"#### Pages to Delete ({len(deletes)})")
+            for d in deletes[:10]:
+                st.markdown(f"<div style='color:#ff4455; font-size:0.85rem;'>✗ {d.get('url', '')} — {d.get('reason', '')}</div>", unsafe_allow_html=True)
+
+        if new_pages:
+            st.markdown(f"#### New Pages Needed ({len(new_pages)})")
+            for n in new_pages[:10]:
+                st.markdown(f"<div style='color:#33dd88; font-size:0.85rem;'>+ {n.get('url', '')} [{n.get('type', '')}] — {n.get('keyword', '')} — {n.get('reason', '')}</div>", unsafe_allow_html=True)
+
+        # Download ideal structure
+        st.download_button(
+            "Download ideal structure (JSON)",
+            json.dumps(ideal, ensure_ascii=False, indent=2).encode("utf-8"),
+            "ideal_site_structure.json",
+            "application/json",
+        )
+
+    # ── AI Gap Analysis ───────────────────────────────────────────
+    if ideal_key in st.session_state and validation_key in st.session_state:
+        st.markdown("---")
+        st.markdown("### Step 3: Gap Analysis (Current → Ideal)")
+
+        gap_key = "_gap_analysis"
+        if st.button("Analyze gap between current and ideal structure", type="primary", key="btn_gap"):
+            with st.spinner("AI comparing current vs ideal... (~30 sec)"):
+                try:
+                    from utils.ai_generator import get_client, _parse_ai_json
+                    client = get_client(get_anthropic_key())
+
+                    ideal = st.session_state[ideal_key]
+                    current_issues = st.session_state[validation_key]
+
+                    prompt = f"""You are an SEO migration strategist.
+
+## CURRENT SITE (score: {current_issues.get('overall_health_score', '?')}/100)
+Pages: {len(df_structure)}
+Critical issues: {json.dumps(current_issues.get('critical_issues', []))}
+
+## IDEAL STRUCTURE
+Clusters: {len(ideal.get('recommended_clusters', []))}
+Summary: {ideal.get('summary', '')}
+Pages to merge: {len(ideal.get('pages_to_merge', []))}
+Pages to delete: {len(ideal.get('pages_to_delete', []))}
+New pages needed: {len(ideal.get('new_pages_needed', []))}
+
+## TASK
+Create a prioritized migration plan from current to ideal structure.
+What to do first, second, third. What's quick, what's complex.
+What can be done without risk, what needs careful handling.
+
+## OUTPUT (JSON):
+{{
+    "total_changes_needed": 0,
+    "estimated_time": "X weeks",
+    "phases": [
+        {{
+            "phase": 1,
+            "name": "Phase name",
+            "duration": "X days",
+            "actions": ["action 1", "action 2"],
+            "risk_level": "low|medium|high",
+            "expected_impact": "What improves"
+        }}
+    ],
+    "quick_wins": ["Things to do immediately with zero risk"],
+    "high_risk_changes": ["Changes that need careful 301 redirect planning"],
+    "estimated_traffic_impact": "What will happen to traffic during migration",
+    "summary": "2-3 sentences overview"
+}}"""
+
+                    message = client.messages.create(
+                        model="claude-sonnet-4-20250514",
+                        max_tokens=3000,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    result = _parse_ai_json(message)
+                    st.session_state[gap_key] = result
+                    from utils.persistence import save_ai_cache
+                    save_ai_cache()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        if gap_key in st.session_state:
+            gap = st.session_state[gap_key]
+
+            st.markdown(
+                f"<div style='background:#0d0d15; border:2px solid #ffaa33; border-radius:8px; padding:1rem; margin:0.5rem 0;'>"
+                f"<div style='font-size:0.95rem; color:#e8e8f0;'>{gap.get('summary', '')}</div>"
+                f"<div style='font-size:0.85rem; color:#6b6b8a; margin-top:0.3rem;'>"
+                f"Changes: {gap.get('total_changes_needed', '?')} · Time: {gap.get('estimated_time', '?')} · "
+                f"Traffic impact: {gap.get('estimated_traffic_impact', '?')}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Quick wins
+            qw = gap.get("quick_wins", [])
+            if qw:
+                st.markdown("**Quick wins (zero risk):**")
+                for q in qw:
+                    st.markdown(f"<div style='color:#33dd88; font-size:0.85rem;'>✓ {q}</div>", unsafe_allow_html=True)
+
+            # Phases
+            phases = gap.get("phases", [])
+            if phases:
+                st.markdown("**Migration phases:**")
+                for p in phases:
+                    risk_color = {"low": "#33dd88", "medium": "#ffaa33", "high": "#ff4455"}.get(p.get("risk_level", ""), "#6b6b8a")
+                    st.markdown(
+                        f"<div style='background:#12121f; border-left:4px solid {risk_color}; padding:0.6rem; margin:0.4rem 0; border-radius:0 4px 4px 0;'>"
+                        f"<div style='font-weight:700; color:#e8e8f0;'>Phase {p.get('phase', '?')}: {p.get('name', '')}</div>"
+                        f"<div style='font-size:0.75rem; color:{risk_color};'>{p.get('duration', '')} · Risk: {p.get('risk_level', '')}</div>"
+                        f"<div style='font-size:0.8rem; color:#9b9bb8;'>Impact: {p.get('expected_impact', '')}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    for a in p.get("actions", []):
+                        st.markdown(f"<div style='font-size:0.8rem; color:#c8b4ff; padding-left:1rem;'>→ {a}</div>", unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            # High risk
+            hr = gap.get("high_risk_changes", [])
+            if hr:
+                st.markdown("**High risk changes (need 301 redirect planning):**")
+                for h in hr:
+                    st.markdown(f"<div style='color:#ff4455; font-size:0.85rem;'>⚠ {h}</div>", unsafe_allow_html=True)
+
     # ── AI Plan Validation ────────────────────────────────────────
     st.markdown("---")
-    st.markdown("### AI Plan Validation")
+    st.markdown("### Step 4: Plan Validation")
     st.markdown(
         "<p style='color:#9b9bb8; font-size:0.85rem;'>"
         "AI reviews ALL generated implementation plans against the site issues found above. "
