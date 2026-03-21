@@ -858,45 +858,21 @@ def ai_generate_clusters(
 {site_context}
 Language: {language}
 
-## KEYWORDS (sorted by impressions — top search demand)
-{json.dumps(keywords_data[:250], ensure_ascii=False, indent=1)}
+## KEYWORDS (sorted by impressions — keyword: impressions, clicks, position, pages)
+{chr(10).join(f"- {kw['keyword']}: {kw['impressions']} impr, {kw['clicks']} clicks, pos {kw['position']}, pages: {', '.join(str(p) for p in kw.get('pages', [])[:2])}" for kw in keywords_data[:150])}
 
 ## YOUR TASK
-Group these keywords into 40-80 topic clusters. Each cluster = one topic that should have its own hub page.
+Group ALL these keywords into 30-60 topic clusters.
 
 Rules:
-1. Each cluster must have a clear COMMERCIAL or INFORMATIONAL intent
-2. Brand keywords (site name, store names) should NOT be their own cluster — assign to relevant product clusters
-3. Don't create overlapping clusters — each keyword belongs to exactly ONE cluster
-4. Cluster names should be the main product category or topic (e.g. "vibratorer", "dildos", "sexleksaker för män")
-5. Separate by USER INTENT: "köpa vibrator" and "hur fungerar en vibrator" are different intents but same cluster
-6. A cluster should have at least 3 keywords to be meaningful
-7. Include which page(s) currently rank for each keyword (from the data)
+1. Each cluster = one topic with clear commercial or informational intent
+2. Brand keywords → assign to relevant product cluster
+3. No overlapping clusters — each keyword in exactly ONE cluster
+4. At least 3 keywords per cluster
+5. Cluster name = main product category (e.g. "vibratorer", "dildos")
 
-## OUTPUT (JSON):
-{{
-    "clusters": [
-        {{
-            "topic": "Cluster name (the main topic)",
-            "search_intent": "commercial|informational|mixed",
-            "core_terms": ["term1", "term2", "term3"],
-            "queries": ["full keyword 1", "full keyword 2"],
-            "pages": [
-                {{
-                    "page": "URL that currently ranks for keywords in this cluster",
-                    "query_count": 0,
-                    "relevance": "primary|secondary"
-                }}
-            ],
-            "suggested_hub_url": "The URL that SHOULD be the hub for this cluster",
-            "total_impressions": 0,
-            "total_clicks": 0
-        }}
-    ],
-    "unassigned_keywords": ["keywords that don't fit any cluster"],
-    "cluster_count": 0,
-    "summary": "2-3 sentences about the cluster structure"
-}}"""
+## OUTPUT (JSON — be CONCISE, no extra whitespace):
+{{"clusters":[{{"topic":"name","intent":"commercial","terms":["term1","term2"],"keywords":["kw1","kw2","kw3"],"hub":"suggested hub URL","impressions":0}}],"summary":"2 sentences"}}"""
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -907,44 +883,55 @@ Rules:
     ai_result = _parse_ai_json(message)
 
     # Convert AI format to system format (compatible with rest of pipeline)
+    # Also enrich with actual GSC data
     system_clusters = []
     page_topics = {}
 
+    # Build keyword→pages mapping from input data
+    kw_pages = {}
+    for kw in keywords_data:
+        kw_pages[kw["keyword"]] = kw.get("pages", [])
+
     for c in ai_result.get("clusters", []):
+        cluster_keywords = c.get("keywords", c.get("queries", []))
+        cluster_terms = c.get("terms", c.get("core_terms", []))
+
+        # Find pages from keyword data
+        cluster_page_urls = set()
+        for kw in cluster_keywords:
+            for page_url in kw_pages.get(kw, []):
+                cluster_page_urls.add(page_url)
+
         pages_list = []
-        for p in c.get("pages", []):
-            page_url = p.get("page", "")
-            if not page_url:
-                continue
+        for page_url in cluster_page_urls:
             pages_list.append({
                 "page": page_url,
-                "query_count": p.get("query_count", len(c.get("queries", []))),
+                "query_count": sum(1 for kw in cluster_keywords if page_url in kw_pages.get(kw, [])),
                 "total_clicks": 0,
                 "total_impressions": 0,
                 "avg_position": 0,
             })
 
-            # Build page_topics mapping
             if page_url not in page_topics:
                 page_topics[page_url] = []
             page_topics[page_url].append({
                 "topic": c.get("topic", ""),
-                "queries_in_topic": p.get("query_count", 0),
+                "queries_in_topic": sum(1 for kw in cluster_keywords if page_url in kw_pages.get(kw, [])),
                 "clicks": 0,
             })
 
         system_clusters.append({
             "topic": c.get("topic", ""),
-            "core_terms": c.get("core_terms", []),
-            "query_count": len(c.get("queries", [])),
-            "queries": c.get("queries", []),
-            "total_clicks": c.get("total_clicks", 0),
-            "total_impressions": c.get("total_impressions", 0),
+            "core_terms": cluster_terms,
+            "query_count": len(cluster_keywords),
+            "queries": cluster_keywords,
+            "total_clicks": c.get("clicks", c.get("total_clicks", 0)),
+            "total_impressions": c.get("impressions", c.get("total_impressions", 0)),
             "pages": pages_list,
             "page_count": len(pages_list),
             "is_split": len(pages_list) > 3,
-            "search_intent": c.get("search_intent", "mixed"),
-            "suggested_hub_url": c.get("suggested_hub_url", ""),
+            "search_intent": c.get("intent", c.get("search_intent", "mixed")),
+            "suggested_hub_url": c.get("hub", c.get("suggested_hub_url", "")),
         })
 
     # Build overlap matrix
