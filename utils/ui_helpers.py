@@ -62,8 +62,9 @@ STEP_ORDER = [
     ("new_articles",      "9. New Articles",       "Plan and generate new articles"),
     ("clusters_checked",  "10. Cluster Health",     "AI evaluates topic cluster health"),
     ("generated_content", "11. Content Generator",  "Select a page and generate AI-optimized content"),
-    ("tasks_viewed",      "12. All Tasks",           "Review unified task list across all analyses"),
-    ("action_plan",       "13. Implementation",      "Step-by-step fix guide for every page"),
+    ("sitemap_viewed",    "12. Site Map",             "Export complete site structure + AI validation"),
+    ("tasks_viewed",      "13. All Tasks",            "Review unified task list across all analyses"),
+    ("action_plan",       "14. Implementation",      "Step-by-step fix guide for every page"),
 ]
 
 

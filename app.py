@@ -283,8 +283,9 @@ STEPS = [
     ("9. New Articles",       "articles",     "new_articles",      "Plan new content"),
     ("10. Cluster Health",    "health",       "clusters_checked",  "AI cluster evaluation"),
     ("11. Content Generator", "content",      "generated_content", "AI-generated content"),
-    ("12. All Tasks",         "tasks",        "tasks_viewed",      "Unified priority list"),
-    ("13. Implementation",    "action",       "action_plan",       "Step-by-step fix guide"),
+    ("12. Site Map",          "sitemap",      "sitemap_viewed",    "Export & AI validate"),
+    ("13. All Tasks",         "tasks",        "tasks_viewed",      "Unified priority list"),
+    ("14. Implementation",    "action",       "action_plan",       "Step-by-step fix guide"),
 ]
 
 # Figure out which step the user should be on
@@ -414,6 +415,9 @@ elif "Cluster Health" in selected:
 elif "Content" in selected:
     from views import content_generator
     content_generator.render()
+elif "Site Map" in selected:
+    from views import site_map_export
+    site_map_export.render()
 elif "All Tasks" in selected:
     from views import unified_tasks
     unified_tasks.render()
