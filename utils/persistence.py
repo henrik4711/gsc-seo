@@ -50,6 +50,8 @@ AI_CACHE_PREFIXES = (
     "impl_ai_", "link_ai_", "_gen_article_", "_rewrite_",
     "_bottom_text_", "_intro_text_", "art_outline_", "art_full_",
     "art_meta_", "kw_text_", "kw_intro_", "kw_faq_", "link_result_",
+    "_site_validation", "_ideal_structure", "_gap_analysis", "_plan_validation",
+    "_impl_plans_",
 )
 
 
