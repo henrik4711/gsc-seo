@@ -258,18 +258,25 @@ def _render_upload():
         return None
 
     def _load_sf_file(file_path=None, file_bytes=None, parse_fn=None, key=None, post_fn=None):
-        """Generic loader for SF files — from path or bytes."""
+        """Generic loader for SF files — from path or bytes. Passes path directly for large files."""
         if file_path:
             size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            with st.spinner(f"Reading {os.path.basename(file_path)} ({size_mb:.0f} MB)..."):
-                with open(file_path, "rb") as f:
-                    file_bytes = f.read()
-        if not file_bytes:
-            st.error("File appears empty.")
+            if size_mb > 50:
+                # Large file: pass file path directly — parser streams in chunks
+                with st.spinner(f"Streaming {os.path.basename(file_path)} ({size_mb:.0f} MB)..."):
+                    df = parse_fn(file_path)
+            else:
+                with st.spinner(f"Reading {os.path.basename(file_path)} ({size_mb:.0f} MB)..."):
+                    with open(file_path, "rb") as f:
+                        file_bytes = f.read()
+                    df = parse_fn(file_bytes)
+        elif file_bytes:
+            size_mb = len(file_bytes) / (1024 * 1024)
+            with st.spinner(f"Parsing {size_mb:.0f} MB..."):
+                df = parse_fn(file_bytes)
+        else:
+            st.error("No file provided.")
             return False
-        size_mb = len(file_bytes) / (1024 * 1024)
-        with st.spinner(f"Parsing {size_mb:.0f} MB..."):
-            df = parse_fn(file_bytes)
         if df.empty:
             st.error("No data found. Check that the file is the correct Screaming Frog export.")
             return False

@@ -50,19 +50,38 @@ def _read_csv_flexible(file_content) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def parse_all_inlinks(file_content) -> pd.DataFrame:
-    """
-    Parse Screaming Frog "All Inlinks" export.
-    Expected columns: Source, Destination, Anchor, Type, Status Code, etc.
-    Returns: DataFrame with source, target, anchor, link_type, status_code
-    """
-    df = _read_csv_flexible(file_content)
-    if df.empty:
-        return df
+def _detect_csv_format(file_path_or_bytes):
+    """Detect encoding and separator from first few KB of a CSV file."""
+    if isinstance(file_path_or_bytes, str):
+        with open(file_path_or_bytes, "rb") as f:
+            head = f.read(8192)
+    elif isinstance(file_path_or_bytes, bytes):
+        head = file_path_or_bytes[:8192]
+    else:
+        head = file_path_or_bytes.read(8192)
+        file_path_or_bytes.seek(0)
 
+    for encoding in ["utf-8-sig", "utf-8", "utf-16", "latin-1", "cp1252"]:
+        try:
+            text = head.decode(encoding).lstrip("\ufeff")
+            first_line = text.split("\n")[0]
+            if "\t" in first_line:
+                sep = "\t"
+            elif ";" in first_line and "," not in first_line:
+                sep = ";"
+            else:
+                sep = ","
+            return encoding, sep
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return "utf-8", ","
+
+
+def _map_inlink_columns(columns):
+    """Map SF inlink column names to standard names."""
     col_map = {}
-    for col in df.columns:
-        cl = col.lower().strip()
+    for col in columns:
+        cl = col.lower().strip().strip('"')
         if cl in ("source", "from"):
             col_map[col] = "source"
         elif cl in ("destination", "to", "target", "target url"):
@@ -75,23 +94,45 @@ def parse_all_inlinks(file_content) -> pd.DataFrame:
             col_map[col] = "status_code"
         elif cl in ("follow", "link path"):
             col_map[col] = "follow"
-        elif cl in ("path type", "link position"):
-            col_map[col] = "link_position"
-        # Fuzzy fallbacks
+        # Fuzzy
         elif "source" in cl or "from" in cl:
             col_map.setdefault(col, "source")
-        elif "dest" in cl or "target" in cl or "to" == cl:
+        elif "dest" in cl or "target" in cl:
             col_map.setdefault(col, "target")
         elif "anchor" in cl:
             col_map.setdefault(col, "anchor")
         elif "status" in cl and "code" in cl:
             col_map.setdefault(col, "status_code")
+    return col_map
 
+
+def parse_all_inlinks(file_content) -> pd.DataFrame:
+    """
+    Parse Screaming Frog "All Inlinks" export.
+    Memory-efficient: streams in chunks for large files (>100MB).
+    Deduplicates source→target pairs to reduce memory.
+    Returns: DataFrame with source, target, anchor, link_type, status_code, follow
+    """
+    from utils.ui_helpers import normalize_url
+
+    is_file_path = isinstance(file_content, str) and len(file_content) < 500 and not file_content.startswith("http")
+    is_large = False
+    if is_file_path:
+        import os
+        is_large = os.path.getsize(file_content) > 100_000_000  # >100MB
+
+    if is_large:
+        return _parse_inlinks_chunked(file_content)
+
+    # Standard path for smaller files
+    df = _read_csv_flexible(file_content)
+    if df.empty:
+        return df
+
+    col_map = _map_inlink_columns(df.columns)
     df = df.rename(columns=col_map)
 
-    # Must have source + target
     if "source" not in df.columns or "target" not in df.columns:
-        # Try to find URL-like columns
         url_cols = []
         for col in df.columns:
             sample = df[col].dropna().head(10).astype(str)
@@ -99,38 +140,109 @@ def parse_all_inlinks(file_content) -> pd.DataFrame:
                 url_cols.append(col)
         if len(url_cols) >= 2:
             df = df.rename(columns={url_cols[0]: "source", url_cols[1]: "target"})
-        elif len(url_cols) == 1:
-            return pd.DataFrame()
         else:
             return pd.DataFrame()
 
-    # Clean URLs
     df["source"] = df["source"].astype(str).str.strip()
     df["target"] = df["target"].astype(str).str.strip()
-
-    # Filter to internal links only (same domain)
     df = df[df["source"].str.contains(r"https?://", case=False, na=False)].copy()
     df = df[df["target"].str.contains(r"https?://", case=False, na=False)].copy()
-
-    # Normalize URLs at the source
-    from utils.ui_helpers import normalize_url
     df["source"] = df["source"].apply(normalize_url)
     df["target"] = df["target"].apply(normalize_url)
 
-    # Fill missing columns
-    if "anchor" not in df.columns:
-        df["anchor"] = ""
-    if "status_code" not in df.columns:
-        df["status_code"] = 200
-    if "link_type" not in df.columns:
-        df["link_type"] = "Hyperlink"
-    if "follow" not in df.columns:
-        df["follow"] = "Follow"
-
+    for col, default in [("anchor", ""), ("status_code", 200), ("link_type", "Hyperlink"), ("follow", "Follow")]:
+        if col not in df.columns:
+            df[col] = default
     df["anchor"] = df["anchor"].fillna("").astype(str)
     df["status_code"] = pd.to_numeric(df["status_code"], errors="coerce").fillna(200).astype(int)
 
     return df[["source", "target", "anchor", "link_type", "status_code", "follow"]].copy()
+
+
+def _parse_inlinks_chunked(file_path: str, chunk_size: int = 200_000) -> pd.DataFrame:
+    """
+    Memory-efficient inlinks parser for large files (>100MB).
+    Reads in chunks, keeps only needed columns, deduplicates as it goes.
+    """
+    import os
+    from utils.ui_helpers import normalize_url
+
+    encoding, sep = _detect_csv_format(file_path)
+    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+
+    # Read just header to map columns
+    header_df = pd.read_csv(file_path, encoding=encoding, sep=sep, nrows=0, on_bad_lines="skip")
+    col_map = _map_inlink_columns(header_df.columns)
+
+    # Determine which columns to load (only the ones we need)
+    needed_originals = [orig for orig, mapped in col_map.items()
+                        if mapped in ("source", "target", "anchor", "link_type", "status_code", "follow")]
+    if not needed_originals:
+        return pd.DataFrame()
+
+    # Check source+target are mappable
+    mapped_names = set(col_map.values())
+    if "source" not in mapped_names or "target" not in mapped_names:
+        return pd.DataFrame()
+
+    # Stream chunks
+    chunks = []
+    seen_pairs = set()
+    total_rows = 0
+    kept_rows = 0
+
+    reader = pd.read_csv(
+        file_path, encoding=encoding, sep=sep,
+        usecols=needed_originals,
+        chunksize=chunk_size,
+        on_bad_lines="skip",
+        low_memory=True,
+        dtype=str,  # Read everything as string — we convert later
+    )
+
+    for chunk in reader:
+        chunk = chunk.rename(columns=col_map)
+        total_rows += len(chunk)
+
+        # Filter to valid URLs
+        chunk = chunk[
+            chunk["source"].str.contains(r"https?://", case=False, na=False) &
+            chunk["target"].str.contains(r"https?://", case=False, na=False)
+        ].copy()
+
+        # Normalize URLs
+        chunk["source"] = chunk["source"].str.strip().apply(normalize_url)
+        chunk["target"] = chunk["target"].str.strip().apply(normalize_url)
+
+        # Deduplicate: keep first occurrence of each source→target pair
+        new_rows = []
+        for _, row in chunk.iterrows():
+            pair = (row["source"], row["target"])
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                new_rows.append(row)
+        if new_rows:
+            chunks.append(pd.DataFrame(new_rows))
+            kept_rows += len(new_rows)
+
+    if not chunks:
+        return pd.DataFrame()
+
+    df = pd.concat(chunks, ignore_index=True)
+
+    # Fill missing columns
+    for col, default in [("anchor", ""), ("link_type", "Hyperlink"), ("status_code", "200"), ("follow", "Follow")]:
+        if col not in df.columns:
+            df[col] = default
+
+    df["anchor"] = df["anchor"].fillna("").astype(str)
+    df["status_code"] = pd.to_numeric(df["status_code"], errors="coerce").fillna(200).astype(int)
+
+    # Ensure column order
+    out_cols = [c for c in ["source", "target", "anchor", "link_type", "status_code", "follow"] if c in df.columns]
+
+    print(f"Inlinks: {total_rows:,} total rows → {kept_rows:,} unique source→target pairs ({size_mb:.0f} MB file)")
+    return df[out_cols].copy()
 
 
 def parse_all_pages(file_content) -> pd.DataFrame:
