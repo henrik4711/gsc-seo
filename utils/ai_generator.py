@@ -1474,6 +1474,16 @@ def generate_page_implementation_plan(
     internal_links = page_data.get("internal_links", 0)
     link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
 
+    # Inbound anchor text quality (from SF link map)
+    linking_details = (content_audit.get("linking") or {}).get("details", {}) if content_audit else {}
+    inbound_anchors = linking_details.get("inbound_anchor_stats", {})
+    inbound_info = ""
+    if inbound_anchors:
+        inbound_info = (f"\nInbound links: {inbound_anchors.get('total', 0)} total — "
+                        f"{inbound_anchors.get('descriptive', 0)} descriptive, "
+                        f"{inbound_anchors.get('generic', 0)} generic, "
+                        f"{inbound_anchors.get('empty', 0)} empty anchors")
+
     # Category-specific data
     intro_words = page_data.get("intro_word_count", 0)
     bottom_words = page_data.get("bottom_word_count", 0)
@@ -1532,7 +1542,7 @@ Impressions: {impressions:,}
 Lost clicks estimate: {lost_clicks:.0f}
 Referring domains (backlinks): {referring_domains}
 Total backlinks: {backlinks}
-Authority score: {authority_score}
+Authority score: {authority_score}{inbound_info}
 Site context: {site_context}
 Language: {language}
 

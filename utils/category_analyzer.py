@@ -1109,7 +1109,8 @@ def _audit_internal_linking(
             if u.startswith("/"):
                 domain = urlparse(url).netloc
                 u = f"https://{domain}{u}"
-            linked_urls.add(u.rstrip("/").lower())
+            from utils.ui_helpers import normalize_url as _nu
+            linked_urls.add(_nu(u))
 
         # Find pages in same clusters that we don't link to
         page_topics = topic_clusters.get("page_topics", {})
@@ -1117,11 +1118,11 @@ def _audit_internal_linking(
         my_topic_names = set(t.get("topic", "") for t in my_topics)
 
         for other_url, other_topics in page_topics.items():
-            if other_url.rstrip("/").lower() == url.rstrip("/").lower():
+            if _nu(other_url) == _nu(url):
                 continue
             other_topic_names = set(t.get("topic", "") for t in other_topics)
             shared = my_topic_names & other_topic_names
-            if shared and other_url.rstrip("/").lower() not in linked_urls:
+            if shared and _nu(other_url) not in linked_urls:
                 missing_links.append({
                     "url": other_url,
                     "shared_topics": list(shared)[:3],
@@ -1171,6 +1172,51 @@ def _audit_internal_linking(
         topic_clusters=topic_clusters,
     ) if missing_links else []
 
+    # ── Incoming anchor text analysis (from SF link map) ─────────
+    import streamlit as _st
+    sf_link_map = _st.session_state.get("sf_link_map")
+    inbound_anchor_stats = {}
+    if sf_link_map:
+        # Get anchor quality stats for this page
+        aq = sf_link_map.get("anchor_quality", {}).get(url, {})
+        if aq:
+            inbound_anchor_stats = aq
+
+            if aq.get("empty", 0) > aq.get("total", 1) * 0.3 and aq.get("total", 0) > 3:
+                issues.append({
+                    "severity": "warn", "area": "inbound_anchors",
+                    "msg": f"{aq['empty']}/{aq['total']} inbound links have empty anchor text. Ask linking pages to use descriptive anchors.",
+                })
+                penalty += 3
+
+            if aq.get("generic", 0) > aq.get("total", 1) * 0.3 and aq.get("total", 0) > 3:
+                issues.append({
+                    "severity": "info", "area": "inbound_anchors",
+                    "msg": f"{aq['generic']}/{aq['total']} inbound links use generic anchors ('click here', 'read more'). Descriptive anchors improve rankings.",
+                })
+                penalty += 2
+
+        # Check if inbound anchors match this page's cluster terms
+        links_to = sf_link_map.get("links_to", {}).get(url, [])
+        if links_to and topic_clusters and keywords:
+            kw_set = set(k.lower() for k in keywords[:15])
+            cluster_match = 0
+            for lt in links_to[:50]:  # Sample max 50
+                anchor_lower = lt.get("anchor", "").lower()
+                if anchor_lower and any(kw in anchor_lower for kw in kw_set):
+                    cluster_match += 1
+            sample_size = min(len(links_to), 50)
+            if sample_size >= 5 and cluster_match == 0:
+                issues.append({
+                    "severity": "warn", "area": "inbound_anchor_relevance",
+                    "msg": f"0/{sample_size} inbound link anchors contain this page's target keywords. Anchor text should signal topic relevance to Google.",
+                })
+                penalty += 3
+                recommendations.append(
+                    f"Inbound links should use anchors containing: {', '.join(list(kw_set)[:5])}. "
+                    f"Update anchor text on internal pages that link here."
+                )
+
     return {
         "issues": issues,
         "recommendations": recommendations,
@@ -1181,6 +1227,7 @@ def _audit_internal_linking(
             "product_links": prod_link_count,
             "missing_crosslinks": missing_links[:10],
             "anchor_quality": "checked" if isinstance(internal_links, list) else "not_available",
+            "inbound_anchor_stats": inbound_anchor_stats,
             "semantic_validation": semantic_validation,
             "link_fix_suggestions": link_fix_suggestions,
         },

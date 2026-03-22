@@ -545,50 +545,67 @@ def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_do
 
 def build_complete_link_map(inlinks_df: pd.DataFrame) -> dict:
     """
-    Build a complete internal link map from SF inlinks data.
+    Build a compact internal link map from SF inlinks data.
+    Memory-efficient: deduplicates and stores only unique source→target pairs.
     Returns: {
-        "links_from": { url: [{"target": ..., "anchor": ..., "status_code": ...}] },
+        "links_from": { url: [{"target": ..., "anchor": ...}] },
         "links_to": { url: [{"source": ..., "anchor": ...}] },
-        "all_anchors": { (source, target): [anchor1, anchor2, ...] },
+        "anchor_quality": { url: {"total": N, "descriptive": N, "generic": N, "empty": N} },
+        "total_links": int,
+        "unique_pages": int,
+        "unique_pairs": int,
     }
     """
-    links_from = {}  # url -> list of outgoing links
-    links_to = {}    # url -> list of incoming links
-    all_anchors = {}
+    links_from = {}  # url -> list of unique outgoing links
+    links_to = {}    # url -> list of unique incoming links
+    anchor_quality = {}  # url -> anchor text quality stats
+    seen_pairs = set()
+
+    # Generic/useless anchor texts (multiple languages)
+    generic_anchors = {
+        "", "click here", "read more", "learn more", "here", "link",
+        "klicka här", "läs mer", "mer info", "se mer", "visa",
+        "klik her", "læs mere", "se mere",
+    }
 
     for _, row in inlinks_df.iterrows():
-        source = row["source"]
-        target = row["target"]
-        anchor = row.get("anchor", "")
+        source = str(row["source"])
+        target = str(row["target"])
+        anchor = str(row.get("anchor", "")).strip()
+        pair = (source, target)
+
+        # Deduplicate: one entry per source→target pair (keep first anchor)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
 
         # Links FROM source
         if source not in links_from:
             links_from[source] = []
-        links_from[source].append({
-            "target": target,
-            "anchor": str(anchor),
-            "status_code": int(row.get("status_code", 200)),
-        })
+        links_from[source].append({"target": target, "anchor": anchor})
 
         # Links TO target
         if target not in links_to:
             links_to[target] = []
-        links_to[target].append({
-            "source": source,
-            "anchor": str(anchor),
-        })
+        links_to[target].append({"source": source, "anchor": anchor})
 
-        # All anchors for each pair
-        pair = (source.rstrip("/").lower(), target.rstrip("/").lower())
-        if pair not in all_anchors:
-            all_anchors[pair] = []
-        if anchor and str(anchor).strip():
-            all_anchors[pair].append(str(anchor))
+        # Anchor quality stats for target page
+        if target not in anchor_quality:
+            anchor_quality[target] = {"total": 0, "descriptive": 0, "generic": 0, "empty": 0}
+        aq = anchor_quality[target]
+        aq["total"] += 1
+        if not anchor:
+            aq["empty"] += 1
+        elif anchor.lower() in generic_anchors or len(anchor) < 3:
+            aq["generic"] += 1
+        else:
+            aq["descriptive"] += 1
 
     return {
         "links_from": links_from,
         "links_to": links_to,
-        "all_anchors": all_anchors,
+        "anchor_quality": anchor_quality,
         "total_links": len(inlinks_df),
+        "unique_pairs": len(seen_pairs),
         "unique_pages": len(set(list(links_from.keys()) + list(links_to.keys()))),
     }
