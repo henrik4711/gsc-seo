@@ -387,8 +387,16 @@ def evaluate_meta(page_data: dict, target_keywords: list) -> dict:
         issues.append({"type": "warn", "field": "description", "msg": f"Description truncated in SERP ({desc_len} chars, max ~160)"})
         score -= 5
 
-    kw_in_title = sum(1 for kw in target_keywords if kw.lower() in title.lower())
-    kw_in_desc = sum(1 for kw in target_keywords if kw.lower() in desc.lower())
+    import unicodedata
+    import html as html_mod
+    def _nt(s):
+        """Normalize text for keyword matching: NFC + HTML decode + lowercase."""
+        return unicodedata.normalize("NFC", html_mod.unescape(s)).lower() if s else ""
+
+    title_norm = _nt(title)
+    desc_norm = _nt(desc)
+    kw_in_title = sum(1 for kw in target_keywords if _nt(kw) in title_norm)
+    kw_in_desc = sum(1 for kw in target_keywords if _nt(kw) in desc_norm)
 
     if target_keywords and kw_in_title == 0:
         issues.append({"type": "warn", "field": "title", "msg": "Primary keywords not in title"})
@@ -399,11 +407,11 @@ def evaluate_meta(page_data: dict, target_keywords: list) -> dict:
         score -= 10
 
     cta_words = ["köp", "beställ", "bestall", "se", "hitta", "bäst", "billig", "fri frakt", "snabb",
-                  "kob", "bestil", "bedst", "gratis fragt",
+                  "køb", "bestil", "bedst", "gratis fragt",
                   "top", "test", "buy", "order", "shop", "find", "best", "cheap",
                   "free shipping", "fast", "deal", "save", "discount", "offer"]
-    has_cta_title = any(w in title.lower() for w in cta_words)
-    has_cta_desc = any(w in desc.lower() for w in cta_words)
+    has_cta_title = any(w in title_norm for w in cta_words)
+    has_cta_desc = any(w in desc_norm for w in cta_words)
 
     if not has_cta_title:
         issues.append({"type": "info", "field": "title", "msg": "No call-to-action signals in title"})

@@ -6,9 +6,25 @@ internal linking structure, and E-E-A-T trust signals.
 
 import re
 import json
+import unicodedata
+import html as html_mod
 from urllib.parse import urlparse
 from typing import Optional
 from collections import Counter
+
+
+def _norm_text(text: str) -> str:
+    """
+    Normalize text for keyword matching.
+    - Unicode NFC normalization (ö as one codepoint, not o + combining diaeresis)
+    - HTML entity decoding (&aring; → å, &ouml; → ö, etc.)
+    - Lowercase
+    """
+    if not text:
+        return ""
+    t = html_mod.unescape(text)           # &aring; → å
+    t = unicodedata.normalize("NFC", t)    # composed form
+    return t.lower()
 
 try:
     import requests
@@ -565,14 +581,14 @@ def audit_category_content(
     intro_words = page_data.get("intro_word_count", 0)
     bottom_text = page_data.get("bottom_text", "")
     bottom_words = page_data.get("bottom_word_count", 0)
-    full_text = (page_data.get("full_body_text") or page_data.get("body_text") or "").lower()
-    editorial_text = (intro_text + " " + bottom_text).lower()
+    full_text = _norm_text(page_data.get("full_body_text") or page_data.get("body_text") or "")
+    editorial_text = _norm_text(intro_text + " " + bottom_text)
     if not editorial_text.strip() and full_text:
         editorial_text = full_text
     total_editorial = page_data.get("total_editorial_words", 0)
     if total_editorial == 0:
         total_editorial = page_data.get("word_count", 0) or len(full_text.split())
-    h1 = (page_data.get("h1") or "").lower()
+    h1 = _norm_text(page_data.get("h1") or "")
     h2s = page_data.get("h2s", [])
     h3s = page_data.get("h3s", [])
     has_faq = page_data.get("has_faq", False)
@@ -727,10 +743,10 @@ def audit_category_content(
             continue
         # Check if ANY of the sub-topic's terms appear in editorial text
         terms = st_item["terms"]
-        term_hits = sum(1 for t in terms if t in editorial_text)
-        query_hits = sum(1 for q in st_item["queries"] if q.lower() in full_text)
+        term_hits = sum(1 for t in terms if _norm_text(t) in editorial_text)
+        query_hits = sum(1 for q in st_item["queries"] if _norm_text(q) in full_text)
         partial_hits = sum(1 for q in st_item["queries"]
-                          if all(part in full_text for part in q.lower().split()))
+                          if all(part in full_text for part in _norm_text(q).split()))
 
         if term_hits == len(terms) or query_hits > 0 or partial_hits > 0:
             status = "covered"
@@ -786,22 +802,23 @@ def audit_category_content(
     kw_in_h2 = 0
     kw_in_intro = 0
 
-    h2_text = " ".join(h2s).lower()
+    h2_text = _norm_text(" ".join(h2s))
+    intro_norm = _norm_text(intro_text)
 
     for kw in all_keywords[:30]:
-        kw_lower = kw.lower().strip()
-        if not kw_lower:
+        kw_norm = _norm_text(kw).strip()
+        if not kw_norm:
             continue
-        kw_parts = kw_lower.split()
-        found = (kw_lower in full_text or
+        kw_parts = kw_norm.split()
+        found = (kw_norm in full_text or
                  (len(kw_parts) > 1 and all(part in full_text for part in kw_parts)))
         if found:
             covered_kws.append(kw)
-            if kw_lower in h1 or all(p in h1 for p in kw_parts):
+            if kw_norm in h1 or all(p in h1 for p in kw_parts):
                 kw_in_h1 += 1
-            if kw_lower in h2_text or all(p in h2_text for p in kw_parts):
+            if kw_norm in h2_text or all(p in h2_text for p in kw_parts):
                 kw_in_h2 += 1
-            if kw_lower in intro_text.lower():
+            if kw_norm in intro_norm:
                 kw_in_intro += 1
         else:
             missing_kws.append(kw)
