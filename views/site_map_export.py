@@ -46,10 +46,18 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
     page_topics = tc.get("page_topics", {})
     audit_by_url = {r["url"]: r for r in audit_results}
 
-    # Get all unique URLs
-    all_urls = set(r["url"] for r in audit_results)
+    # Get all unique URLs — deduplicate by stripping query params
+    raw_urls = set(r["url"] for r in audit_results)
     if gsc_data is not None and hasattr(gsc_data, "page"):
-        all_urls.update(gsc_data["page"].unique().tolist())
+        raw_urls.update(gsc_data["page"].unique().tolist())
+
+    # Deduplicate: keep URL without params, merge impressions from param variants
+    seen_norm = {}
+    for url in raw_urls:
+        norm = _norm_url(url)
+        if norm not in seen_norm or len(url) < len(seen_norm[norm]):
+            seen_norm[norm] = url  # Keep shortest (no params) version
+    all_urls = set(seen_norm.values())
 
     for url in sorted(all_urls):
         parsed = urlparse(url)
@@ -616,7 +624,7 @@ def render():
     thin = len(df_structure[(df_structure["Word Count"] < 100) & (df_structure["Word Count"] > 0)]) if "Word Count" in df_structure.columns else 0
 
     c6, c7, c8 = st.columns(3)
-    c6.metric("Orphan Pages (0 links in)", orphans)
+    c6.metric("Real Orphans (after SF/GSC check)", len(df_orphans))
     c7.metric("Pages without Cluster", no_cluster)
     c8.metric("Thin Pages (<100 words)", thin)
 
