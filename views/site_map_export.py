@@ -12,6 +12,12 @@ from config import get_anthropic_key, has_anthropic_key
 from utils.ui_helpers import stable_hash
 
 
+def _norm_url(url):
+    """Normalize URL for comparison: strip params, fragments, trailing slash, lowercase."""
+    u = str(url).split("?")[0].split("#")[0].rstrip("/").lower()
+    return u
+
+
 def _check_prerequisites():
     """Check which analyses have been run."""
     checks = {
@@ -80,7 +86,7 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
             other_links = other_r.get("internal_links", [])
             if isinstance(other_links, list):
                 for l in other_links:
-                    if l.get("url", "").rstrip("/").lower() == url.rstrip("/").lower():
+                    if _norm_url(l.get("url", "")) == _norm_url(url):
                         links_in += 1
                         break
 
@@ -151,14 +157,14 @@ def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
             links_from_hub = False
             if isinstance(il, list):
                 for l in il:
-                    if l.get("url", "").rstrip("/").lower() == hub_url.rstrip("/").lower():
+                    if _norm_url(l.get("url", "")) == _norm_url(hub_url):
                         links_to_hub = True
 
             hub_audit = audit_by_url.get(hub_url, {})
             hub_links = hub_audit.get("internal_links", [])
             if isinstance(hub_links, list):
                 for l in hub_links:
-                    if l.get("url", "").rstrip("/").lower() == purl.rstrip("/").lower():
+                    if _norm_url(l.get("url", "")) == _norm_url(purl):
                         links_from_hub = True
 
             rows.append({
@@ -406,14 +412,14 @@ def _build_link_fixes(df_links, df_structure, topic_clusters):
         hub_links_to = set()
         if not df_links.empty:
             hub_outlinks = df_links[df_links["From"] == hub]
-            hub_links_to = set(hub_outlinks["To"].str.rstrip("/").str.lower())
+            hub_links_to = set(hub_outlinks["To"].apply(_norm_url))
 
         for spoke in pages:
             if spoke == hub:
                 continue
 
-            spoke_norm = spoke.rstrip("/").lower()
-            hub_norm = hub.rstrip("/").lower()
+            spoke_norm = _norm_url(spoke)
+            hub_norm = _norm_url(hub)
 
             # Hub → Spoke missing?
             if spoke_norm not in hub_links_to:
@@ -431,7 +437,7 @@ def _build_link_fixes(df_links, df_structure, topic_clusters):
             # Spoke → Hub missing?
             if not df_links.empty:
                 spoke_outlinks = df_links[df_links["From"] == spoke]
-                spoke_links_to = set(spoke_outlinks["To"].str.rstrip("/").str.lower())
+                spoke_links_to = set(spoke_outlinks["To"].apply(_norm_url))
                 if hub_norm not in spoke_links_to:
                     hub_slug = urlparse(hub).path.strip("/").split("/")[-1].replace("-", " ") or "hem"
                     rows.append({
