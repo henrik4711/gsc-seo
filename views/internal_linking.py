@@ -192,7 +192,8 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
                 if target_url.rstrip("/").lower() in known:
                     continue
 
-                # Only suggest links between RELATED pages (same URL hierarchy)
+                # Filter: only suggest links between related pages
+                # Related = same URL hierarchy, OR share topic clusters
                 src_parts = urlparse(source_url).path.lower().strip("/").split("/")
                 tgt_parts = urlparse(target_url).path.lower().strip("/").split("/")
                 is_sibling = (len(src_parts) >= 2 and len(tgt_parts) >= 2
@@ -201,7 +202,8 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
                     target_url.rstrip("/").lower().startswith(source_url.rstrip("/").lower() + "/") or
                     source_url.rstrip("/").lower().startswith(target_url.rstrip("/").lower() + "/")
                 )
-                if not is_sibling and not is_parent_child:
+                shares_topic = shared_count >= 2  # They share 2+ topic clusters = related
+                if not is_sibling and not is_parent_child and not shares_topic:
                     continue
 
                 # Determine priority from shared topic count + impressions

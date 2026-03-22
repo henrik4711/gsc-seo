@@ -1159,10 +1159,28 @@ def _audit_internal_linking(
             )
 
     non_semantic = semantic_validation["non_semantic_links"]
-    if non_semantic and len(non_semantic) > link_count * 0.5 and link_count > 5:
+    # Filter out product links and URL-hierarchy children — these are valid cross-cluster
+    from urllib.parse import urlparse as _up_ns
+    current_path = _up_ns(url).path.rstrip("/").lower()
+    truly_unrelated = []
+    for ns_link in non_semantic:
+        ns_url = ns_link.get("url", "")
+        ns_path = _up_ns(ns_url).path.rstrip("/").lower()
+        # Child in URL hierarchy = always valid (category→subcategory or →product)
+        if ns_path.startswith(current_path + "/"):
+            continue
+        # Parent in URL hierarchy = always valid (spoke→hub)
+        if current_path.startswith(ns_path + "/"):
+            continue
+        # Product URL patterns = valid from category pages
+        if page_type == "category" and any(p in ns_path for p in ["/product", "/produkt", "/p/"]):
+            continue
+        truly_unrelated.append(ns_link)
+
+    if truly_unrelated and len(truly_unrelated) > link_count * 0.4 and link_count > 5:
         issues.append({
             "severity": "warn", "area": "link_relevance",
-            "msg": f"{len(non_semantic)}/{link_count} internal links point to pages outside this topic cluster.",
+            "msg": f"{len(truly_unrelated)}/{link_count} internal links point to unrelated pages outside this topic cluster and URL hierarchy.",
         })
         penalty += 3
 
@@ -1616,7 +1634,14 @@ def _audit_product_alignment(
         if target_topics:
             target_topic_names = set(t.get("topic", "") for t in target_topics)
             shared = my_topic_names & target_topic_names
-            if not shared and target_topic_names:
+
+            # Category→product is VALID if product is under this category's URL hierarchy
+            # e.g. /sexleksaker-for-man → /sexleksaker-for-man/produkt is always fine
+            current_path = urlparse(current_url).path.rstrip("/").lower()
+            product_path = urlparse(pl_url_full).path.rstrip("/").lower()
+            is_child_product = product_path.startswith(current_path + "/") or current_path.startswith(product_path.rsplit("/", 1)[0])
+
+            if not shared and target_topic_names and not is_child_product:
                 anchor = pl.get("anchor", pl_url)[:60]
                 misplaced.append({
                     "name": anchor,

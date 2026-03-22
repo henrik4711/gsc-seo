@@ -115,6 +115,42 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
             cannibalized.sort(key=lambda x: -len(x["pages"]))
             cannibalized = cannibalized[:15]
 
+    # ── Link health issues ────────────────────────────────────
+    link_issues = []
+
+    # Hub→Spoke: hub MUST link to all spokes
+    spokes_without_hub_link = [s["url"] for s in spokes if s["url"] not in hub_to_spoke]
+    if spokes_without_hub_link:
+        link_issues.append({
+            "severity": "critical" if len(spokes_without_hub_link) > len(spokes) * 0.5 else "warn",
+            "type": "hub_to_spoke_missing",
+            "msg": f"Hub does NOT link to {len(spokes_without_hub_link)}/{len(spokes)} spoke pages. Hub must link down to all spokes.",
+            "pages": spokes_without_hub_link[:10],
+        })
+
+    # Spoke→Hub: all spokes MUST link back to hub
+    spokes_without_backlink = [s["url"] for s in spokes if s["url"] not in spoke_to_hub]
+    if spokes_without_backlink:
+        link_issues.append({
+            "severity": "critical" if len(spokes_without_backlink) > len(spokes) * 0.5 else "warn",
+            "type": "spoke_to_hub_missing",
+            "msg": f"{len(spokes_without_backlink)}/{len(spokes)} spokes do NOT link back to hub. Every spoke must link to its pillar.",
+            "pages": spokes_without_backlink[:10],
+        })
+
+    # Horizontal: spokes should cross-link to siblings
+    spoke_with_sibling_links = set()
+    for h in horizontal:
+        spoke_with_sibling_links.add(h["from"])
+    isolated_spokes = [s["url"] for s in spokes if s["url"] not in spoke_with_sibling_links]
+    if isolated_spokes and len(spokes) >= 3:
+        link_issues.append({
+            "severity": "warn",
+            "type": "isolated_spokes",
+            "msg": f"{len(isolated_spokes)}/{len(spokes)} spokes have no horizontal links to sibling pages.",
+            "pages": isolated_spokes[:10],
+        })
+
     return {
         "topic": cluster.get("topic", ""),
         "core_terms": cluster.get("core_terms", []),
@@ -133,6 +169,7 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
         "hub_to_spoke_links": hub_to_spoke,
         "spoke_to_hub_links": spoke_to_hub,
         "horizontal_links": horizontal,
+        "link_issues": link_issues,
         "cannibalized_keywords": cannibalized,
     }
 
