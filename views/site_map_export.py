@@ -323,28 +323,81 @@ def _build_orphan_fixes(df_structure, audit_results, topic_clusters):
     if orphans.empty:
         return pd.DataFrame()
 
-    # Cross-check with Screaming Frog data — if SF says page HAS inlinks,
-    # it's linked from navigation (which our scraper strips). Not a real orphan.
+    # Cross-check with ALL data sources to filter false orphans:
+    # 1. SF All Pages — if SF says page has inlinks > 0 → linked from nav
+    # 2. GSC — if page has impressions → Google found it (not truly orphaned)
+    # 3. Ahrefs — if page has backlinks → external links exist
+
+    # Build sets of pages that have links from other sources
+    nav_linked = set()  # SF says has inlinks
+    google_found = set()  # GSC has impressions
+    has_backlinks = set()  # Ahrefs has referring domains
+
+    # SF check
     sf_pages = st.session_state.get("sf_pages")
     if sf_pages is not None and hasattr(sf_pages, "iterrows"):
-        sf_with_links = set()
         for _, sf_row in sf_pages.iterrows():
             sf_url = str(sf_row.get("url", ""))
             sf_inlinks = sf_row.get("inlinks", 0) or sf_row.get("unique_inlinks", 0)
-            if sf_inlinks and int(sf_inlinks) > 0:
-                sf_with_links.add(_norm_url(sf_url))
+            try:
+                if sf_inlinks and int(sf_inlinks) > 0:
+                    nav_linked.add(_norm_url(sf_url))
+            except (ValueError, TypeError):
+                pass
 
-        # Filter: only keep orphans that SF also says have 0 inlinks
-        real_orphans = []
-        nav_linked = 0
-        for _, row in orphans.iterrows():
-            if _norm_url(row["URL"]) in sf_with_links:
-                nav_linked += 1  # Not a real orphan — linked from nav
-            else:
-                real_orphans.append(row)
+    # GSC check
+    gsc_data = st.session_state.get("gsc_data")
+    if gsc_data is not None and hasattr(gsc_data, "groupby"):
+        gsc_pages = gsc_data.groupby("page")["impressions"].sum()
+        for page_url, impr in gsc_pages.items():
+            if impr > 0:
+                google_found.add(_norm_url(page_url))
 
-        if nav_linked > 0:
-            orphans = pd.DataFrame(real_orphans)
+    # Ahrefs check
+    page_auth = st.session_state.get("page_authority")
+    if page_auth is not None and hasattr(page_auth, "iterrows"):
+        for _, pa_row in page_auth.iterrows():
+            rd = pa_row.get("referring_domains", 0)
+            try:
+                if rd and int(rd) > 0:
+                    has_backlinks.add(_norm_url(str(pa_row.get("page", ""))))
+            except (ValueError, TypeError):
+                pass
+
+    # Classify each orphan
+    real_orphans = []
+    for _, row in orphans.iterrows():
+        url_norm = _norm_url(row["URL"])
+        in_nav = url_norm in nav_linked
+        in_google = url_norm in google_found
+        in_ahrefs = url_norm in has_backlinks
+
+        if in_nav:
+            # Linked from navigation — not a real orphan, skip
+            continue
+
+        # Determine severity
+        if not in_google and not in_ahrefs:
+            severity = "CRITICAL"  # Truly invisible
+            why_orphan = "No content links, no nav links, not in Google, no backlinks"
+        elif not in_google:
+            severity = "HIGH"  # Has backlinks but Google doesn't show it
+            why_orphan = "No content links, not in Google (but has external backlinks)"
+        elif not in_ahrefs:
+            severity = "MEDIUM"  # Google found it (via sitemap) but no links
+            why_orphan = "No content links, in Google via sitemap but no backlinks"
+        else:
+            severity = "LOW"  # Google knows it and has backlinks, just no content links
+            why_orphan = "No content links (only nav/sitemap) — add contextual links for SEO value"
+
+        row_dict = row.to_dict()
+        row_dict["Severity"] = severity
+        row_dict["Why Orphan"] = why_orphan
+        row_dict["In Google"] = "YES" if in_google else "NO"
+        row_dict["Has Backlinks"] = "YES" if in_ahrefs else "NO"
+        real_orphans.append(row_dict)
+
+    orphans = pd.DataFrame(real_orphans)
 
     if orphans.empty:
         return pd.DataFrame()
