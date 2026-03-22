@@ -788,7 +788,8 @@ def render():
                         if kws:
                             changes.append(f"Keywords added: {', '.join(kws[:10])}")
                         if links:
-                            changes.append(f"Internal links to: {', '.join(l.replace('https://www.mshop.se', '') for l in links[:8])}")
+                            site_origin = st.session_state.get("gsc_site", "").rstrip("/")
+                            changes.append(f"Internal links to: {', '.join(l.replace(site_origin, '') for l in links[:8])}")
                         if prods:
                             changes.append(f"Products featured: {', '.join(prods[:5])}")
                         # Get step summaries as change reasons

@@ -424,10 +424,12 @@ def _build_orphan_fixes(df_structure, audit_results, topic_clusters):
         page_type = orphan.get("Page Type", "?")
 
         # Strategy 1: Parent URL in hierarchy
+        parsed_orphan = urlparse(url)
+        site_origin = f"{parsed_orphan.scheme}://{parsed_orphan.netloc}"
         parent_url = ""
         if len(path_parts) >= 2:
             parent_path = "/" + "/".join(path_parts[:-1])
-            parent_url = f"https://www.mshop.se{parent_path}"
+            parent_url = f"{site_origin}{parent_path}"
 
         # Strategy 2: Find page in same cluster
         cluster_parent = ""
@@ -458,7 +460,7 @@ def _build_orphan_fixes(df_structure, audit_results, topic_clusters):
                     break
 
         # Pick best parent
-        link_from = parent_url or cluster_parent or slug_parent or "https://www.mshop.se/"
+        link_from = parent_url or cluster_parent or slug_parent or f"{site_origin}/"
 
         # Generate anchor text from URL slug
         slug = path_parts[-1] if path_parts else ""

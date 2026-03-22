@@ -10,6 +10,21 @@ import streamlit as st
 from typing import Optional
 
 
+# ── Anti-hallucination rules injected into all prompts that assess page state ──
+# These prevent AI from contradicting the data it is given.
+ANTI_HALLUCINATION_RULES = """
+CRITICAL — ACCURACY RULES (never violate these):
+- Base ALL claims ONLY on the data provided below. Do NOT assume or invent page state.
+- If Title is not "" (empty), the page HAS a title. Do NOT say "missing title" or "no title".
+- If Meta description is not "" (empty), the page HAS a meta description. Do NOT say "missing description".
+- If Word count > 0, the page has content. Do NOT say "empty page" or "no content".
+- If H1 is not "" (empty), the page HAS an H1. Do NOT say "lacks H1" or "missing H1".
+- If body text/content excerpt is provided, READ it before assessing content quality.
+- NEVER say a page is "completely empty" unless word count is literally 0 AND title is "" AND meta description is "".
+- When stating what is wrong, quote the ACTUAL current value. Example: "Title is 85 chars (too long)" not just "title needs fixing".
+- If something looks fine, say it is fine. Do NOT invent problems."""
+
+
 def _strip_nav_text(text: str) -> str:
     """Remove navigation/header/trust-bar text from any string."""
     import re
@@ -72,7 +87,7 @@ def _clean_body_text(page_data, max_chars: int = 1500) -> str:
     import re
     sentences = re.split(r'(?<=[.!?])\s+', cleaned)
     for sent in sentences:
-        if len(sent) > 40 and not any(nav in sent.lower() for nav in ['shoppa', 'varukorg', 'mshop.se', 'populära', 'omdömen']):
+        if len(sent) > 40 and not any(nav in sent.lower() for nav in ['shoppa', 'varukorg', 'populära', 'omdömen', 'kundvagn', 'checkout']):
             idx = cleaned.index(sent) if sent in cleaned else 0
             return cleaned[idx:idx + max_chars].strip()
 
@@ -120,8 +135,8 @@ def generate_meta_suggestions(
     """
     Generate optimized meta title and description variants
     """
-    current_title = page_data.get("title") or "No title"
-    current_desc = page_data.get("meta_description") or "No description"
+    current_title = page_data.get("title") or ""
+    current_desc = page_data.get("meta_description") or ""
     url = page_data.get("url", "")
     h1 = page_data.get("h1") or ""
     h2s = page_data.get("h2s", [])[:5]
@@ -145,11 +160,12 @@ IMPORTANT: Meta for category pages should focus on category intent (browse/explo
         cat_context = "\nPage type: BLOG/GUIDE\nIMPORTANT: Meta should focus on informational intent and value for the reader."
 
     prompt = f"""You are a senior SEO specialist and conversion optimization expert for an e-commerce webshop.
+{ANTI_HALLUCINATION_RULES}
 
 ## CURRENT SITUATION
 URL: {url}{cat_context}
-Current title: {current_title} ({len(current_title)} chars)
-Current meta description: {current_desc} ({len(current_desc)} chars)
+Current title: "{current_title}" ({len(current_title)} chars)
+Current meta description: "{current_desc}" ({len(current_desc)} chars)
 H1: {h1}
 H2s: {', '.join(h2s) if h2s else 'None'}
 Target keywords from GSC: {', '.join(target_keywords)}
@@ -214,13 +230,15 @@ def generate_content_audit(
     body = _clean_body_text(page_data, 4000)
     url = page_data.get("url", "")
     
+    body_word_count = len(body.split()) if body else 0
     prompt = f"""You are an SEO content analyst. Analyze this landing page and its keyword coverage.
+{ANTI_HALLUCINATION_RULES}
 
 URL: {url}
 GSC keywords driving traffic: {', '.join(gsc_queries[:20])}
 Target focus keywords: {', '.join(target_keywords)}
 
-CURRENT CONTENT (excerpt):
+CURRENT CONTENT ({body_word_count} words — excerpt):
 {body}
 
 ## TASK: Perform a keyword gap analysis
@@ -299,6 +317,7 @@ def assess_content_quality_batch(
         )
 
     prompt = f"""You are a Google Search Quality Rater evaluating page content quality.
+{ANTI_HALLUCINATION_RULES}
 
 For EACH page below, assess the text quality using Google's Helpful Content guidelines.
 
@@ -357,7 +376,9 @@ def assess_content_quality(
     language: str = "Swedish",
 ) -> dict:
     """Assess existing page text quality for both users and Google."""
+    text_word_count = len(body_text.split()) if body_text else 0
     prompt = f"""You are a senior SEO content strategist and UX copywriter. Evaluate this page's EXISTING text quality — not just keyword presence, but whether the text is actually good.
+{ANTI_HALLUCINATION_RULES}
 
 ## PAGE
 URL: {url}
@@ -365,7 +386,7 @@ Page type: {page_type}
 Site context: {site_context}
 Target keywords: {', '.join(target_keywords[:10])}
 
-## EXISTING TEXT
+## EXISTING TEXT ({text_word_count} words)
 {body_text[:3000]}
 
 ## EVALUATE THESE DIMENSIONS (score each 1-10):
@@ -460,7 +481,9 @@ Focus on product-specific features, benefits and use cases.
 Focus on informational value, E-E-A-T signals and depth.
 """
 
+    existing_word_count = len(existing.split()) if existing else 0
     prompt = f"""You are a senior SEO copywriter specialized in e-commerce.
+{ANTI_HALLUCINATION_RULES}
 
 ## CONTEXT
 URL: {url}
@@ -468,7 +491,7 @@ Site: {site_context}
 Primary keywords: {', '.join(target_keywords[:5])}
 All GSC search queries we rank for: {', '.join(gsc_queries[:25])}
 Current H2 structure: {', '.join(h2s) if h2s else 'None'}
-Existing content (excerpt): {existing[:1000]}
+Existing content ({existing_word_count} words — excerpt): {existing[:1000]}
 Tone of voice: {tone}
 Language: {language}
 {type_instruction}
@@ -1100,7 +1123,7 @@ def generate_full_article_html(
     all_site_urls: list = None,
     cluster_context: str = "",
 ) -> dict:
-    """Generate a complete article as HTML matching Mshop's exact format."""
+    """Generate a complete article as CMS-ready HTML."""
     from utils.templates import BLOG_TEMPLATE_INSTRUCTIONS
 
     products_section = ""
@@ -1125,7 +1148,7 @@ Feature 3-5 of these products naturally in the article using the product card HT
     if all_site_urls:
         url_section = f"\n\n## ALL SITE URLs (use these for internal links — do NOT invent URLs)\n{chr(10).join(all_site_urls[:150])}"
 
-    prompt = f"""You are a senior content writer for Mshop.se, Scandinavia's leading adult webshop.
+    prompt = f"""You are a senior content writer for an e-commerce site.
 Write a complete, CMS-ready article following the EXACT HTML format specified below.
 
 ## ARTICLE DETAILS
@@ -1210,20 +1233,22 @@ def generate_category_bottom_text(
     if all_site_urls:
         url_list = f"\n\n## ALL SITE URLs\n{chr(10).join(all_site_urls[:150])}"
 
-    prompt = f"""You are a senior SEO copywriter for Mshop.se.
+    bottom_word_count = len(current_bottom_text.split()) if current_bottom_text else 0
+    prompt = f"""You are a senior SEO copywriter.
 Rewrite the category page bottom text following the EXACT format below.
+{ANTI_HALLUCINATION_RULES}
 
 ## PAGE
 URL: {url}
-Title: {page_title}
-H1: {h1}
+Title: "{page_title}"
+H1: "{h1}"
 Language: {language}
 Site: {site_context}
 
 ## ALL KEYWORDS THAT MUST APPEAR IN THE TEXT
 {', '.join(target_keywords[:25])}
 
-## CURRENT BOTTOM TEXT (rewrite this — it may be bad/thin/spammy)
+## CURRENT BOTTOM TEXT ({bottom_word_count} words — rewrite this if quality is poor)
 {current_bottom_text[:2000]}
 
 {CATEGORY_BOTTOM_TEXT_INSTRUCTIONS}
@@ -1260,7 +1285,9 @@ def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str
         return "(this page is not in any topic cluster)"
 
     from urllib.parse import urlparse
-    page_path = urlparse(url).path.lower().rstrip("/")
+    parsed = urlparse(url)
+    page_path = parsed.path.lower().rstrip("/")
+    site_origin = f"{parsed.scheme}://{parsed.netloc}"
 
     lines = []
 
@@ -1278,7 +1305,7 @@ def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str
     if child_pages:
         lines.append(f"PILLAR PAGE — has {len(child_pages)} child/spoke pages:")
         for cp in child_pages[:10]:
-            cp_short = cp.replace("https://www.mshop.se", "")
+            cp_short = cp.replace(site_origin, "")
             cp_topics = [t.get("topic", "") for t in page_topics.get(cp, [])[:2]]
             lines.append(f"  Child: {cp_short} (topics: {', '.join(cp_topics)})")
         lines.append("As a pillar, this page should: overview ALL child topics, link DOWN to each child, provide comprehensive category guidance")
@@ -1287,7 +1314,7 @@ def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str
         path_parts = page_path.strip("/").split("/")
         if len(path_parts) >= 2:
             parent_path = "/" + "/".join(path_parts[:-1])
-            parent_url = f"https://www.mshop.se{parent_path}"
+            parent_url = f"{site_origin}{parent_path}"
             lines.append(f"SPOKE PAGE — parent/hub: {parent_url}")
             lines.append("As a spoke, this page should: go DEEP on its specific subtopic, link UP to parent hub, cross-link to sibling pages")
 
@@ -1300,7 +1327,7 @@ def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str
                 if len(other_parts) >= 2 and other_parts[:-1] == path_parts[:-1]:
                     sibling_pages.append(other_url)
         if sibling_pages:
-            lines.append(f"Sibling pages ({len(sibling_pages)}): {', '.join(s.replace('https://www.mshop.se', '') for s in sibling_pages[:8])}")
+            lines.append(f"Sibling pages ({len(sibling_pages)}): {', '.join(s.replace(site_origin, '') for s in sibling_pages[:8])}")
 
     return "\n".join(lines)
 
@@ -1312,6 +1339,13 @@ def _format_existing_links(page_data: dict) -> str:
         return f"(count only: {links} links, no detail available)"
     if not links:
         return "(no links found)"
+
+    # Derive site origin from page URL for shortening
+    from urllib.parse import urlparse
+    page_url = page_data.get("url", "")
+    parsed = urlparse(page_url)
+    site_origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else ""
+
     # Show unique links with anchors
     seen = set()
     lines = []
@@ -1320,7 +1354,7 @@ def _format_existing_links(page_data: dict) -> str:
         anchor = l.get("anchor", "")
         if url and url not in seen:
             seen.add(url)
-            short = url.replace("https://www.mshop.se", "")
+            short = url.replace(site_origin, "") if site_origin else url
             lines.append(f"  [{anchor[:40]}] → {short}")
     if len(lines) > 30:
         return "\n".join(lines[:30]) + f"\n  ... and {len(lines) - 30} more links"
@@ -1384,14 +1418,7 @@ def generate_page_implementation_plan(
         url_list_section = f"\n\n## ALL PAGES ON THIS SITE (use these exact URLs when recommending internal links)\n{chr(10).join(all_site_urls[:200])}"
 
     prompt = f"""You are a senior SEO strategist reviewing a single page. Based on ALL the data below, create a precise implementation plan with ONLY actions that are correct and relevant for THIS specific page.
-
-CRITICAL — BASE YOUR ASSESSMENT ONLY ON THE PROVIDED DATA:
-- If Title is not empty (""), the page HAS a title — do NOT say "title is missing" or "empty title"
-- If Meta description is not empty (""), the page HAS a meta description — do NOT say "missing meta description"
-- If Word count > 0, the page is NOT empty — do NOT say "completely empty" or "no content"
-- If H1 is not empty, the page HAS an H1 — do NOT say "lacks H1"
-- Read the CURRENT PAGE TEXT section carefully before assessing content quality
-- NEVER contradict the data provided. Your overall_assessment MUST accurately reflect the actual state shown in the data.
+{ANTI_HALLUCINATION_RULES}
 
 IMPORTANT: When recommending internal links, use the EXACT URLs from the site URL list below. Do NOT invent or guess URLs.{url_list_section}
 
@@ -1678,8 +1705,8 @@ def generate_action_plan(
             "lost_clicks": _to_native(r.get("lost_clicks_estimate", 0)),
             "position": _to_native(r.get("position", 0)),
             "ctr_gap": _to_native(r.get("ctr_gap_pct", 0)),
-            "meta_score": _to_native(r.get("meta_score", 100)),
-            "content_score": _to_native(r.get("content_score", 100)),
+            "meta_score": _to_native(r.get("meta_score")) if r.get("meta_score") is not None else "not audited",
+            "content_score": _to_native(r.get("content_score")) if r.get("content_score") is not None else "not audited",
             "top_keywords": [str(k) for k in r.get("target_keywords", [])[:3]],
             "issues": [str(i) for i in r.get("issues", [])[:3]],
         })

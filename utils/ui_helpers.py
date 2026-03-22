@@ -26,12 +26,16 @@ def normalize_url(url: str) -> str:
     if not url:
         return ""
     u = str(url).strip()
-    # Convert relative to absolute (assume https + www.mshop.se for now)
+    # Convert relative to absolute using configured site URL
     if u.startswith("/") and not u.startswith("//"):
-        u = "https://www.mshop.se" + u
+        import streamlit as st
+        site = st.session_state.get("gsc_site", "").rstrip("/")
+        if site:
+            u = site + u
+        else:
+            u = "https://example.com" + u
     # Standardize protocol
     u = u.replace("http://", "https://")
-    # Keep www (it's part of the canonical URL for mshop.se)
     # Remove trailing slash
     u = u.rstrip("/")
     # Lowercase

@@ -247,7 +247,8 @@ def render():
         url = r.get("url", "")
         lost = r.get("lost_clicks_estimate", 0)
         impr = r.get("impressions", 0)
-        url_short = url.replace("https://www.mshop.se", "")
+        site_origin = st.session_state.get("gsc_site", "").rstrip("/")
+        url_short = url.replace(site_origin, "") if site_origin else url
 
         has_plan = f"_ai_plan_{stable_hash(url)}" in st.session_state
         has_text = f"_bottom_text_{stable_hash(url)}" in st.session_state
