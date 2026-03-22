@@ -288,6 +288,12 @@ def render():
                         st.rerun()
                     continue
 
+                # Show data quality warnings if present
+                page_r = next((r for r in audit_results if r["url"] == url), {})
+                data_warnings = page_r.get("_data_warnings", [])
+                if data_warnings:
+                    st.warning("**Data quality warnings** — plan may be based on incomplete data:\n" + "\n".join(f"- {w}" for w in data_warnings))
+
                 # Overall assessment
                 assessment = plan.get("overall_assessment", "")
                 primary_kw = plan.get("primary_keyword", "")

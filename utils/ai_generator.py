@@ -1489,6 +1489,12 @@ def generate_page_implementation_plan(
     if quality:
         quality_info = f"\nAI content quality verdict: {quality.get('verdict', '?')} ({quality.get('score', '?')}/10) — {quality.get('summary', '')}"
 
+    # Data quality warnings (from scraper validation)
+    data_warnings = page_data.get("_data_warnings", [])
+    data_warning_section = ""
+    if data_warnings:
+        data_warning_section = "\n\n## ⚠ DATA QUALITY WARNINGS\nThe data below may be incomplete. Consider these warnings:\n" + "\n".join(f"- {w}" for w in data_warnings) + "\nIf word count is 0 but the page has a title, the content may not have been captured correctly. Do NOT assume the page is empty — state that data may be incomplete."
+
     # Include site URLs so AI uses real URLs in link recommendations
     url_list_section = ""
     if all_site_urls:
@@ -1497,7 +1503,7 @@ def generate_page_implementation_plan(
     prompt = f"""You are a senior SEO strategist reviewing a single page. Based on ALL the data below, create a precise implementation plan with ONLY actions that are correct and relevant for THIS specific page.
 {ANTI_HALLUCINATION_RULES}
 
-IMPORTANT: When recommending internal links, use the EXACT URLs from the site URL list below. Do NOT invent or guess URLs.{url_list_section}
+IMPORTANT: When recommending internal links, use the EXACT URLs from the site URL list below. Do NOT invent or guess URLs.{url_list_section}{data_warning_section}
 
 ## PAGE DATA
 URL: {url}
@@ -1542,16 +1548,16 @@ Language: {language}
 ## MISSING TOPIC SECTIONS (subtopics not covered in page text)
 {', '.join(missing_subtopics) if missing_subtopics else 'None'}
 
-## CURRENT PAGE TEXT (first 1500 chars)
-{body_snippet}
+## CURRENT PAGE TEXT (first 1500 chars){' — NOTE: text is empty, possibly due to JS rendering issues. Do NOT assume page has no content.' if not body_snippet and word_count == 0 and title else ''}
+{body_snippet if body_snippet else '(no text captured)'}
 
 ## YOUR TASK
 Create a step-by-step implementation plan. For each step, be SPECIFIC — tell the user exactly what to change and why.
 
 CRITICAL RULES:
-1. KEYWORD RELEVANCE: Only include keywords that a user searching for them would expect to find on THIS specific page. Example: "clitoris vibrator" does NOT belong on a men's sex toy page. "dildo köp" is generic and belongs on the dildo category page, not a subcategory. Be STRICT about this.
-2. Do NOT recommend adding a keyword to H1 if H1 already contains it (handle Swedish chars: ä=a, ö=o, å=a)
-3. INTERNAL LINKS: Check the EXISTING LINKS list above first. Do NOT recommend adding links that already exist. Only suggest NEW links. PREFER CATEGORY pages over individual product pages — link to /sexleksaker/vibratorer (category) not /satisfyer-pro-2 (product). Use EXACT URLs from the site URL list. Do NOT invent URLs. Verify anchor texts are descriptive.
+1. KEYWORD RELEVANCE: Only include keywords that a user searching for them would expect to find on THIS specific page. A keyword for subcategory A does NOT belong on subcategory B. Generic keywords belong on the parent category, not subcategories. Be STRICT about this.
+2. Do NOT recommend adding a keyword to H1 if H1 already contains it (handle Swedish/Danish chars: ä=a, ö=o, å=a)
+3. INTERNAL LINKS: Check the EXISTING LINKS list above first. Do NOT recommend adding links that already exist. Only suggest NEW links. PREFER CATEGORY pages over individual product pages. Use EXACT URLs from the site URL list. Do NOT invent URLs. Verify anchor texts are descriptive.
 4. META TITLE: Must be under 60 chars. Primary keyword first. Not a brand name.
 5. META DESCRIPTION: Must be 140-160 chars. Include primary keyword + CTA.
 6. ALWAYS show meta title + description as the FIRST step if they need improvement.

@@ -267,6 +267,22 @@ def render():
                         result["page_type"] = classification["page_type"]
 
                     if result.get("success", page_data.get("success")):
+                        # ── Scrape quality validation ─────────────────
+                        scraper = result.get("_scraper", "unknown")
+                        wc = result.get("word_count", 0)
+                        has_title = bool(result.get("title"))
+                        has_body = wc > 0
+                        data_warnings = []
+
+                        if "requests" in scraper:
+                            data_warnings.append("Scraped without JavaScript rendering (Playwright unavailable) — content may be incomplete")
+                        if has_title and not has_body:
+                            data_warnings.append(f"Page has title but 0 words of body text — possible JS-rendered content not captured")
+                        if result.get("page_type") == "category" and not result.get("bottom_text") and wc > 100:
+                            data_warnings.append("Category page: no bottom text detected — product grid may use non-standard markup")
+
+                        result["_data_warnings"] = data_warnings
+
                         meta_eval = evaluate_meta(result, target_keywords)
                         result["meta_score"] = meta_eval["score"]
                         result["issues"] = meta_eval["issues"]
@@ -286,6 +302,7 @@ def render():
                                 "msg": issue["msg"],
                             })
                     else:
+                        result["_data_warnings"] = ["Scrape failed — all page data is missing"]
                         result["meta_score"] = None
                         result["issues"] = [{"type": "critical", "field": "url", "msg": f"Could not fetch the page: {result.get('error', page_data.get('error'))}"}]
                 else:
@@ -587,6 +604,11 @@ def render():
         expander_label += f"  |  Lost clicks: {lost:,}"
 
         with st.expander(expander_label):
+
+            # Data quality warnings
+            dw = r.get("_data_warnings", [])
+            if dw:
+                st.warning("**Data quality:** " + " | ".join(dw))
 
             # Page type badge
             st.markdown(
