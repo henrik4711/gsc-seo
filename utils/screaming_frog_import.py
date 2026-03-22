@@ -174,16 +174,23 @@ def _parse_inlinks_chunked(file_path: str, chunk_size: int = 200_000) -> pd.Data
     header_df = pd.read_csv(file_path, encoding=encoding, sep=sep, nrows=0, on_bad_lines="skip")
     col_map = _map_inlink_columns(header_df.columns)
 
-    # Determine which columns to load (only the ones we need)
-    needed_originals = [orig for orig, mapped in col_map.items()
-                        if mapped in ("source", "target", "anchor", "link_type", "status_code", "follow")]
+    # Determine which columns to load — only first match per target name
+    needed_originals = []
+    seen_mapped = set()
+    for orig, mapped in col_map.items():
+        if mapped in ("source", "target", "anchor", "link_type", "status_code", "follow"):
+            if mapped not in seen_mapped:
+                needed_originals.append(orig)
+                seen_mapped.add(mapped)
     if not needed_originals:
         return pd.DataFrame()
 
     # Check source+target are mappable
-    mapped_names = set(col_map.values())
-    if "source" not in mapped_names or "target" not in mapped_names:
+    if "source" not in seen_mapped or "target" not in seen_mapped:
         return pd.DataFrame()
+
+    # Build rename map for only the columns we load
+    rename_map = {orig: col_map[orig] for orig in needed_originals}
 
     # Stream chunks
     chunks = []
@@ -197,33 +204,33 @@ def _parse_inlinks_chunked(file_path: str, chunk_size: int = 200_000) -> pd.Data
         chunksize=chunk_size,
         on_bad_lines="skip",
         low_memory=True,
-        dtype=str,  # Read everything as string — we convert later
+        dtype=str,
     )
 
     for chunk in reader:
-        chunk = chunk.rename(columns=col_map)
+        chunk = chunk.rename(columns=rename_map)
         total_rows += len(chunk)
 
         # Filter to valid URLs
-        chunk = chunk[
-            chunk["source"].str.contains(r"https?://", case=False, na=False) &
-            chunk["target"].str.contains(r"https?://", case=False, na=False)
-        ].copy()
+        src = chunk["source"].astype(str)
+        tgt = chunk["target"].astype(str)
+        mask = src.str.contains(r"https?://", case=False, na=False) & tgt.str.contains(r"https?://", case=False, na=False)
+        chunk = chunk[mask].copy()
 
         # Normalize URLs
         chunk["source"] = chunk["source"].str.strip().apply(normalize_url)
         chunk["target"] = chunk["target"].str.strip().apply(normalize_url)
 
-        # Deduplicate: keep first occurrence of each source→target pair
-        new_rows = []
-        for _, row in chunk.iterrows():
-            pair = (row["source"], row["target"])
-            if pair not in seen_pairs:
-                seen_pairs.add(pair)
-                new_rows.append(row)
-        if new_rows:
-            chunks.append(pd.DataFrame(new_rows))
-            kept_rows += len(new_rows)
+        # Deduplicate: vectorized — create pair key and filter
+        chunk["_pair"] = chunk["source"] + "→" + chunk["target"]
+        new_mask = ~chunk["_pair"].isin(seen_pairs)
+        new_chunk = chunk[new_mask].copy()
+        seen_pairs.update(new_chunk["_pair"].tolist())
+        new_chunk = new_chunk.drop(columns=["_pair"])
+
+        if not new_chunk.empty:
+            chunks.append(new_chunk)
+            kept_rows += len(new_chunk)
 
     if not chunks:
         return pd.DataFrame()
@@ -241,7 +248,7 @@ def _parse_inlinks_chunked(file_path: str, chunk_size: int = 200_000) -> pd.Data
     # Ensure column order
     out_cols = [c for c in ["source", "target", "anchor", "link_type", "status_code", "follow"] if c in df.columns]
 
-    print(f"Inlinks: {total_rows:,} total rows → {kept_rows:,} unique source→target pairs ({size_mb:.0f} MB file)")
+    print(f"Inlinks: {total_rows:,} total rows -> {kept_rows:,} unique source->target pairs ({size_mb:.0f} MB file)")
     return df[out_cols].copy()
 
 
