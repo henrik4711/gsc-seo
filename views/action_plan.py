@@ -82,6 +82,37 @@ def render():
 
     pages = _sort_pages_by_impact(audit_results)
 
+    # ── Ensure homepage is always included and pinned to top ──────
+    site_url = st.session_state.get("gsc_site", "")
+    homepage_url = site_url.rstrip("/") + "/" if site_url else ""
+    if homepage_url:
+        homepage_in_list = any(p["url"] == homepage_url for p in pages)
+        if not homepage_in_list:
+            # Homepage not audited yet — add it with GSC data if available
+            hp_impressions = 0
+            hp_clicks = 0
+            if gsc is not None and hasattr(gsc, "page"):
+                hp_data = gsc[gsc["page"] == homepage_url]
+                if not hp_data.empty:
+                    hp_impressions = int(hp_data["impressions"].sum())
+                    hp_clicks = int(hp_data["clicks"].sum())
+            pages.insert(0, {
+                "url": homepage_url,
+                "page_type": "homepage",
+                "impressions": hp_impressions,
+                "lost_clicks": hp_clicks * 0.5,  # Estimate
+                "meta_score": None,
+                "content_score": None,
+                "referring_domains": 0,
+                "backlinks": 0,
+                "authority_score": 0,
+            })
+        else:
+            # Move homepage to top
+            hp = next(p for p in pages if p["url"] == homepage_url)
+            pages.remove(hp)
+            pages.insert(0, hp)
+
     if not pages:
         st.info("No audited pages found")
         return
@@ -130,7 +161,17 @@ def render():
 
                 log.write(f"[{i+1}/10] {p['url']}...")
                 try:
-                    page_r = next((r for r in audit_results if r["url"] == p["url"]), {})
+                    page_r = next((r for r in audit_results if r["url"] == p["url"]), None)
+                    if not page_r:
+                        from utils.page_scraper import scrape_page
+                        page_r = scrape_page(p["url"])
+                        page_r["url"] = p["url"]
+                        if gsc is not None and hasattr(gsc, "page"):
+                            pg = gsc[gsc["page"] == p["url"]]
+                            if not pg.empty:
+                                page_r["impressions"] = int(pg["impressions"].sum())
+                                page_r["clicks"] = int(pg["clicks"].sum())
+                                page_r["target_keywords"] = pg.sort_values("impressions", ascending=False)["query"].head(15).tolist()
                     result = generate_page_implementation_plan(
                         client, page_r, site_context, all_site_urls, language, topic_clusters,
                     )
@@ -215,7 +256,19 @@ def render():
                         try:
                             from utils.ai_generator import get_client, generate_page_implementation_plan
                             client = get_client(get_anthropic_key())
-                            page_r = next((r for r in audit_results if r["url"] == url), {})
+                            page_r = next((r for r in audit_results if r["url"] == url), None)
+                            if not page_r:
+                                # Page not in audit_results — scrape live
+                                from utils.page_scraper import scrape_page
+                                page_r = scrape_page(url)
+                                page_r["url"] = url
+                                # Add GSC data
+                                if gsc is not None and hasattr(gsc, "page"):
+                                    pg = gsc[gsc["page"] == url]
+                                    if not pg.empty:
+                                        page_r["impressions"] = int(pg["impressions"].sum())
+                                        page_r["clicks"] = int(pg["clicks"].sum())
+                                        page_r["target_keywords"] = pg.sort_values("impressions", ascending=False)["query"].head(15).tolist()
                             result = generate_page_implementation_plan(
                                 client, page_r, site_context, all_site_urls, language, topic_clusters,
                             )

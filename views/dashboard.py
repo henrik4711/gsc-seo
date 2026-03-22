@@ -57,10 +57,12 @@ def _get_phase_status():
     })
 
     # ── Phase 1: Infrastructure fixes ─────────────────────────
-    # Homepage
-    homepage_plan = st.session_state.get(f"_ai_plan_{stable_hash('https://www.mshop.se/')}")
+    # Homepage — derive from GSC site URL (not hardcoded)
+    site_url = st.session_state.get("gsc_site", "")
+    homepage_url = site_url.rstrip("/") + "/" if site_url else ""
+    homepage_plan = st.session_state.get(f"_ai_plan_{stable_hash(homepage_url)}") if homepage_url else None
     homepage_done = homepage_plan is not None and not homepage_plan.get("error")
-    homepage_text = st.session_state.get(f"_bottom_text_{stable_hash('https://www.mshop.se/')}")
+    homepage_text = st.session_state.get(f"_bottom_text_{stable_hash(homepage_url)}") if homepage_url else None
 
     phase1_tasks = [
         ("Generate homepage plan", homepage_done, "14. Implementation → / → Generate AI plan"),
@@ -82,7 +84,7 @@ def _get_phase_status():
     texts_done = 0
     for r in top_pages:
         url = r.get("url", "")
-        if url == "https://www.mshop.se/":
+        if homepage_url and url == homepage_url:
             continue  # homepage handled in phase 1
         plan_key = f"_ai_plan_{stable_hash(url)}"
         if plan_key in st.session_state and not st.session_state[plan_key].get("error"):
