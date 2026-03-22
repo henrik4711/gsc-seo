@@ -323,6 +323,32 @@ def _build_orphan_fixes(df_structure, audit_results, topic_clusters):
     if orphans.empty:
         return pd.DataFrame()
 
+    # Cross-check with Screaming Frog data — if SF says page HAS inlinks,
+    # it's linked from navigation (which our scraper strips). Not a real orphan.
+    sf_pages = st.session_state.get("sf_pages")
+    if sf_pages is not None and hasattr(sf_pages, "iterrows"):
+        sf_with_links = set()
+        for _, sf_row in sf_pages.iterrows():
+            sf_url = str(sf_row.get("url", ""))
+            sf_inlinks = sf_row.get("inlinks", 0) or sf_row.get("unique_inlinks", 0)
+            if sf_inlinks and int(sf_inlinks) > 0:
+                sf_with_links.add(_norm_url(sf_url))
+
+        # Filter: only keep orphans that SF also says have 0 inlinks
+        real_orphans = []
+        nav_linked = 0
+        for _, row in orphans.iterrows():
+            if _norm_url(row["URL"]) in sf_with_links:
+                nav_linked += 1  # Not a real orphan — linked from nav
+            else:
+                real_orphans.append(row)
+
+        if nav_linked > 0:
+            orphans = pd.DataFrame(real_orphans)
+
+    if orphans.empty:
+        return pd.DataFrame()
+
     # Build: for each orphan, find the best parent page to link from
     tc = topic_clusters or {}
     page_topics = tc.get("page_topics", {})
