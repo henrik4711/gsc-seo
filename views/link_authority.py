@@ -254,6 +254,9 @@ def _render_upload():
                 st.session_state.get("sf_pages", pd.DataFrame()),
                 st.session_state.get("sf_inlinks", pd.DataFrame()),
                 site_domain,
+                gsc_data=st.session_state.get("gsc_data"),
+                page_authority=st.session_state.get("page_authority"),
+                sf_all_pages=st.session_state.get("sf_pages"),
             )
             st.session_state["sf_crawl_issues"] = issues
             total = sum(len(v) for v in issues.values())
@@ -481,8 +484,8 @@ def _render_crawl_data():
     issue_types = [
         ("broken_links", "Broken Links (4xx/5xx)", "#ff4455",
          "These pages return errors. Fix or redirect them."),
-        ("orphan_pages", "Orphan Pages (0 inlinks)", "#ff4455",
-         "No internal links point to these pages. Google can't discover them."),
+        ("orphan_pages", "Orphan Pages (cross-checked)", "#ff4455",
+         "Pages with no content links — cross-checked with GSC impressions, Ahrefs backlinks, and SF inlinks to filter false positives."),
         ("redirect_chains", "Redirects", "#ffaa33",
          "Update internal links to point directly to the final URL."),
         ("deep_pages", "Deep Pages (>3 clicks from home)", "#ffaa33",
@@ -509,6 +512,14 @@ def _render_crawl_data():
                 url = item.get("url", "")
                 action = item.get("action", "")
                 extra = ""
+                if "severity" in item:
+                    sev = item["severity"]
+                    sev_colors = {"CRITICAL": "#ff4455", "HIGH": "#ff6644", "MEDIUM": "#ffaa33", "LOW": "#6b6b8a"}
+                    extra += f" | <span style='color:{sev_colors.get(sev, \"#6b6b8a\")};font-weight:600;'>{sev}</span>"
+                if "in_google" in item:
+                    extra += f" | Google: {'YES' if item['in_google'] else 'NO'}"
+                if "has_backlinks" in item:
+                    extra += f" | Backlinks: {'YES' if item['has_backlinks'] else 'NO'}"
                 if "status_code" in item:
                     extra += f" | Status: {item['status_code']}"
                 if "crawl_depth" in item:

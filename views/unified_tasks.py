@@ -17,8 +17,12 @@ def _gather_all_tasks():
     for issue_type, items in crawl_issues.items():
         for item in items:
             # Map issue type to priority
-            if issue_type in ("broken_links", "orphan_pages"):
+            if issue_type == "broken_links":
                 priority = "high"
+                category = "Technical"
+            elif issue_type == "orphan_pages":
+                sev = item.get("severity", "HIGH")
+                priority = "high" if sev in ("CRITICAL", "HIGH") else "medium" if sev == "MEDIUM" else "low"
                 category = "Technical"
             elif issue_type in ("redirect_chains", "missing_meta"):
                 priority = "medium"

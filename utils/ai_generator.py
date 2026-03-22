@@ -1385,6 +1385,14 @@ def generate_page_implementation_plan(
 
     prompt = f"""You are a senior SEO strategist reviewing a single page. Based on ALL the data below, create a precise implementation plan with ONLY actions that are correct and relevant for THIS specific page.
 
+CRITICAL — BASE YOUR ASSESSMENT ONLY ON THE PROVIDED DATA:
+- If Title is not empty (""), the page HAS a title — do NOT say "title is missing" or "empty title"
+- If Meta description is not empty (""), the page HAS a meta description — do NOT say "missing meta description"
+- If Word count > 0, the page is NOT empty — do NOT say "completely empty" or "no content"
+- If H1 is not empty, the page HAS an H1 — do NOT say "lacks H1"
+- Read the CURRENT PAGE TEXT section carefully before assessing content quality
+- NEVER contradict the data provided. Your overall_assessment MUST accurately reflect the actual state shown in the data.
+
 IMPORTANT: When recommending internal links, use the EXACT URLs from the site URL list below. Do NOT invent or guess URLs.{url_list_section}
 
 ## PAGE DATA

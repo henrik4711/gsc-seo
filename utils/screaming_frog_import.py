@@ -224,9 +224,19 @@ def parse_all_pages(file_content) -> pd.DataFrame:
     return df
 
 
-def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_domain: str = "") -> dict:
+def _norm_url(u: str) -> str:
+    """Normalize URL for comparison: strip params, fragments, trailing slash, lowercase."""
+    from urllib.parse import urlparse, urlunparse
+    p = urlparse(u.strip())
+    return urlunparse((p.scheme.lower(), p.netloc.lower(), p.path.rstrip("/"), "", "", ""))
+
+
+def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_domain: str = "",
+                       gsc_data=None, page_authority=None, sf_all_pages=None) -> dict:
     """
     Analyze SF data to find technical SEO issues.
+    Cross-checks orphans with GSC impressions, Ahrefs backlinks, and SF All Pages inlinks
+    to filter out false positives.
     Returns structured issues dict.
     """
     issues = {
@@ -269,9 +279,43 @@ def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_do
                 "action": f"Update internal links pointing to this URL — it redirects ({int(row['status_code'])})",
             })
 
-    # ── Orphan pages (0 inlinks) ──────────────────────────────────
+    # ── Orphan pages (0 inlinks) — cross-checked with GSC + Ahrefs + SF All Pages ──
     if not inlinks_df.empty:
         linked_targets = set(inlinks_df["target"].str.rstrip("/").str.lower())
+
+        # Build cross-check sets to filter false orphans
+        nav_linked = set()  # SF All Pages says has inlinks > 0
+        google_found = set()  # GSC has impressions
+        has_backlinks = set()  # Ahrefs has referring domains
+
+        # SF All Pages check (separate from inlinks export)
+        if sf_all_pages is not None and hasattr(sf_all_pages, "iterrows"):
+            for _, sf_row in sf_all_pages.iterrows():
+                sf_url = str(sf_row.get("url", ""))
+                sf_inlinks = sf_row.get("inlinks", 0) or sf_row.get("unique_inlinks", 0)
+                try:
+                    if sf_inlinks and int(sf_inlinks) > 0:
+                        nav_linked.add(_norm_url(sf_url))
+                except (ValueError, TypeError):
+                    pass
+
+        # GSC check
+        if gsc_data is not None and hasattr(gsc_data, "groupby"):
+            gsc_pages = gsc_data.groupby("page")["impressions"].sum()
+            for page_url, impr in gsc_pages.items():
+                if impr > 0:
+                    google_found.add(_norm_url(page_url))
+
+        # Ahrefs check
+        if page_authority is not None and hasattr(page_authority, "iterrows"):
+            for _, pa_row in page_authority.iterrows():
+                rd = pa_row.get("referring_domains", 0)
+                try:
+                    if rd and int(rd) > 0:
+                        has_backlinks.add(_norm_url(str(pa_row.get("page", ""))))
+                except (ValueError, TypeError):
+                    pass
+
         html_pages = pages_df[
             (pages_df.get("status_code", pd.Series(dtype=int)).between(200, 299)) |
             (~pages_df.columns.isin(["status_code"]))
@@ -280,9 +324,35 @@ def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_do
             url_norm = row["url"].rstrip("/").lower()
             inlink_count = row.get("unique_inlinks", row.get("inlinks", -1))
             if inlink_count == 0 or (inlink_count == -1 and url_norm not in linked_targets):
+                norm = _norm_url(row["url"])
+
+                # Skip if SF All Pages shows this page has inlinks (nav/menu links)
+                if norm in nav_linked:
+                    continue
+
+                # Classify severity based on cross-check
+                in_google = norm in google_found
+                in_ahrefs = norm in has_backlinks
+
+                if not in_google and not in_ahrefs:
+                    severity = "CRITICAL"
+                    action = "Truly orphaned — no internal links, not in Google, no backlinks. Add links from related pages urgently."
+                elif not in_google:
+                    severity = "HIGH"
+                    action = "No internal links and not in Google (has external backlinks). Add internal links to help Google discover it."
+                elif not in_ahrefs:
+                    severity = "MEDIUM"
+                    action = "No content links — Google found it via sitemap but has no backlinks. Add contextual internal links."
+                else:
+                    severity = "LOW"
+                    action = "No content links (only nav/sitemap) — add contextual links from related pages for SEO value."
+
                 issues["orphan_pages"].append({
                     "url": row["url"],
-                    "action": "This page has NO internal links pointing to it — Google may not discover or rank it. Add links from related pages.",
+                    "severity": severity,
+                    "in_google": in_google,
+                    "has_backlinks": in_ahrefs,
+                    "action": action,
                 })
 
     # ── Deep pages (crawl depth > 3) ──────────────────────────────
