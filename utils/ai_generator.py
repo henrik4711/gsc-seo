@@ -166,8 +166,13 @@ IMPORTANT: Meta for category pages should focus on category intent (browse/explo
 URL: {url}{cat_context}
 Current title: "{current_title}" ({len(current_title)} chars)
 Current meta description: "{current_desc}" ({len(current_desc)} chars)
-H1: {h1}
+H1: "{h1}"
 H2s: {', '.join(h2s) if h2s else 'None'}
+Word count: {page_data.get('word_count', 0)}
+Impressions: {page_data.get('impressions', 0):,}
+Lost clicks estimate: {page_data.get('lost_clicks_estimate', 0):.0f}
+Average position: {page_data.get('position', 0):.1f}
+Referring domains: {page_data.get('referring_domains', 0)}
 Target keywords from GSC: {', '.join(target_keywords)}
 Site context: {site_context}
 
@@ -229,12 +234,26 @@ def generate_content_audit(
     """
     body = _clean_body_text(page_data, 4000)
     url = page_data.get("url", "")
-    
+    title = page_data.get("title") or ""
+    meta_desc = page_data.get("meta_description") or ""
+    h1 = page_data.get("h1") or ""
+    h2s = page_data.get("h2s", [])[:10]
+    page_type = page_data.get("page_type", "unknown")
+    word_count = page_data.get("word_count", 0)
+    impressions = page_data.get("impressions", 0)
+
     body_word_count = len(body.split()) if body else 0
     prompt = f"""You are an SEO content analyst. Analyze this landing page and its keyword coverage.
 {ANTI_HALLUCINATION_RULES}
 
 URL: {url}
+Page type: {page_type}
+Title: "{title}" ({len(title)} chars)
+Meta description: "{meta_desc}" ({len(meta_desc)} chars)
+H1: "{h1}"
+H2s: {', '.join(h2s) if h2s else 'None'}
+Total word count: {word_count}
+Impressions: {impressions:,}
 GSC keywords driving traffic: {', '.join(gsc_queries[:20])}
 Target focus keywords: {', '.join(target_keywords)}
 
@@ -304,13 +323,18 @@ def assess_content_quality_batch(
                 cluster_info += f"PILLAR page with {len(child_pages)} child pages\n"
                 cluster_info += f"Child pages: {', '.join(c.split('/')[-1] for c in child_pages[:8])}\n"
 
+        internal_links = p.get("internal_links", 0)
+        link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
         page_sections.append(
             f"### PAGE {i+1}\n"
             f"URL: {p.get('url', '')}\n"
             f"Page type: {p.get('page_type', 'unknown')}\n"
-            f"Title: {(p.get('title') or '')[:80]}\n"
-            f"H1: {(p.get('h1') or '')[:80]}\n"
+            f"Title: \"{(p.get('title') or '')[:80]}\" ({len(p.get('title') or '')} chars)\n"
+            f"Meta description: \"{(p.get('meta_description') or '')[:80]}\" ({len(p.get('meta_description') or '')} chars)\n"
+            f"H1: \"{(p.get('h1') or '')[:80]}\"\n"
             f"Word count: {p.get('word_count', 0)}\n"
+            f"Internal links: {link_count}\n"
+            f"Impressions: {p.get('impressions', 0):,}\n"
             f"{cluster_info}"
             f"Target keywords: {', '.join(p.get('target_keywords', [])[:5])}\n"
             f"Text sample:\n{body}\n"
@@ -374,19 +398,37 @@ def assess_content_quality(
     target_keywords: list,
     site_context: str = "",
     language: str = "Swedish",
+    page_data: dict = None,
 ) -> dict:
     """Assess existing page text quality for both users and Google."""
     text_word_count = len(body_text.split()) if body_text else 0
+    pd = page_data or {}
+    title = pd.get("title") or ""
+    meta_desc = pd.get("meta_description") or ""
+    h1 = pd.get("h1") or ""
+    h2s = pd.get("h2s", [])[:10]
+    full_word_count = pd.get("word_count", text_word_count)
+    impressions = pd.get("impressions", 0)
+    internal_links = pd.get("internal_links", 0)
+    link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
+
     prompt = f"""You are a senior SEO content strategist and UX copywriter. Evaluate this page's EXISTING text quality — not just keyword presence, but whether the text is actually good.
 {ANTI_HALLUCINATION_RULES}
 
 ## PAGE
 URL: {url}
 Page type: {page_type}
+Title: "{title}" ({len(title)} chars)
+Meta description: "{meta_desc}" ({len(meta_desc)} chars)
+H1: "{h1}"
+H2s: {', '.join(h2s) if h2s else 'None'}
+Total word count: {full_word_count}
+Internal links: {link_count}
+Impressions: {impressions:,}
 Site context: {site_context}
 Target keywords: {', '.join(target_keywords[:10])}
 
-## EXISTING TEXT ({text_word_count} words)
+## EXISTING TEXT ({text_word_count} words — excerpt)
 {body_text[:3000]}
 
 ## EVALUATE THESE DIMENSIONS (score each 1-10):
@@ -481,12 +523,25 @@ Focus on product-specific features, benefits and use cases.
 Focus on informational value, E-E-A-T signals and depth.
 """
 
+    title = page_data.get("title") or ""
+    meta_desc = page_data.get("meta_description") or ""
+    h1 = page_data.get("h1") or ""
+    impressions = page_data.get("impressions", 0)
+    word_count = page_data.get("word_count", 0)
+    link_count = page_data.get("internal_link_count", 0)
+
     existing_word_count = len(existing.split()) if existing else 0
     prompt = f"""You are a senior SEO copywriter specialized in e-commerce.
 {ANTI_HALLUCINATION_RULES}
 
 ## CONTEXT
 URL: {url}
+Title: "{title}" ({len(title)} chars)
+Meta description: "{meta_desc}" ({len(meta_desc)} chars)
+H1: "{h1}"
+Total word count: {word_count}
+Internal links: {link_count}
+Impressions: {impressions:,}
 Site: {site_context}
 Primary keywords: {', '.join(target_keywords[:5])}
 All GSC search queries we rank for: {', '.join(gsc_queries[:25])}
@@ -1206,6 +1261,8 @@ def generate_category_bottom_text(
     all_site_urls: list = None,
     site_context: str = "",
     language: str = "Swedish",
+    current_intro_text: str = "",
+    impressions: int = 0,
 ) -> dict:
     """Generate optimized category bottom text with all keywords, links, and products."""
     from utils.templates import CATEGORY_BOTTOM_TEXT_INSTRUCTIONS
@@ -1234,6 +1291,7 @@ def generate_category_bottom_text(
         url_list = f"\n\n## ALL SITE URLs\n{chr(10).join(all_site_urls[:150])}"
 
     bottom_word_count = len(current_bottom_text.split()) if current_bottom_text else 0
+    intro_word_count = len(current_intro_text.split()) if current_intro_text else 0
     prompt = f"""You are a senior SEO copywriter.
 Rewrite the category page bottom text following the EXACT format below.
 {ANTI_HALLUCINATION_RULES}
@@ -1242,11 +1300,15 @@ Rewrite the category page bottom text following the EXACT format below.
 URL: {url}
 Title: "{page_title}"
 H1: "{h1}"
+Impressions: {impressions:,}
 Language: {language}
 Site: {site_context}
 
 ## ALL KEYWORDS THAT MUST APPEAR IN THE TEXT
 {', '.join(target_keywords[:25])}
+
+## CURRENT INTRO TEXT ({intro_word_count} words — above product grid, do NOT repeat this content)
+{current_intro_text[:800] if current_intro_text else '(no intro text)'}
 
 ## CURRENT BOTTOM TEXT ({bottom_word_count} words — rewrite this if quality is poor)
 {current_bottom_text[:2000]}
@@ -1412,6 +1474,21 @@ def generate_page_implementation_plan(
     internal_links = page_data.get("internal_links", 0)
     link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
 
+    # Category-specific data
+    intro_words = page_data.get("intro_word_count", 0)
+    bottom_words = page_data.get("bottom_word_count", 0)
+    product_count = page_data.get("product_count", 0)
+    has_faq = page_data.get("has_faq", False)
+    has_buying_guide = page_data.get("has_buying_guide", False)
+
+    # Content quality verdict (if previously assessed)
+    from utils.ui_helpers import stable_hash as _sh
+    quality_key = f"_quality_{_sh(url)}"
+    quality = st.session_state.get(quality_key)
+    quality_info = ""
+    if quality:
+        quality_info = f"\nAI content quality verdict: {quality.get('verdict', '?')} ({quality.get('score', '?')}/10) — {quality.get('summary', '')}"
+
     # Include site URLs so AI uses real URLs in link recommendations
     url_list_section = ""
     if all_site_urls:
@@ -1432,11 +1509,19 @@ H2s: {', '.join(h2s) if h2s else 'None'}
 Word count: {word_count}
 Internal links on page: {link_count}
 Schema types present: {', '.join(schema_types) if schema_types else 'None'}
+{f"Intro text: {intro_words} words (above product grid)" if page_type == "category" else ""}
+{f"Bottom text: {bottom_words} words (below product grid)" if page_type == "category" else ""}
+{f"Products on page: {product_count}" if product_count else ""}
+{f"Has FAQ section: {'Yes' if has_faq else 'No'}" if page_type == "category" else ""}
+{f"Has buying guide: {'Yes' if has_buying_guide else 'No'}" if page_type == "category" else ""}
+{quality_info}
 
 ## EXISTING INTERNAL LINKS ON THIS PAGE (already present — do NOT suggest these again)
 {_format_existing_links(page_data)}
-Meta score: {meta_score}/100
-Content score: {content_score}/100
+
+## SCORES & METRICS
+Meta score: {meta_score if meta_score is not None else 'not audited'}/100
+Content score: {content_score if content_score is not None else 'not audited'}/100
 Impressions: {impressions:,}
 Lost clicks estimate: {lost_clicks:.0f}
 Referring domains (backlinks): {referring_domains}
@@ -1702,18 +1787,33 @@ def generate_action_plan(
     for r in audit_results[:20]:  # Cap for token limit
         summary_data.append({
             "url": str(r.get("url", "")),
+            "page_type": str(r.get("page_type", "unknown")),
             "lost_clicks": _to_native(r.get("lost_clicks_estimate", 0)),
             "position": _to_native(r.get("position", 0)),
+            "impressions": _to_native(r.get("impressions", 0)),
             "ctr_gap": _to_native(r.get("ctr_gap_pct", 0)),
             "meta_score": _to_native(r.get("meta_score")) if r.get("meta_score") is not None else "not audited",
             "content_score": _to_native(r.get("content_score")) if r.get("content_score") is not None else "not audited",
+            "word_count": _to_native(r.get("word_count", 0)),
+            "referring_domains": _to_native(r.get("referring_domains", 0)),
+            "authority_score": _to_native(r.get("authority_score", 0)),
             "top_keywords": [str(k) for k in r.get("target_keywords", [])[:3]],
             "issues": [str(i) for i in r.get("issues", [])[:3]],
         })
 
+    # Technical issues summary from Screaming Frog
+    crawl_issues = st.session_state.get("sf_crawl_issues", {})
+    tech_summary = ""
+    if crawl_issues:
+        tech_counts = {k: len(v) for k, v in crawl_issues.items() if v}
+        if tech_counts:
+            tech_summary = f"\n\n## TECHNICAL ISSUES (from Screaming Frog crawl)\n" + "\n".join(
+                f"- {k.replace('_', ' ').title()}: {v}" for k, v in tech_counts.items()
+            )
+
     prompt = f"""You are an SEO strategist for {site_url}. Create a prioritized action plan based on these audit results:
 
-{json.dumps(summary_data, ensure_ascii=False, indent=2)}
+{json.dumps(summary_data, ensure_ascii=False, indent=2)}{tech_summary}
 
 Return ONLY JSON:
 {{

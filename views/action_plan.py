@@ -756,6 +756,8 @@ def render():
                                     all_site_urls=all_site_urls,
                                     site_context=site_context,
                                     language=language,
+                                    current_intro_text=page_r.get("intro_text", ""),
+                                    impressions=page_r.get("impressions", 0),
                                 )
                                 st.session_state[bottom_key] = result
                             except Exception as e:

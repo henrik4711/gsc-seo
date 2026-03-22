@@ -298,6 +298,7 @@ def render():
                             client, url, _get_clean_snippet(a, 3000),
                             a["page_type"], a["target_keywords"],
                             site_context, language,
+                            page_data=a,
                         )
                         st.session_state[res_quality_key] = result
                     except Exception as e:
