@@ -308,6 +308,167 @@ def _build_new_content(content_roadmap):
     return df
 
 
+def _build_orphan_fixes(df_structure, audit_results, topic_clusters):
+    """Build orphan page fix list: each orphan + which page should link to it."""
+    if df_structure.empty or "Links In" not in df_structure.columns:
+        return pd.DataFrame()
+
+    orphans = df_structure[df_structure["Links In"] == 0].copy()
+    if orphans.empty:
+        return pd.DataFrame()
+
+    # Build: for each orphan, find the best parent page to link from
+    tc = topic_clusters or {}
+    page_topics = tc.get("page_topics", {})
+    audit_by_url = {r["url"]: r for r in audit_results}
+
+    rows = []
+    for _, orphan in orphans.iterrows():
+        url = orphan["URL"]
+        path = urlparse(url).path.lower().rstrip("/")
+        path_parts = path.strip("/").split("/")
+        impressions = orphan.get("Impressions", 0)
+        page_type = orphan.get("Page Type", "?")
+
+        # Strategy 1: Parent URL in hierarchy
+        parent_url = ""
+        if len(path_parts) >= 2:
+            parent_path = "/" + "/".join(path_parts[:-1])
+            parent_url = f"https://www.mshop.se{parent_path}"
+
+        # Strategy 2: Find page in same cluster
+        cluster_parent = ""
+        orphan_topics = page_topics.get(url, [])
+        if orphan_topics:
+            topic_name = orphan_topics[0].get("topic", "")
+            # Find the hub page for this cluster
+            for c in tc.get("clusters", []):
+                if c.get("topic") == topic_name:
+                    hub = c.get("suggested_hub_url", "")
+                    if hub and hub != url:
+                        cluster_parent = hub
+                    elif c.get("pages"):
+                        for p in c["pages"]:
+                            if p["page"] != url:
+                                cluster_parent = p["page"]
+                                break
+                    break
+
+        # Strategy 3: slug-based match (find category page matching first path segment)
+        slug_parent = ""
+        if path_parts:
+            first_segment = path_parts[0]
+            for r in audit_results:
+                r_path = urlparse(r["url"]).path.lower().rstrip("/").strip("/")
+                if r_path == first_segment and r["url"] != url:
+                    slug_parent = r["url"]
+                    break
+
+        # Pick best parent
+        link_from = parent_url or cluster_parent or slug_parent or "https://www.mshop.se/"
+
+        # Generate anchor text from URL slug
+        slug = path_parts[-1] if path_parts else ""
+        anchor = slug.replace("-", " ").replace("_", " ")
+
+        rows.append({
+            "Orphan URL": url,
+            "Page Type": page_type,
+            "Impressions": impressions,
+            "Cluster": orphan.get("Cluster(s)", ""),
+            "Link FROM (add link on this page)": link_from,
+            "Anchor Text": anchor,
+            "Why": f"Parent URL" if link_from == parent_url else (f"Same cluster" if link_from == cluster_parent else "URL hierarchy"),
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("Impressions", ascending=False)
+    return df
+
+
+def _build_link_fixes(df_links, df_structure, topic_clusters):
+    """Build link fix list: links to ADD (missing same-cluster) + links to REVIEW (cross-cluster)."""
+    rows = []
+    tc = topic_clusters or {}
+    page_topics = tc.get("page_topics", {})
+
+    # Part 1: Missing same-cluster links (spokes not linking to hub, hub not linking to spokes)
+    for c in tc.get("clusters", []):
+        pages = [p["page"] for p in c.get("pages", [])]
+        if len(pages) < 2:
+            continue
+
+        # Find hub (shallowest URL)
+        hub = min(pages, key=lambda u: len(urlparse(u).path.strip("/").split("/")))
+
+        # Check: does hub link to each spoke?
+        hub_links_to = set()
+        if not df_links.empty:
+            hub_outlinks = df_links[df_links["From"] == hub]
+            hub_links_to = set(hub_outlinks["To"].str.rstrip("/").str.lower())
+
+        for spoke in pages:
+            if spoke == hub:
+                continue
+
+            spoke_norm = spoke.rstrip("/").lower()
+            hub_norm = hub.rstrip("/").lower()
+
+            # Hub → Spoke missing?
+            if spoke_norm not in hub_links_to:
+                spoke_slug = urlparse(spoke).path.strip("/").split("/")[-1].replace("-", " ")
+                rows.append({
+                    "Action": "ADD",
+                    "From": hub,
+                    "To": spoke,
+                    "Anchor Text": spoke_slug,
+                    "Cluster": c.get("topic", ""),
+                    "Why": f"Hub should link to all spokes in cluster",
+                    "Priority": "HIGH",
+                })
+
+            # Spoke → Hub missing?
+            if not df_links.empty:
+                spoke_outlinks = df_links[df_links["From"] == spoke]
+                spoke_links_to = set(spoke_outlinks["To"].str.rstrip("/").str.lower())
+                if hub_norm not in spoke_links_to:
+                    hub_slug = urlparse(hub).path.strip("/").split("/")[-1].replace("-", " ") or "hem"
+                    rows.append({
+                        "Action": "ADD",
+                        "From": spoke,
+                        "To": hub,
+                        "Anchor Text": hub_slug,
+                        "Cluster": c.get("topic", ""),
+                        "Why": f"Spoke should link back to hub",
+                        "Priority": "HIGH",
+                    })
+
+    # Part 2: Cross-cluster links to review (top offenders only)
+    if not df_links.empty:
+        cross = df_links[df_links["Same Cluster"] == "NO"]
+        # Group by source page — pages with most cross-cluster links
+        if not cross.empty:
+            top_offenders = cross.groupby("From").size().sort_values(ascending=False).head(20)
+            for from_url, count in top_offenders.items():
+                rows.append({
+                    "Action": "REVIEW",
+                    "From": from_url,
+                    "To": f"{count} cross-cluster links",
+                    "Anchor Text": "",
+                    "Cluster": "",
+                    "Why": f"This page has {count} links to unrelated clusters — review and reduce",
+                    "Priority": "MEDIUM",
+                })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        priority_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+        df["_sort"] = df["Priority"].map(priority_order)
+        df = df.sort_values("_sort").drop(columns=["_sort"])
+    return df
+
+
 def render():
     st.markdown("## Site Map & Cluster Export")
     st.markdown(
@@ -352,13 +513,17 @@ def render():
         df_actions = _build_action_items(audit_results, topic_clusters)
         df_new_content = _build_new_content(content_roadmap)
 
+    # ── Build orphan + link fix data ─────────────────────────────
+    df_orphans = _build_orphan_fixes(df_structure, audit_results, topic_clusters)
+    df_link_fixes = _build_link_fixes(df_links, df_structure, topic_clusters)
+
     # ── Summary metrics ───────────────────────────────────────────
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total Pages", len(df_structure))
     c2.metric("Clusters", len(topic_clusters.get("clusters", [])))
     c3.metric("Internal Links", len(df_links))
-    c4.metric("Action Items", len(df_actions))
-    c5.metric("New Content", len(df_new_content))
+    c4.metric("Orphan Fixes", len(df_orphans))
+    c5.metric("Link Fixes", len(df_link_fixes))
 
     # Quick health indicators
     orphans = len(df_structure[df_structure["Links In"] == 0]) if "Links In" in df_structure.columns else 0
@@ -378,11 +543,14 @@ def render():
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_structure.to_excel(writer, sheet_name="Site Structure", index=False)
+        if not df_orphans.empty:
+            df_orphans.to_excel(writer, sheet_name="Orphan Fixes", index=False)
+        if not df_link_fixes.empty:
+            df_link_fixes.to_excel(writer, sheet_name="Link Fixes", index=False)
         if not df_clusters.empty:
             df_clusters.to_excel(writer, sheet_name="Cluster Detail", index=False)
         if not df_links.empty:
-            # Limit links to keep file manageable
-            df_links.head(5000).to_excel(writer, sheet_name="Link Matrix", index=False)
+            df_links.head(5000).to_excel(writer, sheet_name="All Links", index=False)
         if not df_actions.empty:
             df_actions.to_excel(writer, sheet_name="Action Items", index=False)
         if not df_new_content.empty:
@@ -398,10 +566,12 @@ def render():
     )
 
     # ── Preview tabs ──────────────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         f"Site Structure ({len(df_structure)})",
+        f"Orphan Fixes ({len(df_orphans)})",
+        f"Link Fixes ({len(df_link_fixes)})",
         f"Clusters ({len(df_clusters)})",
-        f"Links ({len(df_links)})",
+        f"All Links ({len(df_links)})",
         f"Actions ({len(df_actions)})",
         f"New Content ({len(df_new_content)})",
     ])
@@ -409,12 +579,34 @@ def render():
     with tab1:
         st.dataframe(df_structure.head(50), use_container_width=True, hide_index=True)
     with tab2:
-        st.dataframe(df_clusters.head(50), use_container_width=True, hide_index=True)
+        if not df_orphans.empty:
+            st.markdown(
+                "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+                "Each row = one orphan page. 'Link FROM' = the page where you should ADD a link TO the orphan. "
+                "Sorted by impressions — fix high-traffic orphans first.</p>",
+                unsafe_allow_html=True,
+            )
+            st.dataframe(df_orphans.head(50), use_container_width=True, hide_index=True)
+        else:
+            st.success("No orphan pages!")
     with tab3:
-        st.dataframe(df_links.head(50), use_container_width=True, hide_index=True)
+        if not df_link_fixes.empty:
+            st.markdown(
+                "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+                "<strong>ADD</strong> = missing link between pages in same cluster (hub↔spoke). "
+                "<strong>REVIEW</strong> = page with too many cross-cluster links to review.</p>",
+                unsafe_allow_html=True,
+            )
+            st.dataframe(df_link_fixes.head(50), use_container_width=True, hide_index=True)
+        else:
+            st.success("No link fixes needed!")
     with tab4:
-        st.dataframe(df_actions.head(50), use_container_width=True, hide_index=True)
+        st.dataframe(df_clusters.head(50), use_container_width=True, hide_index=True)
     with tab5:
+        st.dataframe(df_links.head(50), use_container_width=True, hide_index=True)
+    with tab6:
+        st.dataframe(df_actions.head(50), use_container_width=True, hide_index=True)
+    with tab7:
         st.dataframe(df_new_content.head(50), use_container_width=True, hide_index=True)
 
     # ── AI Validation ─────────────────────────────────────────────
