@@ -272,6 +272,7 @@ st.markdown("""
 
 # ── Pipeline step definitions ──────────────────────────────────────
 STEPS = [
+    ("Dashboard",             "dashboard",    "dashboard_viewed",  "What to do next"),
     ("1. Setup & Connect",    "setup",        "gsc_data",          "Connect GSC + API keys"),
     ("2. Upload Ahrefs",      "ahrefs",       "page_authority",    "Upload backlink data"),
     ("3. CTR Analysis",       "ctr",          "ctr_gaps",          "Find underperformers"),
@@ -382,7 +383,10 @@ with st.sidebar:
 
 # Route to pages
 selected = page.split(". ", 1)[1] if ". " in page else page
-if "Setup" in selected:
+if "Dashboard" in selected:
+    from views import dashboard
+    dashboard.render()
+elif "Setup" in selected:
     from views import setup
     setup.render()
 elif "Ahrefs" in selected:
