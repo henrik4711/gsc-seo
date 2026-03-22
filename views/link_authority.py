@@ -176,28 +176,53 @@ def _render_upload():
             key="upload_sf_inlinks",
             help="Complete internal link map — source, destination, anchor text"
         )
+
+        # Large file support: read from local path
+        inlinks_path = st.text_input(
+            "Or enter file path (for large files >200MB)",
+            key="sf_inlinks_path",
+            placeholder="C:\\path\\to\\all_inlinks.csv",
+        )
+
+        def _load_inlinks(file_bytes=None, file_path=None):
+            """Load inlinks from bytes or file path."""
+            from utils.screaming_frog_import import parse_all_inlinks, build_complete_link_map
+            if file_path:
+                with open(file_path, "rb") as f:
+                    file_bytes = f.read()
+            if not file_bytes:
+                st.error("File appears empty.")
+                return
+            size_mb = len(file_bytes) / (1024 * 1024)
+            with st.spinner(f"Parsing {size_mb:.0f} MB..."):
+                df = parse_all_inlinks(file_bytes)
+            if not df.empty:
+                st.session_state["sf_inlinks"] = df
+                link_map = build_complete_link_map(df)
+                st.session_state["sf_link_map"] = link_map
+                from utils.persistence import save_key
+                save_key("sf_inlinks")
+                save_key("sf_link_map")
+                st.success(f"{len(df):,} internal links imported ({link_map['unique_pages']:,} unique pages)")
+                st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+            else:
+                st.error("No data found. Check that it is a Screaming Frog All Inlinks CSV.")
+
         if inlinks_file and "sf_inlinks" not in st.session_state:
             try:
-                file_bytes = inlinks_file.read()
-                if not file_bytes:
-                    st.error("File appears empty — try re-selecting it.")
-                else:
-                    with st.spinner(f"Parsing {len(file_bytes) // 1024:,} KB..."):
-                        from utils.screaming_frog_import import parse_all_inlinks, build_complete_link_map
-                        df = parse_all_inlinks(file_bytes)
-                    if not df.empty:
-                        st.session_state["sf_inlinks"] = df
-                        link_map = build_complete_link_map(df)
-                        st.session_state["sf_link_map"] = link_map
-                        from utils.persistence import save_key
-                        save_key("sf_inlinks")
-                        save_key("sf_link_map")
-                        st.success(f"{len(df):,} internal links imported ({link_map['unique_pages']:,} unique pages)")
-                        st.dataframe(df.head(5), use_container_width=True, hide_index=True)
-                    else:
-                        st.error("No data found. Check that it is a Screaming Frog All Inlinks CSV.")
+                _load_inlinks(file_bytes=inlinks_file.read())
             except Exception as e:
                 st.error(f"Error parsing: {e}")
+
+        if inlinks_path and "sf_inlinks" not in st.session_state:
+            import os
+            if os.path.isfile(inlinks_path):
+                try:
+                    _load_inlinks(file_path=inlinks_path)
+                except Exception as e:
+                    st.error(f"Error reading file: {e}")
+            else:
+                st.error(f"File not found: {inlinks_path}")
 
     with sf_col2:
         st.markdown("#### All Pages")
@@ -207,25 +232,50 @@ def _render_upload():
             key="upload_sf_pages",
             help="Page-level data — status codes, word count, crawl depth, meta"
         )
+
+        # Large file support: read from local path
+        pages_path = st.text_input(
+            "Or enter file path (for large files)",
+            key="sf_pages_path",
+            placeholder="C:\\path\\to\\all_pages.csv",
+        )
+
+        def _load_pages(file_bytes=None, file_path=None):
+            """Load pages from bytes or file path."""
+            from utils.screaming_frog_import import parse_all_pages
+            if file_path:
+                with open(file_path, "rb") as f:
+                    file_bytes = f.read()
+            if not file_bytes:
+                st.error("File appears empty.")
+                return
+            size_mb = len(file_bytes) / (1024 * 1024)
+            with st.spinner(f"Parsing {size_mb:.0f} MB..."):
+                df = parse_all_pages(file_bytes)
+            if not df.empty:
+                st.session_state["sf_pages"] = df
+                from utils.persistence import save_key
+                save_key("sf_pages")
+                st.success(f"{len(df):,} pages imported")
+                st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+            else:
+                st.error("No data found. Check that it is a Screaming Frog Internal/All Pages CSV.")
+
         if pages_file and "sf_pages" not in st.session_state:
             try:
-                file_bytes = pages_file.read()
-                if not file_bytes:
-                    st.error("File appears empty — try re-selecting it.")
-                else:
-                    with st.spinner(f"Parsing {len(file_bytes) // 1024:,} KB..."):
-                        from utils.screaming_frog_import import parse_all_pages
-                        df = parse_all_pages(file_bytes)
-                    if not df.empty:
-                        st.session_state["sf_pages"] = df
-                        from utils.persistence import save_key
-                        save_key("sf_pages")
-                        st.success(f"{len(df):,} pages imported")
-                        st.dataframe(df.head(5), use_container_width=True, hide_index=True)
-                    else:
-                        st.error("No data found. Check that it is a Screaming Frog Internal/All Pages CSV.")
+                _load_pages(file_bytes=pages_file.read())
             except Exception as e:
                 st.error(f"Error parsing: {e}")
+
+        if pages_path and "sf_pages" not in st.session_state:
+            import os
+            if os.path.isfile(pages_path):
+                try:
+                    _load_pages(file_path=pages_path)
+                except Exception as e:
+                    st.error(f"Error reading file: {e}")
+            else:
+                st.error(f"File not found: {pages_path}")
 
     # Show loaded SF data status + clear button
     has_sf_pages = "sf_pages" in st.session_state
