@@ -225,10 +225,9 @@ def parse_all_pages(file_content) -> pd.DataFrame:
 
 
 def _norm_url(u: str) -> str:
-    """Normalize URL for comparison: strip params, fragments, trailing slash, lowercase."""
-    from urllib.parse import urlparse, urlunparse
-    p = urlparse(u.strip())
-    return urlunparse((p.scheme.lower(), p.netloc.lower(), p.path.rstrip("/"), "", "", ""))
+    """Normalize URL — delegates to the canonical system-wide normalizer."""
+    from utils.ui_helpers import normalize_url
+    return normalize_url(u)
 
 
 def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_domain: str = "",
@@ -281,7 +280,7 @@ def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_do
 
     # ── Orphan pages (0 inlinks) — cross-checked with GSC + Ahrefs + SF All Pages ──
     if not inlinks_df.empty:
-        linked_targets = set(inlinks_df["target"].str.rstrip("/").str.lower())
+        linked_targets = set(inlinks_df["target"].apply(_norm_url))
 
         # Build cross-check sets to filter false orphans
         nav_linked = set()  # SF All Pages says has inlinks > 0
@@ -321,10 +320,9 @@ def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_do
             (~pages_df.columns.isin(["status_code"]))
         ]
         for _, row in html_pages.iterrows():
-            url_norm = row["url"].rstrip("/").lower()
+            norm = _norm_url(row["url"])
             inlink_count = row.get("unique_inlinks", row.get("inlinks", -1))
-            if inlink_count == 0 or (inlink_count == -1 and url_norm not in linked_targets):
-                norm = _norm_url(row["url"])
+            if inlink_count == 0 or (inlink_count == -1 and norm not in linked_targets):
 
                 # Skip if SF All Pages shows this page has inlinks (nav/menu links)
                 if norm in nav_linked:

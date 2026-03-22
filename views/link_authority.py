@@ -436,7 +436,8 @@ def _render_risk_map():
             # Add GSC data if available
             if gsc_available:
                 gsc = st.session_state["gsc_data"]
-                page_gsc = gsc[gsc["page"] == page]
+                from utils.ui_helpers import normalize_url as _nu
+                page_gsc = gsc[gsc["page"].apply(_nu) == _nu(page)]
                 if not page_gsc.empty:
                     clicks = page_gsc["clicks"].sum()
                     impressions = page_gsc["impressions"].sum()

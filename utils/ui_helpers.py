@@ -20,37 +20,53 @@ def shorten_url(url: str) -> str:
 
 def normalize_url(url: str) -> str:
     """
-    Normalize a URL for consistent matching across the entire system.
-    Handles: http/https, www, trailing slashes, case, relative URLs.
+    THE canonical URL normalizer for the entire system.
+    Every URL comparison, merge, lookup, and deduplication MUST use this.
+
+    Normalizes:
+    - https (never http)
+    - Removes www. from netloc
+    - Strips ALL query params (? and everything after)
+    - Strips fragments (# and everything after)
+    - Strips trailing slash
+    - Lowercases everything
+    - Converts relative paths to absolute using gsc_site
     """
     if not url:
         return ""
     u = str(url).strip()
-    # Convert relative to absolute using configured site URL
+
+    # Convert relative to absolute
     if u.startswith("/") and not u.startswith("//"):
-        import streamlit as st
-        site = st.session_state.get("gsc_site", "").rstrip("/")
+        try:
+            site = st.session_state.get("gsc_site", "").rstrip("/")
+        except Exception:
+            site = ""
         if site:
             u = site + u
         else:
             u = "https://example.com" + u
-    # Standardize protocol
-    u = u.replace("http://", "https://")
-    # Remove trailing slash
-    u = u.rstrip("/")
-    # Lowercase
-    u = u.lower()
-    # Remove fragment (#section)
+
+    # Remove fragment
     if "#" in u:
         u = u[:u.index("#")]
-    # Remove tracking params but keep meaningful query strings
+
+    # Remove ALL query params — for matching, params are never meaningful
     if "?" in u:
-        base, query = u.split("?", 1)
-        # Remove common tracking params
-        import re
-        params = query.split("&")
-        clean_params = [p for p in params if not re.match(r"^(utm_|itm_|ref=|fbclid|gclid)", p)]
-        u = base + ("?" + "&".join(clean_params) if clean_params else "")
+        u = u[:u.index("?")]
+
+    # Standardize protocol
+    u = u.replace("http://", "https://")
+
+    # Remove www from netloc
+    u = u.replace("://www.", "://")
+
+    # Strip trailing slash
+    u = u.rstrip("/")
+
+    # Lowercase
+    u = u.lower()
+
     return u
 
 

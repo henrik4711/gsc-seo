@@ -52,7 +52,8 @@ def _get_cluster_keywords(url: str) -> list:
     keywords = []
     for cluster in tc.get("clusters", []):
         for page in cluster.get("pages", []):
-            if page.get("page", "").rstrip("/").lower() == url.rstrip("/").lower():
+            from utils.ui_helpers import normalize_url as _nu
+            if _nu(page.get("page", "")) == _nu(url):
                 keywords.extend(cluster.get("queries", []))
     return list(set(keywords))[:50]
 
@@ -222,8 +223,7 @@ def render():
                 bl_count = 0
                 auth_score = 0
                 if page_auth is not None and hasattr(page_auth, "iterrows"):
-                    def _norm(u):
-                        return str(u).rstrip("/").lower().replace("http://", "https://").replace("https://www.", "https://")
+                    from utils.ui_helpers import normalize_url as _norm
                     match = page_auth[page_auth["page"].apply(_norm) == _norm(url)]
                     if not match.empty:
                         rd = int(match.iloc[0].get("referring_domains", 0))
@@ -968,7 +968,8 @@ def render():
                 # Authority warning for high-value pages
                 if "page_authority" in st.session_state:
                     auth = st.session_state["page_authority"]
-                    page_auth = auth[auth["page"].str.rstrip("/").str.lower() == r["url"].rstrip("/").lower()]
+                    from utils.ui_helpers import normalize_url as _nu
+                    page_auth = auth[auth["page"].apply(_nu) == _nu(r["url"])]
                     if not page_auth.empty:
                         rd = page_auth.iloc[0].get("referring_domains", 0)
                         risk = page_auth.iloc[0].get("change_risk", "Unknown")

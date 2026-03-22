@@ -16,8 +16,11 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     if not pages:
         return None
 
-    # Index audit results by URL
-    audit_by_url = {r["url"]: r for r in audit_results}
+    # Index audit results by normalized URL for cross-source matching
+    from utils.ui_helpers import normalize_url as _nu
+    audit_by_url = {_nu(r["url"]): r for r in audit_results}
+    def _audit(url):
+        return audit_by_url.get(_nu(url), {})
 
     # Determine hub page (most impressions, or shallowest URL)
     page_urls = [p["page"] for p in pages]
@@ -29,7 +32,7 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
             hub_depth = depth
             hub_url = pu
 
-    hub_audit = audit_by_url.get(hub_url, {})
+    hub_audit = _audit(hub_url)
     hub_content = (hub_audit.get("body_text") or hub_audit.get("intro_text") or "")[:500]
 
     # Build spoke data
@@ -39,7 +42,7 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
         purl = p["page"]
         if purl == hub_url:
             continue
-        pa = audit_by_url.get(purl, {})
+        pa = _audit(purl)
         spokes.append({
             "url": purl,
             "title": (pa.get("title") or "")[:80],
@@ -59,7 +62,7 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     def _get_outlinks(url):
         """Get internal links from a page (from audit data or SF link map)."""
         links = set()
-        pa = audit_by_url.get(url, {})
+        pa = _audit(url)
         il = pa.get("internal_links", [])
         if isinstance(il, list):
             for l in il:
@@ -67,10 +70,10 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
                 if u.startswith("/"):
                     domain = urlparse(url).netloc
                     u = f"https://{domain}{u}"
-                links.add(u.rstrip("/").lower())
+                links.add(_nu(u))
         if sf_link_map:
             for sl in sf_link_map.get("links_from", {}).get(url, []):
-                links.add(sl.get("target", "").rstrip("/").lower())
+                links.add(_nu(sl.get("target", "")))
         return links
 
     hub_outlinks = _get_outlinks(hub_url)
@@ -78,14 +81,14 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     # Hub → Spoke links
     hub_to_spoke = []
     for s in spokes:
-        if s["url"].rstrip("/").lower() in hub_outlinks:
+        if _nu(s["url"]) in hub_outlinks:
             hub_to_spoke.append(s["url"])
 
     # Spoke → Hub links
     spoke_to_hub = []
     for s in spokes:
         spoke_links = _get_outlinks(s["url"])
-        if hub_url.rstrip("/").lower() in spoke_links:
+        if _nu(hub_url) in spoke_links:
             spoke_to_hub.append(s["url"])
 
     # Horizontal links (spoke ↔ spoke)
@@ -94,7 +97,7 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     for s in spokes:
         s_links = _get_outlinks(s["url"])
         for other in spoke_urls:
-            if other != s["url"] and other.rstrip("/").lower() in s_links:
+            if other != s["url"] and _nu(other) in s_links:
                 horizontal.append({"from": s["url"], "to": other})
 
     # Cannibalization within cluster

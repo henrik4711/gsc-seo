@@ -72,10 +72,34 @@ def render():
     site_context = st.session_state.get("site_context", "")
     language = st.session_state.get("content_language", "Swedish")
 
-    # Build site URL list for AI to reference real URLs
+    # ── Normalized lookup helpers (cross-source matching) ─────────
+    from utils.ui_helpers import normalize_url as _nu
+    # Audit lookup: normalized URL → audit result dict
+    _audit_by_norm = {}
+    for r in audit_results:
+        if r.get("url"):
+            _audit_by_norm[_nu(r["url"])] = r
+
+    def _find_audit(url):
+        """Find audit result for any URL variant."""
+        return _audit_by_norm.get(_nu(url), {})
+
+    # GSC lookup: find rows matching any URL variant
+    gsc = st.session_state.get("gsc_data")
+    _gsc_norm = None
+    if gsc is not None and hasattr(gsc, "page"):
+        _gsc_norm = gsc.copy()
+        _gsc_norm["_norm"] = _gsc_norm["page"].apply(_nu)
+
+    def _find_gsc(url):
+        """Find GSC rows for any URL variant."""
+        if _gsc_norm is None:
+            return None
+        matches = _gsc_norm[_gsc_norm["_norm"] == _nu(url)]
+        return matches if not matches.empty else None
+
     # Build site URL list for AI — include ALL URLs that rank in GSC
     raw_urls = set(r["url"] for r in audit_results if r.get("url"))
-    gsc = st.session_state.get("gsc_data")
     if gsc is not None and hasattr(gsc, "page"):
         raw_urls.update(gsc["page"].unique().tolist())
     all_site_urls = sorted(raw_urls)
@@ -86,16 +110,15 @@ def render():
     site_url = st.session_state.get("gsc_site", "")
     homepage_url = site_url.rstrip("/") + "/" if site_url else ""
     if homepage_url:
-        homepage_in_list = any(p["url"] == homepage_url for p in pages)
+        homepage_in_list = any(_nu(p["url"]) == _nu(homepage_url) for p in pages)
         if not homepage_in_list:
             # Homepage not audited yet — add it with GSC data if available
             hp_impressions = 0
             hp_clicks = 0
-            if gsc is not None and hasattr(gsc, "page"):
-                hp_data = gsc[gsc["page"] == homepage_url]
-                if not hp_data.empty:
-                    hp_impressions = int(hp_data["impressions"].sum())
-                    hp_clicks = int(hp_data["clicks"].sum())
+            hp_gsc = _find_gsc(homepage_url)
+            if hp_gsc is not None:
+                hp_impressions = int(hp_gsc["impressions"].sum())
+                hp_clicks = int(hp_gsc["clicks"].sum())
             pages.insert(0, {
                 "url": homepage_url,
                 "page_type": "homepage",
@@ -161,17 +184,16 @@ def render():
 
                 log.write(f"[{i+1}/10] {p['url']}...")
                 try:
-                    page_r = next((r for r in audit_results if r["url"] == p["url"]), None)
+                    page_r = _find_audit(p["url"]) or None
                     if not page_r:
                         from utils.page_scraper import scrape_page
                         page_r = scrape_page(p["url"])
                         page_r["url"] = p["url"]
-                        if gsc is not None and hasattr(gsc, "page"):
-                            pg = gsc[gsc["page"] == p["url"]]
-                            if not pg.empty:
-                                page_r["impressions"] = int(pg["impressions"].sum())
-                                page_r["clicks"] = int(pg["clicks"].sum())
-                                page_r["target_keywords"] = pg.sort_values("impressions", ascending=False)["query"].head(15).tolist()
+                        pg = _find_gsc(p["url"])
+                        if pg is not None:
+                            page_r["impressions"] = int(pg["impressions"].sum())
+                            page_r["clicks"] = int(pg["clicks"].sum())
+                            page_r["target_keywords"] = pg.sort_values("impressions", ascending=False)["query"].head(15).tolist()
                     result = generate_page_implementation_plan(
                         client, page_r, site_context, all_site_urls, language, topic_clusters,
                     )
@@ -256,19 +278,18 @@ def render():
                         try:
                             from utils.ai_generator import get_client, generate_page_implementation_plan
                             client = get_client(get_anthropic_key())
-                            page_r = next((r for r in audit_results if r["url"] == url), None)
+                            page_r = _find_audit(url) or None
                             if not page_r:
                                 # Page not in audit_results — scrape live
                                 from utils.page_scraper import scrape_page
                                 page_r = scrape_page(url)
                                 page_r["url"] = url
                                 # Add GSC data
-                                if gsc is not None and hasattr(gsc, "page"):
-                                    pg = gsc[gsc["page"] == url]
-                                    if not pg.empty:
-                                        page_r["impressions"] = int(pg["impressions"].sum())
-                                        page_r["clicks"] = int(pg["clicks"].sum())
-                                        page_r["target_keywords"] = pg.sort_values("impressions", ascending=False)["query"].head(15).tolist()
+                                pg = _find_gsc(url)
+                                if pg is not None:
+                                    page_r["impressions"] = int(pg["impressions"].sum())
+                                    page_r["clicks"] = int(pg["clicks"].sum())
+                                    page_r["target_keywords"] = pg.sort_values("impressions", ascending=False)["query"].head(15).tolist()
                             result = generate_page_implementation_plan(
                                 client, page_r, site_context, all_site_urls, language, topic_clusters,
                             )
@@ -289,7 +310,7 @@ def render():
                     continue
 
                 # Show data quality warnings if present
-                page_r = next((r for r in audit_results if r["url"] == url), {})
+                page_r = _find_audit(url)
                 data_warnings = page_r.get("_data_warnings", [])
                 if data_warnings:
                     st.warning("**Data quality warnings** — plan may be based on incomplete data:\n" + "\n".join(f"- {w}" for w in data_warnings))
@@ -317,7 +338,7 @@ def render():
 
                 if meta_title or meta_desc_plan:
                     # Get current values from audit
-                    page_r = next((r for r in audit_results if r["url"] == url), {})
+                    page_r = _find_audit(url)
                     current_title = page_r.get("title") or ""
                     current_desc = page_r.get("meta_description") or ""
 
@@ -392,7 +413,7 @@ def render():
                         if st.button("Generate schema markup", key=f"btn_ai_schema_{url_hash}_{step_idx}"):
                             try:
                                 from utils.ai_generator import generate_schema_markup
-                                page_r = next((r for r in audit_results if r["url"] == url), {})
+                                page_r = _find_audit(url)
                                 result = generate_schema_markup(
                                     page_type=page_r.get("page_type", "unknown"),
                                     url=url,
@@ -523,7 +544,7 @@ def render():
                 rewrites = plan.get("text_rewrites", [])
                 if rewrites:
                     st.markdown("#### Sections to Rewrite")
-                    page_r = next((r for r in audit_results if r["url"] == url), {})
+                    page_r = _find_audit(url)
 
                     for rw_idx, rw in enumerate(rewrites):
                         section_name = rw.get("section", "")
@@ -600,7 +621,7 @@ def render():
                             st.code(res.get("optimized_text", ""), language="text")
 
                 # ── MAIN ACTION: Generate complete page text ─────────
-                page_r = next((r for r in audit_results if r["url"] == url), {})
+                page_r = _find_audit(url)
                 # Show text generation for ALL page types (not just category)
                 if True:
                     st.markdown("---")

@@ -304,18 +304,13 @@ def merge_authority_with_gsc(gsc_df: pd.DataFrame, authority_df: pd.DataFrame) -
     if authority_df.empty:
         return gsc_df
 
-    # Normalize URLs for matching (handle http/https + trailing slash + www)
-    def _norm_url(url):
-        u = str(url).rstrip("/").lower()
-        u = u.replace("http://", "https://")  # standardize to https
-        u = u.replace("https://www.", "https://")  # remove www for matching
-        return u
+    from utils.ui_helpers import normalize_url
 
     gsc_pages = gsc_df[["page"]].drop_duplicates().copy()
-    gsc_pages["page_norm"] = gsc_pages["page"].apply(_norm_url)
+    gsc_pages["page_norm"] = gsc_pages["page"].apply(normalize_url)
 
     auth = authority_df.copy()
-    auth["page_norm"] = auth["page"].apply(_norm_url)
+    auth["page_norm"] = auth["page"].apply(normalize_url)
 
     merged = gsc_pages.merge(
         auth.drop(columns=["page"]),

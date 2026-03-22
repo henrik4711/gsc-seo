@@ -13,9 +13,9 @@ from utils.ui_helpers import stable_hash
 
 
 def _norm_url(url):
-    """Normalize URL for comparison: strip params, fragments, trailing slash, lowercase."""
-    u = str(url).split("?")[0].split("#")[0].rstrip("/").lower()
-    return u
+    """Normalize URL — delegates to the canonical system-wide normalizer."""
+    from utils.ui_helpers import normalize_url
+    return normalize_url(url)
 
 
 def _check_prerequisites():
@@ -44,7 +44,7 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
     rows = []
     tc = topic_clusters or {}
     page_topics = tc.get("page_topics", {})
-    audit_by_url = {r["url"]: r for r in audit_results}
+    audit_by_url = {_norm_url(r["url"]): r for r in audit_results}
 
     # Get all unique URLs — deduplicate by stripping query params
     raw_urls = set(r["url"] for r in audit_results)
@@ -66,16 +66,17 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
         parent_parts = path.strip("/").split("/")[:-1]
         parent_url = f"https://{parsed.netloc}/{'/'.join(parent_parts)}" if parent_parts else ""
 
-        # Audit data
-        audit = audit_by_url.get(url, {})
+        # Audit data (normalized lookup)
+        audit = audit_by_url.get(_norm_url(url), {})
 
-        # Cluster data
-        topics = page_topics.get(url, [])
+        # Cluster data (try both raw and normalized)
+        topics = page_topics.get(url, []) or page_topics.get(_norm_url(url), [])
         cluster_names = [t.get("topic", "") for t in topics[:3]]
 
-        # GSC data
+        # GSC data (normalized comparison)
         if gsc_data is not None and hasattr(gsc_data, "page"):
-            page_gsc = gsc_data[gsc_data["page"] == url]
+            url_norm = _norm_url(url)
+            page_gsc = gsc_data[gsc_data["page"].apply(_norm_url) == url_norm]
             impressions = int(page_gsc["impressions"].sum()) if not page_gsc.empty else 0
             clicks = int(page_gsc["clicks"].sum()) if not page_gsc.empty else 0
             avg_pos = round(page_gsc["position"].mean(), 1) if not page_gsc.empty else None
@@ -152,7 +153,7 @@ def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
         for p in pages:
             purl = p["page"]
             role = "HUB" if purl == hub_url else "SPOKE"
-            audit = audit_by_url.get(purl, {})
+            audit = audit_by_url.get(_norm_url(purl), {})
 
             # Keywords this page covers
             kw_cov = (audit.get("content_audit") or {}).get("keyword_coverage") or {}
@@ -168,7 +169,7 @@ def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
                     if _norm_url(l.get("url", "")) == _norm_url(hub_url):
                         links_to_hub = True
 
-            hub_audit = audit_by_url.get(hub_url, {})
+            hub_audit = audit_by_url.get(_norm_url(hub_url), {})
             hub_links = hub_audit.get("internal_links", [])
             if isinstance(hub_links, list):
                 for l in hub_links:

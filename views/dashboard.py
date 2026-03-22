@@ -84,7 +84,8 @@ def _get_phase_status():
     texts_done = 0
     for r in top_pages:
         url = r.get("url", "")
-        if homepage_url and url == homepage_url:
+        from utils.ui_helpers import normalize_url as _nu
+        if homepage_url and _nu(url) == _nu(homepage_url):
             continue  # homepage handled in phase 1
         plan_key = f"_ai_plan_{stable_hash(url)}"
         if plan_key in st.session_state and not st.session_state[plan_key].get("error"):

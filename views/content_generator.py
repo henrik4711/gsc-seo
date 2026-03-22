@@ -58,7 +58,8 @@ def render():
 
     # Load page data from audit if available
     page_data = {}
-    selected_audit = next((r for r in audit_results if r["url"] == selected_url), None)
+    from utils.ui_helpers import normalize_url as _nu
+    selected_audit = next((r for r in audit_results if _nu(r["url"]) == _nu(selected_url)), None)
     if selected_audit:
         page_data = selected_audit
 
