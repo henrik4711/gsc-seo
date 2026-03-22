@@ -46,83 +46,158 @@ def _render_upload():
     <div style="background:#12121f; border:1px solid #2a2a40; border-radius:8px; padding:1rem; margin-bottom:1.5rem; color:#c0c0d8;">
         <div style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#5533ff; margin-bottom:0.5rem;">HOW TO EXPORT FROM AHREFS</div>
         <div style="font-size:0.85rem; line-height:1.8;">
-            <strong>1. Best by Links</strong> (most important): Site Explorer &rarr; Best by links &rarr; Export CSV<br>
+            <strong>1. Best by Links</strong>: Site Explorer &rarr; Best by links &rarr; Export CSV<br>
             <strong>2. Backlinks</strong>: Site Explorer &rarr; Backlinks &rarr; Filter: Live + Dofollow &rarr; Export CSV<br>
-            <strong>3. Organic Keywords</strong> (optional): Site Explorer &rarr; Organic keywords &rarr; Export CSV
+            <strong>3. Organic Keywords</strong> (optional): Site Explorer &rarr; Organic keywords &rarr; Export CSV<br>
+            <br><strong>Or place CSV files in <code>data/</code> folder</strong> — they are auto-detected below.
         </div>
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Auto-detect Ahrefs files in data/ folder ──────────────
+    import os
+    DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+
+    def _find_ahrefs_file(*patterns):
+        if not os.path.isdir(DATA_DIR):
+            return None
+        for f in sorted(os.listdir(DATA_DIR), key=lambda x: os.path.getmtime(os.path.join(DATA_DIR, x)), reverse=True):
+            fl = f.lower()
+            if any(p in fl for p in patterns) and fl.endswith((".csv", ".tsv")):
+                return os.path.join(DATA_DIR, f)
+        return None
+
+    auto_bbl = _find_ahrefs_file("bbl", "best-by-links", "best_by_links")
+    auto_bl = _find_ahrefs_file("backlink")
+    auto_kw = _find_ahrefs_file("organic-keyword", "organic_keyword")
+
+    auto_found = [f for f in [auto_bbl, auto_bl, auto_kw] if f]
+    if auto_found:
+        lines = []
+        if auto_bbl:
+            lines.append(f"Best by Links: <strong>{os.path.basename(auto_bbl)}</strong>")
+        if auto_bl:
+            lines.append(f"Backlinks: <strong>{os.path.basename(auto_bl)}</strong>")
+        if auto_kw:
+            lines.append(f"Organic Keywords: <strong>{os.path.basename(auto_kw)}</strong>")
+        st.markdown(
+            f"<div style='background:#0d0d15; border:1px solid #33dd88; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
+            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88; margin-bottom:0.3rem;'>AHREFS FILES FOUND IN data/ FOLDER</div>"
+            f"<div style='font-size:0.8rem; color:#c0c0d8;'>{'<br>'.join(lines)}</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        if st.button("Load all Ahrefs files from data/", type="primary", key="btn_auto_ahrefs"):
+            from utils.ahrefs_import import parse_best_by_links, parse_backlinks, parse_organic_keywords
+            from utils.persistence import save_key
+            loaded = []
+            if auto_bbl and "ahrefs_best_by_links" not in st.session_state:
+                with st.spinner(f"Parsing {os.path.basename(auto_bbl)}..."):
+                    with open(auto_bbl, "rb") as f:
+                        df = parse_best_by_links(f.read())
+                    if not df.empty:
+                        st.session_state["ahrefs_best_by_links"] = df
+                        save_key("ahrefs_best_by_links")
+                        loaded.append(f"Best by Links: {len(df)} pages")
+            if auto_bl and "ahrefs_backlinks" not in st.session_state:
+                with st.spinner(f"Parsing {os.path.basename(auto_bl)}..."):
+                    with open(auto_bl, "rb") as f:
+                        df = parse_backlinks(f.read())
+                    if not df.empty:
+                        st.session_state["ahrefs_backlinks"] = df
+                        save_key("ahrefs_backlinks")
+                        loaded.append(f"Backlinks: {len(df)} links")
+            if auto_kw and "ahrefs_organic_keywords" not in st.session_state:
+                with st.spinner(f"Parsing {os.path.basename(auto_kw)}..."):
+                    with open(auto_kw, "rb") as f:
+                        df = parse_organic_keywords(f.read())
+                    if not df.empty:
+                        st.session_state["ahrefs_organic_keywords"] = df
+                        save_key("ahrefs_organic_keywords")
+                        loaded.append(f"Organic Keywords: {len(df)} keywords")
+            if loaded:
+                st.success("Loaded: " + " | ".join(loaded))
+                st.rerun()
+            else:
+                st.info("All Ahrefs data already loaded.")
+
+    # ── Manual upload fallback ────────────────────────────────
     col1, col2, col3 = st.columns(3)
 
     with col1:
         st.markdown("#### Best by Links")
-        best_file = st.file_uploader(
-            "Upload Best by Links CSV",
-            type=["csv", "tsv"],
-            key="upload_ahrefs_best",
-            help="Page-level data with referring domains and backlinks"
-        )
-        if best_file:
-            try:
-                from utils.ahrefs_import import parse_best_by_links
-                df = parse_best_by_links(best_file.read())
-                if not df.empty:
-                    st.session_state["ahrefs_best_by_links"] = df
-                    from utils.persistence import save_key
-                    save_key("ahrefs_best_by_links")
-                    st.success(f"{len(df)} pages imported")
-                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
-                else:
-                    st.error("No data found in the file. Check that it is an Ahrefs Best by Links CSV.")
-            except Exception as e:
-                st.error(f"Error parsing: {e}")
+        if "ahrefs_best_by_links" not in st.session_state:
+            best_file = st.file_uploader(
+                "Upload Best by Links CSV",
+                type=["csv", "tsv"],
+                key="upload_ahrefs_best",
+                help="Page-level data with referring domains and backlinks"
+            )
+            if best_file:
+                try:
+                    from utils.ahrefs_import import parse_best_by_links
+                    df = parse_best_by_links(best_file.read())
+                    if not df.empty:
+                        st.session_state["ahrefs_best_by_links"] = df
+                        from utils.persistence import save_key
+                        save_key("ahrefs_best_by_links")
+                        st.success(f"{len(df)} pages imported")
+                    else:
+                        st.error("No data found. Check that it is an Ahrefs Best by Links CSV.")
+                except Exception as e:
+                    st.error(f"Error parsing: {e}")
+        else:
+            st.success(f"{len(st.session_state['ahrefs_best_by_links'])} pages loaded")
 
     with col2:
         st.markdown("#### Backlinks")
-        bl_file = st.file_uploader(
-            "Upload Backlinks CSV",
-            type=["csv", "tsv"],
-            key="upload_ahrefs_backlinks",
-            help="Individual backlinks with anchor text and DR"
-        )
-        if bl_file:
-            try:
-                from utils.ahrefs_import import parse_backlinks
-                df = parse_backlinks(bl_file.read())
-                if not df.empty:
-                    st.session_state["ahrefs_backlinks"] = df
-                    from utils.persistence import save_key
-                    save_key("ahrefs_backlinks")
-                    st.success(f"{len(df)} backlinks imported")
-                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
-                else:
-                    st.error("No data found. Check that it is an Ahrefs Backlinks CSV.")
-            except Exception as e:
-                st.error(f"Error parsing: {e}")
+        if "ahrefs_backlinks" not in st.session_state:
+            bl_file = st.file_uploader(
+                "Upload Backlinks CSV",
+                type=["csv", "tsv"],
+                key="upload_ahrefs_backlinks",
+                help="Individual backlinks with anchor text and DR"
+            )
+            if bl_file:
+                try:
+                    from utils.ahrefs_import import parse_backlinks
+                    df = parse_backlinks(bl_file.read())
+                    if not df.empty:
+                        st.session_state["ahrefs_backlinks"] = df
+                        from utils.persistence import save_key
+                        save_key("ahrefs_backlinks")
+                        st.success(f"{len(df)} backlinks imported")
+                    else:
+                        st.error("No data found. Check that it is an Ahrefs Backlinks CSV.")
+                except Exception as e:
+                    st.error(f"Error parsing: {e}")
+        else:
+            st.success(f"{len(st.session_state['ahrefs_backlinks'])} backlinks loaded")
 
     with col3:
         st.markdown("#### Organic Keywords")
-        kw_file = st.file_uploader(
-            "Upload Organic Keywords CSV",
-            type=["csv", "tsv"],
-            key="upload_ahrefs_keywords",
-            help="Search volume and keyword difficulty (supplement to GSC)"
-        )
-        if kw_file:
-            try:
-                from utils.ahrefs_import import parse_organic_keywords
-                df = parse_organic_keywords(kw_file.read())
-                if not df.empty:
-                    st.session_state["ahrefs_organic_keywords"] = df
-                    from utils.persistence import save_key
-                    save_key("ahrefs_organic_keywords")
-                    st.success(f"{len(df)} keywords imported")
-                    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
-                else:
-                    st.error("No data found. Check that it is an Ahrefs Organic Keywords CSV.")
-            except Exception as e:
-                st.error(f"Error parsing: {e}")
+        if "ahrefs_organic_keywords" not in st.session_state:
+            kw_file = st.file_uploader(
+                "Upload Organic Keywords CSV",
+                type=["csv", "tsv"],
+                key="upload_ahrefs_keywords",
+                help="Search volume and keyword difficulty (supplement to GSC)"
+            )
+            if kw_file:
+                try:
+                    from utils.ahrefs_import import parse_organic_keywords
+                    df = parse_organic_keywords(kw_file.read())
+                    if not df.empty:
+                        st.session_state["ahrefs_organic_keywords"] = df
+                        from utils.persistence import save_key
+                        save_key("ahrefs_organic_keywords")
+                        st.success(f"{len(df)} keywords imported")
+                    else:
+                        st.error("No data found. Check that it is an Ahrefs Organic Keywords CSV.")
+                except Exception as e:
+                    st.error(f"Error parsing: {e}")
+        else:
+            st.success(f"{len(st.session_state['ahrefs_organic_keywords'])} keywords loaded")
 
     # Build authority after upload
     has_best = "ahrefs_best_by_links" in st.session_state
