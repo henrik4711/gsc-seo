@@ -11,3 +11,4 @@ build/
 venv/
 .streamlit/secrets.toml
 .claude/
+data/
