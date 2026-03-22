@@ -112,6 +112,11 @@ def parse_all_inlinks(file_content) -> pd.DataFrame:
     df = df[df["source"].str.contains(r"https?://", case=False, na=False)].copy()
     df = df[df["target"].str.contains(r"https?://", case=False, na=False)].copy()
 
+    # Normalize URLs at the source
+    from utils.ui_helpers import normalize_url
+    df["source"] = df["source"].apply(normalize_url)
+    df["target"] = df["target"].apply(normalize_url)
+
     # Fill missing columns
     if "anchor" not in df.columns:
         df["anchor"] = ""
@@ -211,6 +216,10 @@ def parse_all_pages(file_content) -> pd.DataFrame:
 
     df["url"] = df["url"].astype(str).str.strip()
     df = df[df["url"].str.contains(r"https?://", case=False, na=False)].copy()
+
+    # Normalize URLs at the source
+    from utils.ui_helpers import normalize_url
+    df["url"] = df["url"].apply(normalize_url)
 
     # Convert numeric columns
     for col in ["status_code", "word_count", "crawl_depth", "inlinks", "unique_inlinks",

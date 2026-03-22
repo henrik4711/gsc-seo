@@ -137,7 +137,12 @@ def fetch_gsc_data(
         })
     
     df = pd.DataFrame(records)
-    
+
+    # Normalize page URLs at the source — ensures ALL downstream matching works
+    if not df.empty:
+        from utils.ui_helpers import normalize_url
+        df["page"] = df["page"].apply(normalize_url)
+
     # Filter low-impression queries (noise)
     df = df[df["impressions"] >= min_impressions].copy()
     
@@ -192,6 +197,12 @@ def fetch_page_level_summary(
     ]
     
     df = pd.DataFrame(records)
+
+    # Normalize page URLs at the source
+    if not df.empty:
+        from utils.ui_helpers import normalize_url
+        df["page"] = df["page"].apply(normalize_url)
+
     df["expected_ctr"] = df["position"].apply(get_expected_ctr)
     df["ctr_gap_pct"] = df.apply(
         lambda r: get_ctr_gap(r["ctr"], r["position"]) * 100, axis=1
@@ -199,7 +210,7 @@ def fetch_page_level_summary(
     df["lost_clicks_estimate"] = (
         (df["expected_ctr"] - df["ctr"]).clip(lower=0) * df["impressions"]
     ).round(0).astype(int)
-    
+
     return df
 
 

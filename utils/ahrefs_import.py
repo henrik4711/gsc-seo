@@ -73,6 +73,10 @@ def parse_best_by_links(file_content) -> pd.DataFrame:
     # Drop rows where page doesn't look like a URL
     df = df[df["page"].str.contains(r"https?://", case=False, na=False)].copy()
 
+    # Normalize page URLs at the source
+    from utils.ui_helpers import normalize_url
+    df["page"] = df["page"].apply(normalize_url)
+
     # Convert numeric columns
     for col in ["referring_domains", "backlinks", "dr", "ahrefs_traffic", "ahrefs_keywords"]:
         if col in df.columns:

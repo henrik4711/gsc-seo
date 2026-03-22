@@ -237,10 +237,11 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
                 href = f"https://{domain}{href}"
             if href.startswith("http"):
                 if domain in href:
-                    norm = href.rstrip("/").lower().split("?")[0].split("#")[0]
+                    from utils.ui_helpers import normalize_url
+                    norm = normalize_url(href)
                     if norm not in seen_urls:
                         seen_urls.add(norm)
-                        internal_links.append({"url": href, "anchor": anchor})
+                        internal_links.append({"url": norm, "anchor": anchor})
                 else:
                     ext_count += 1
 
@@ -323,10 +324,11 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
                 if href.startswith("/") and not href.startswith("//"):
                     href = f"https://{domain}{href}"
                 if href.startswith("http") and domain in href:
-                    norm = href.rstrip("/").lower().split("?")[0].split("#")[0]
+                    from utils.ui_helpers import normalize_url
+                    norm = normalize_url(href)
                     if norm not in seen_urls:
                         seen_urls.add(norm)
-                        result["internal_links"].append({"url": href, "anchor": anchor})
+                        result["internal_links"].append({"url": norm, "anchor": anchor})
                 elif href.startswith("http"):
                     result["external_links"] += 1
         result["internal_link_count"] = len(result["internal_links"])
