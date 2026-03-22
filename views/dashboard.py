@@ -265,4 +265,20 @@ def render():
             unsafe_allow_html=True,
         )
 
+    # Debug: what's in cache
+    st.markdown("---")
+    st.markdown("#### Cache Status")
+    import os
+    cache_dir = "/data/ai_cache"
+    if os.path.isdir(cache_dir):
+        files = os.listdir(cache_dir)
+        site_files = [f for f in files if f.startswith("_site") or f.startswith("_ideal") or f.startswith("_gap") or f.startswith("_plan_v")]
+        st.markdown(f"AI cache: **{len(files)} files** total, **{len(site_files)} site analysis files**")
+        for sf in site_files:
+            size = os.path.getsize(os.path.join(cache_dir, sf))
+            in_session = sf[:-5] in st.session_state
+            st.markdown(f"<span style='color:{'#33dd88' if in_session else '#ff4455'}; font-size:0.75rem;'>{'IN SESSION' if in_session else 'ON DISK ONLY'} — {sf} ({size} bytes)</span>", unsafe_allow_html=True)
+    else:
+        st.markdown("<span style='color:#ff4455;'>Cache dir not found!</span>", unsafe_allow_html=True)
+
     st.session_state["dashboard_viewed"] = True

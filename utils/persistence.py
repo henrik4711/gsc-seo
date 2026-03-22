@@ -123,6 +123,8 @@ def _save_ai_key(key: str, data):
     path = os.path.join(AI_CACHE_DIR, f"{key}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1, default=_json_convert)
+    if key.startswith("_site") or key.startswith("_ideal") or key.startswith("_gap") or key.startswith("_plan_v"):
+        print(f"[persistence] SAVED key={key} to {path} ({os.path.getsize(path)} bytes)")
 
 
 # ── Backwards compatible aliases ──────────────────────────────────
@@ -203,10 +205,11 @@ def load_all():
 
     # Load AI cache — individual files
     ai_loaded = 0
+    ai_keys_loaded = []
     if os.path.isdir(AI_CACHE_DIR):
-        for fname in os.listdir(AI_CACHE_DIR):
-            if not fname.endswith(".json"):
-                continue
+        all_files = [f for f in os.listdir(AI_CACHE_DIR) if f.endswith(".json")]
+        print(f"[persistence] AI cache dir has {len(all_files)} files")
+        for fname in all_files:
             key = fname[:-5]  # remove .json
             if key in st.session_state:
                 continue
@@ -215,8 +218,12 @@ def load_all():
                 with open(path, "r", encoding="utf-8") as f:
                     st.session_state[key] = json.load(f)
                 ai_loaded += 1
-            except Exception:
-                pass
+                if key.startswith("_site") or key.startswith("_ideal") or key.startswith("_gap") or key.startswith("_plan_v"):
+                    ai_keys_loaded.append(key)
+            except Exception as e:
+                print(f"[persistence] Failed to load {fname}: {e}")
+    else:
+        print(f"[persistence] AI cache dir does NOT exist: {AI_CACHE_DIR}")
 
     # Backwards compat: load old single ai_cache.json if it exists
     old_cache = os.path.join(DATA_DIR, "ai_cache.json")
