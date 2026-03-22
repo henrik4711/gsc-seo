@@ -496,8 +496,14 @@ Evaluate the OVERALL site health. Focus on:
                     )
                     result = _parse_ai_json(message)
                     st.session_state[validation_key] = result
-                    from utils.persistence import save_ai_cache
-                    save_ai_cache()
+                    # Force save this specific key immediately
+                    from utils.persistence import _save_ai_key, _volume_available
+                    if _volume_available():
+                        try:
+                            _save_ai_key(validation_key, result)
+                            st.success(f"Validation saved to disk")
+                        except Exception as save_err:
+                            st.error(f"SAVE FAILED: {save_err}")
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -652,8 +658,12 @@ Output JSON: {{"keyword_assignments":[{{"keyword":"kw","ideal_page":"/url","acti
                         "summary": summary_result.get("summary", ""),
                     }
                     st.session_state[ideal_key] = combined
-                    from utils.persistence import save_ai_cache
-                    save_ai_cache()
+                    from utils.persistence import _save_ai_key, _volume_available
+                    if _volume_available():
+                        try:
+                            _save_ai_key(ideal_key, combined)
+                        except Exception as save_err:
+                            st.error(f"SAVE FAILED: {save_err}")
                     ideal_status.update(label="Ideal structure generated", state="complete", expanded=False)
                 except Exception as e:
                     st.error(f"Error: {e}")

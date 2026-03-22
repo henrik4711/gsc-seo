@@ -542,7 +542,8 @@ def render():
 
                 # ── MAIN ACTION: Generate complete page text ─────────
                 page_r = next((r for r in audit_results if r["url"] == url), {})
-                if page_r.get("page_type") in ("category", "unknown", "blog", "faq"):
+                # Show text generation for ALL page types (not just category)
+                if True:
                     st.markdown("---")
                     st.markdown(
                         "<div style='background:#0d0d15; border:2px solid #5533ff; border-radius:8px; padding:1rem; margin:0.5rem 0;'>"
