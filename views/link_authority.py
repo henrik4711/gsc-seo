@@ -661,7 +661,8 @@ def _render_crawl_data():
                 if "severity" in item:
                     sev = item["severity"]
                     sev_colors = {"CRITICAL": "#ff4455", "HIGH": "#ff6644", "MEDIUM": "#ffaa33", "LOW": "#6b6b8a"}
-                    extra += f" | <span style='color:{sev_colors.get(sev, \"#6b6b8a\")};font-weight:600;'>{sev}</span>"
+                    sev_color = sev_colors.get(sev, "#6b6b8a")
+                    extra += f" | <span style='color:{sev_color};font-weight:600;'>{sev}</span>"
                 if "in_google" in item:
                     extra += f" | Google: {'YES' if item['in_google'] else 'NO'}"
                 if "has_backlinks" in item:
