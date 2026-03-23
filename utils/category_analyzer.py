@@ -1103,13 +1103,13 @@ def _audit_internal_linking(
     # Cross-reference with topic clusters — find pages that SHOULD be linked
     missing_links = []
     if topic_clusters and isinstance(internal_links, list):
+        from utils.ui_helpers import normalize_url as _nu
         linked_urls = set()
         for l in internal_links:
             u = l.get("url", "")
             if u.startswith("/"):
                 domain = urlparse(url).netloc
                 u = f"https://{domain}{u}"
-            from utils.ui_helpers import normalize_url as _nu
             linked_urls.add(_nu(u))
 
         # Find pages in same clusters that we don't link to
