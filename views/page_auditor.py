@@ -363,9 +363,10 @@ def render():
 
             # Merge: replace existing entries for re-audited URLs, keep the rest
             if "audit_results" in st.session_state and st.session_state["audit_results"]:
-                new_urls = set(r["url"] for r in audit_results)
-                # Keep old results for URLs we didn't re-audit
-                kept = [r for r in st.session_state["audit_results"] if r["url"] not in new_urls]
+                from utils.ui_helpers import normalize_url as _nurl
+                new_urls_norm = set(_nurl(r["url"]) for r in audit_results)
+                # Keep old results for URLs we didn't re-audit (normalized comparison)
+                kept = [r for r in st.session_state["audit_results"] if _nurl(r["url"]) not in new_urls_norm]
                 st.session_state["audit_results"] = kept + audit_results
             else:
                 st.session_state["audit_results"] = audit_results
