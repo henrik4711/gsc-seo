@@ -312,6 +312,7 @@ def render():
 
                         if sf_fallback:
                             # Run meta eval + content audit with SF data
+                            print(f"[audit] SF fallback SUCCESS: title='{result.get('title','')[:50]}', words={result.get('word_count',0)}")
                             meta_eval = evaluate_meta(result, target_keywords)
                             result["meta_score"] = meta_eval["score"]
                             result["issues"] = meta_eval["issues"]
@@ -365,9 +366,12 @@ def render():
             if "audit_results" in st.session_state and st.session_state["audit_results"]:
                 from utils.ui_helpers import normalize_url as _nurl
                 new_urls_norm = set(_nurl(r["url"]) for r in audit_results)
-                # Keep old results for URLs we didn't re-audit (normalized comparison)
+                old_count = len(st.session_state["audit_results"])
                 kept = [r for r in st.session_state["audit_results"] if _nurl(r["url"]) not in new_urls_norm]
                 st.session_state["audit_results"] = kept + audit_results
+                print(f"[audit] Merge: {old_count} old, removed {old_count - len(kept)}, added {len(audit_results)}, total {len(st.session_state['audit_results'])}")
+                for r in audit_results:
+                    print(f"[audit] New entry: url={r['url']}, title='{(r.get('title') or '')[:40]}', words={r.get('word_count',0)}, success={r.get('success')}")
             else:
                 st.session_state["audit_results"] = audit_results
 
