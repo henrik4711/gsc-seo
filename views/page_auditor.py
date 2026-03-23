@@ -358,14 +358,12 @@ def render():
                     except Exception:
                         pass  # Don't crash audit if save fails
 
-            # Merge with existing results if bulk audit with "keep existing"
-            if st.session_state.get("bulk_new_only", False) and "audit_results" in st.session_state:
-                existing = st.session_state["audit_results"]
-                existing_urls = set(r["url"] for r in existing)
-                for new_r in audit_results:
-                    if new_r["url"] not in existing_urls:
-                        existing.append(new_r)
-                st.session_state["audit_results"] = existing
+            # Merge: replace existing entries for re-audited URLs, keep the rest
+            if "audit_results" in st.session_state and st.session_state["audit_results"]:
+                new_urls = set(r["url"] for r in audit_results)
+                # Keep old results for URLs we didn't re-audit
+                kept = [r for r in st.session_state["audit_results"] if r["url"] not in new_urls]
+                st.session_state["audit_results"] = kept + audit_results
             else:
                 st.session_state["audit_results"] = audit_results
 
