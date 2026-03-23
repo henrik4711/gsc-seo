@@ -89,10 +89,14 @@ def render():
 
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Run Audit", type="primary", use_container_width=True):
+            # Save URLs + flag — both survive the rerun
             st.session_state["_run_single_audit"] = True
+            st.session_state["_audit_urls"] = [u.strip() for u in urls_input.split("\n") if u.strip()]
 
     urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
     run_audit = st.session_state.pop("_run_single_audit", False)
+    if run_audit:
+        urls = st.session_state.pop("_audit_urls", urls)
 
     # ── Bulk audit ALL pages ──────────────────────────────────────
     all_pages = df["page"].unique().tolist()
