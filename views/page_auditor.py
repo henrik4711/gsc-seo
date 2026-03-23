@@ -167,21 +167,23 @@ def render():
 
     # ── Run Audit ─────────────────────────────────────────────────
     if run_audit and urls:
+        # Normalize input URLs to match GSC data format
+        from utils.ui_helpers import normalize_url as _norm_input
+        urls = [_norm_input(u) for u in urls]
+
         audit_results = []
         total_urls = len(urls)
+
+        st.info(f"Starting audit of {total_urls} pages...")
 
         with st.status(f"Auditing {total_urls} pages...", expanded=True) as status:
             progress = st.progress(0)
             log = st.empty()
 
             for i, url in enumerate(urls):
-                # Update UI only every 10 pages to avoid websocket overload
-                if i % 10 == 0:
-                    remaining = (total_urls - i)
-                    mins = remaining // 60
-                    secs = remaining % 60
-                    log.write(f"[{i+1}/{total_urls}] {url}  (~{mins}m {secs}s left)")
-                    progress.progress(i / total_urls)
+                remaining = (total_urls - i)
+                log.write(f"[{i+1}/{total_urls}] {url}")
+                progress.progress(i / max(total_urls, 1))
 
                 # Get keywords for this page from GSC
                 # Filter out brand keywords that appear on every page
