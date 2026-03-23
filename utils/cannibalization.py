@@ -143,27 +143,49 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                 winner_score = score
                 winner_page = pd_item["page"]
 
-        # Generate merge instruction — but only if pages serve same intent
+        # Generate merge instruction — context-aware
         loser_pages = [p["page"] for p in pages_detail if p["page"] != winner_page]
         from urllib.parse import urlparse
-        winner_depth = len(urlparse(winner_page).path.strip("/").split("/"))
-        loser_depths = [len(urlparse(lp).path.strip("/").split("/")) for lp in loser_pages]
 
-        # Don't suggest merging pages at very different URL depths (homepage vs category)
-        # or pages that clearly serve different intents
-        depth_diff = max(abs(winner_depth - d) for d in loser_depths) if loser_depths else 0
-        if depth_diff >= 2:
+        # Detect page types from URL patterns
+        def _page_intent(url):
+            path = urlparse(url).path.lower()
+            if path.rstrip("/") == "" or path == "/":
+                return "homepage"
+            if "/blog/" in path or "/guide/" in path or "/artikel/" in path or "/tips/" in path:
+                return "informational"
+            if any(loc in path for loc in ["/goteborg", "/stockholm", "/malmo", "/ullared", "/butik", "/vara-butiker"]):
+                return "local"
+            if "/topplistan/" in path or "/topp-" in path or "/bast-" in path:
+                return "listicle"
+            return "transactional"
+
+        winner_intent = _page_intent(winner_page)
+        page_intents = {p["page"]: _page_intent(p["page"]) for p in pages_detail}
+        unique_intents = set(page_intents.values())
+
+        # Different intents → don't merge, differentiate
+        if len(unique_intents) > 1:
+            intent_desc = ", ".join(f"{url.split('/')[-2] or url}: {intent}" for url, intent in page_intents.items())
             merge_action = (
-                f"These pages serve different intents (depth difference: {depth_diff}). "
-                f"Don't merge — instead differentiate their content. "
-                f"Make each page's topic focus distinct so Google ranks the right one."
+                f"DIFFERENT INTENTS — don't merge, differentiate content instead. "
+                f"Intents: {intent_desc}. "
+                f"Make each page target its specific intent. Add canonical or noindex if needed. "
+                f"The blog/guide page should link to the category page and vice versa."
             )
+        # Homepage involved → never merge into homepage
+        elif "homepage" in unique_intents:
+            merge_action = (
+                f"Homepage is involved — don't redirect category/product pages to homepage. "
+                f"Instead: strengthen each page's unique keyword focus."
+            )
+        # Same intent, similar pages → merge candidate
         elif row["page_count"] == 2 and position_spread < 3:
             merge_action = (
-                f"Pages rank close together. Consider: "
-                f"1) Differentiate content — make each page's focus unique, OR "
+                f"Similar pages competing. Consider: "
+                f"1) Differentiate content — give each a unique angle, OR "
                 f"2) KEEP: {winner_page} and REDIRECT: {loser_pages[0]} -> {winner_page} (301). "
-                f"Check if both pages need to exist separately."
+                f"Check which page converts better before deciding."
             )
         else:
             merge_action = (
