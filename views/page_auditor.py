@@ -89,10 +89,6 @@ def render():
 
     urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
 
-    # VISIBLE DEBUG — remove after fixing
-    if run_audit:
-        st.error(f"AUDIT TRIGGERED: {len(urls)} URLs: {urls[:3]}")
-
     # ── Bulk audit ALL pages ──────────────────────────────────────
     all_pages = df["page"].unique().tolist()
     already_audited = set(r["url"] for r in st.session_state.get("audit_results", []))
@@ -172,9 +168,8 @@ def render():
         audit_results = []
         total_urls = len(urls)
 
-        st.info(f"Starting audit of {total_urls} pages...")
-
-        with st.status(f"Auditing {total_urls} pages...", expanded=True) as status:
+        try:
+          with st.status(f"Auditing {total_urls} pages...", expanded=True) as status:
             progress = st.progress(0)
             log = st.empty()
 
@@ -379,6 +374,10 @@ def render():
             save_key("audit_results")
 
             status.update(label=f"Audit complete — {len(audit_results)} pages", state="complete", expanded=False)
+        except Exception as audit_err:
+            st.error(f"AUDIT CRASHED: {audit_err}")
+            import traceback
+            st.code(traceback.format_exc())
 
     # ── Display Results ───────────────────────────────────────────
     if "audit_results" not in st.session_state:
