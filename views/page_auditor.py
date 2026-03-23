@@ -92,7 +92,6 @@ def render():
 
         urls_input = st.text_area(
             "URLs to analyze (one per line)",
-            value=st.session_state.get("_auditor_urls_init", ""),
             height=150,
             help="Enter the URLs you want to audit",
             key="auditor_url_input",
@@ -107,7 +106,9 @@ def render():
         st.markdown("<br>", unsafe_allow_html=True)
         run_audit = st.button("Run Audit", type="primary", use_container_width=True)
 
-    urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
+    # Read from widget state (not variable — Streamlit manages it)
+    raw_input = st.session_state.get("auditor_url_input", "")
+    urls = [u.strip() for u in raw_input.split("\n") if u.strip()]
 
     # ── Bulk audit ALL pages ──────────────────────────────────────
     all_pages = df["page"].unique().tolist()
