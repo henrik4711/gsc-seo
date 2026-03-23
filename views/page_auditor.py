@@ -75,25 +75,27 @@ def render():
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        # Pre-fill from audit queue if available
-        default_urls = "\n".join(st.session_state.get("audit_queue", []))
-
-        if not default_urls and "ctr_gaps" in st.session_state:
-            top = (
-                st.session_state["ctr_gaps"]
-                .groupby("page")["lost_clicks_estimate"]
-                .sum()
-                .sort_values(ascending=False)
-                .head(5)
-                .index.tolist()
-            )
-            default_urls = "\n".join(top)
+        # Pre-fill only on first load, not on every rerun
+        if "_auditor_urls_init" not in st.session_state:
+            default_urls = "\n".join(st.session_state.get("audit_queue", []))
+            if not default_urls and "ctr_gaps" in st.session_state:
+                top = (
+                    st.session_state["ctr_gaps"]
+                    .groupby("page")["lost_clicks_estimate"]
+                    .sum()
+                    .sort_values(ascending=False)
+                    .head(5)
+                    .index.tolist()
+                )
+                default_urls = "\n".join(top)
+            st.session_state["_auditor_urls_init"] = default_urls
 
         urls_input = st.text_area(
             "URLs to analyze (one per line)",
-            value=default_urls,
+            value=st.session_state.get("_auditor_urls_init", ""),
             height=150,
-            help="Enter the URLs you want to audit"
+            help="Enter the URLs you want to audit",
+            key="auditor_url_input",
         )
 
     with col2:
@@ -172,11 +174,13 @@ def render():
                 run_audit = True
 
     if not urls and not run_audit:
-        st.info("Enter URLs above to start audit")
-        return
+        # Don't block if there's existing audit data to show
+        if "audit_results" not in st.session_state or not st.session_state["audit_results"]:
+            st.info("Enter URLs above to start audit")
+            return
 
     # ── Run Audit ─────────────────────────────────────────────────
-    if run_audit:
+    if run_audit and urls:
         audit_results = []
         total_urls = len(urls)
 
