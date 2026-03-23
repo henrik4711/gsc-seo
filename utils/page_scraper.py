@@ -105,6 +105,7 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
 
     result["_scraper"] = "playwright"
 
+    page = None
     try:
         page = browser.new_page(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -127,25 +128,26 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
                     page.wait_for_timeout(500)
                     break
         except Exception:
-            pass  # No cookie popup or couldn't dismiss
+            pass
 
         # Wait for main content
         try:
             page.wait_for_selector("div.xmx-page-content, main, article, [role='main']", timeout=5000)
         except Exception:
-            pass  # Content might already be there
+            pass
 
         # Get rendered HTML
         html = page.content()
         page.close()
 
     except Exception as e:
-        try:
-            page.close()
-        except Exception:
-            pass
+        if page:
+            try:
+                page.close()
+            except Exception:
+                pass
         # If browser crashed, force restart and retry once
-        if "closed" in str(e).lower() or "crashed" in str(e).lower():
+        if "closed" in str(e).lower() or "crashed" in str(e).lower() or "target" in str(e).lower():
             global _browser
             print(f"[scraper] Browser crash on {url}, restarting and retrying...")
             _browser = None
