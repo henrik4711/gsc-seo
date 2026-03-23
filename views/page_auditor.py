@@ -89,6 +89,10 @@ def render():
 
     urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
 
+    # VISIBLE DEBUG — remove after fixing
+    if run_audit:
+        st.error(f"AUDIT TRIGGERED: {len(urls)} URLs: {urls[:3]}")
+
     # ── Bulk audit ALL pages ──────────────────────────────────────
     all_pages = df["page"].unique().tolist()
     already_audited = set(r["url"] for r in st.session_state.get("audit_results", []))
