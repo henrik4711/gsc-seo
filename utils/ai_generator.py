@@ -552,12 +552,16 @@ Language: {language}
 {type_instruction}
 ## TASK
 Write optimized landing page content that:
-1. Is natural and converting - NOT SEO spam
+1. Is natural and converting — NOT SEO spam
 2. Includes primary keywords naturally (density ~1-2%)
 3. Covers all relevant LSI keywords from GSC data
-4. Has clear structure with H2/H3
+4. Has clear structure with H2/H3 — short paragraphs (max 3-4 sentences)
 5. Includes social proof, USPs and CTA
 6. Uses a discreet, respectful tone appropriate for the product category
+7. **E-E-A-T signals**: Write with expertise (specific details, not generic claims), reference experience ("we have helped thousands of customers"), build trust (guarantees, returns, secure payment)
+8. **Helpful Content**: Every paragraph must help the reader — guide decisions, compare options, address concerns. No filler text.
+9. Include at least one FAQ section (3-5 questions) and one comparison/buying guide section
+10. Use bullet lists or numbered lists where it improves scannability
 
 Return ONLY JSON:
 {{

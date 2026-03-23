@@ -112,16 +112,39 @@ def render():
                 st.markdown(f"**Page 2:** `{cluster['page_2']}`")
                 st.markdown(f"**Shared keywords:** {', '.join(cluster['query_examples'][:15])}")
 
-                # Show authority data if available
+                # Show authority data + merge recommendation
                 if "page_authority" in st.session_state:
                     auth = st.session_state["page_authority"]
+                    page_scores = {}
                     for page in [cluster["page_1"], cluster["page_2"]]:
                         from utils.ui_helpers import normalize_url as _nu
                         page_auth = auth[auth["page"].apply(_nu) == _nu(page)]
+                        rd = 0
+                        risk = "Unknown"
                         if not page_auth.empty:
-                            rd = page_auth.iloc[0].get("referring_domains", 0)
+                            rd = int(page_auth.iloc[0].get("referring_domains", 0))
                             risk = page_auth.iloc[0].get("change_risk", "Unknown")
-                            st.markdown(f"`{page}`: **{rd}** referring domains - {risk}")
+                        page_scores[page] = {"rd": rd, "risk": risk}
+                        risk_color = "#ff4455" if risk == "HIGH" else "#ffaa33" if risk == "MEDIUM" else "#33dd88"
+                        st.markdown(f"`{page}`: **{rd}** referring domains — <span style='color:{risk_color}'>{risk} risk</span>", unsafe_allow_html=True)
+
+                    # Recommend which page to keep
+                    p1, p2 = cluster["page_1"], cluster["page_2"]
+                    s1 = page_scores.get(p1, {})
+                    s2 = page_scores.get(p2, {})
+                    keep = p1 if s1.get("rd", 0) >= s2.get("rd", 0) else p2
+                    redirect = p2 if keep == p1 else p1
+                    st.markdown(
+                        f"<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.8rem; margin-top:0.5rem; border-radius:0 6px 6px 0;'>"
+                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#5533ff; margin-bottom:0.3rem;'>MERGE RECOMMENDATION</div>"
+                        f"<div style='font-size:0.85rem; color:#c8b4ff;'>"
+                        f"<strong>KEEP:</strong> {keep} ({s1.get('rd', 0) if keep == p1 else s2.get('rd', 0)} backlinks)<br>"
+                        f"<strong>REDIRECT:</strong> {redirect} → {keep} (301 redirect)<br>"
+                        f"<strong>Steps:</strong> 1) Copy unique content from {redirect.split('/')[-2]} to {keep.split('/')[-2]} "
+                        f"2) Set up 301 redirect 3) Update internal links pointing to old URL"
+                        f"</div></div>",
+                        unsafe_allow_html=True,
+                    )
 
     # ── Detailed keyword list ──────────────────────────────────
     st.markdown("### All Cannibalized Keywords")
@@ -142,11 +165,14 @@ def render():
             )
 
             st.markdown(f"**Recommended winner:** `{row['recommended_winner']}`")
+            if row.get("merge_action"):
+                st.info(row["merge_action"])
 
             # Show each competing page
             for p in row["pages_detail"]:
                 is_winner = p["page"] == row["recommended_winner"]
                 icon = ">>>" if is_winner else "   "
+                rd_info = f" | **{p.get('referring_domains', 0)} backlinks**" if p.get("referring_domains") else ""
                 st.markdown(
                     f"`{icon}` **Pos {p['position']}** | CTR {p['ctr']}% | "
                     f"{p['clicks']} clicks | {p['impressions']} impr | `{p['page']}`"

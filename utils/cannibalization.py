@@ -57,12 +57,43 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                 "ctr": round(p["ctr"] * 100, 2) if p["ctr"] < 1 else round(p["ctr"], 2),
             })
 
-        # Determine winner (most clicks + best position)
-        best_page = query_data.iloc[0]
+        # Determine winner: consider clicks + position + backlink authority
+        import streamlit as _st
+        page_auth = _st.session_state.get("page_authority")
+
+        best_page = query_data.iloc[0]  # Default: most clicks
         positions = [p["position"] for p in pages_detail]
         best_position = min(positions)
         worst_position = max(positions)
         position_spread = worst_position - best_position
+
+        # Enrich pages with backlink data + determine winner
+        for pd_item in pages_detail:
+            pd_item["referring_domains"] = 0
+            pd_item["authority_score"] = 0
+            if page_auth is not None and not page_auth.empty:
+                from utils.ui_helpers import normalize_url as _nu
+                match = page_auth[page_auth["page"].apply(_nu) == _nu(pd_item["page"])]
+                if not match.empty:
+                    pd_item["referring_domains"] = int(match.iloc[0].get("referring_domains", 0))
+                    pd_item["authority_score"] = int(match.iloc[0].get("authority_score", 0))
+
+        # Pick winner: highest (clicks * 2 + referring_domains * 10 + authority_score)
+        winner_score = -1
+        winner_page = best_page["page"]
+        for pd_item in pages_detail:
+            score = pd_item["clicks"] * 2 + pd_item["referring_domains"] * 10 + pd_item["authority_score"]
+            if score > winner_score:
+                winner_score = score
+                winner_page = pd_item["page"]
+
+        # Generate merge instruction
+        loser_pages = [p["page"] for p in pages_detail if p["page"] != winner_page]
+        merge_action = (
+            f"KEEP: {winner_page} (redirect others here). "
+            f"REDIRECT: {', '.join(loser_pages[:3])} -> {winner_page} (301 redirect). "
+            f"Merge unique content from loser pages into winner before redirecting."
+        )
 
         # Classify severity
         if row["page_count"] >= 3 and position_spread > 5:
@@ -86,9 +117,10 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
             "total_clicks": int(row["total_clicks"]),
             "total_impressions": int(row["total_impressions"]),
             "position_spread": round(position_spread, 1),
-            "recommended_winner": best_page["page"],
+            "recommended_winner": winner_page,
             "winner_position": round(best_page["position"], 1),
             "winner_clicks": int(best_page["clicks"]),
+            "merge_action": merge_action,
             "lost_clicks_estimate": lost_clicks,
             "pages_detail": pages_detail,
         })
