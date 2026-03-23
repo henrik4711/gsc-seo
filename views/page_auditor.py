@@ -75,26 +75,10 @@ def render():
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        # Pre-fill only on first load, not on every rerun
-        if "_auditor_urls_init" not in st.session_state:
-            default_urls = "\n".join(st.session_state.get("audit_queue", []))
-            if not default_urls and "ctr_gaps" in st.session_state:
-                top = (
-                    st.session_state["ctr_gaps"]
-                    .groupby("page")["lost_clicks_estimate"]
-                    .sum()
-                    .sort_values(ascending=False)
-                    .head(5)
-                    .index.tolist()
-                )
-                default_urls = "\n".join(top)
-            st.session_state["_auditor_urls_init"] = default_urls
-
         urls_input = st.text_area(
             "URLs to analyze (one per line)",
             height=150,
             help="Enter the URLs you want to audit",
-            key="auditor_url_input",
         )
 
     with col2:
@@ -106,9 +90,7 @@ def render():
         st.markdown("<br>", unsafe_allow_html=True)
         run_audit = st.button("Run Audit", type="primary", use_container_width=True)
 
-    # Read from widget state (not variable — Streamlit manages it)
-    raw_input = st.session_state.get("auditor_url_input", "")
-    urls = [u.strip() for u in raw_input.split("\n") if u.strip()]
+    urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
 
     # ── Bulk audit ALL pages ──────────────────────────────────────
     all_pages = df["page"].unique().tolist()
