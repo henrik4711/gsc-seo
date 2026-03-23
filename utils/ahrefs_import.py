@@ -155,6 +155,12 @@ def parse_backlinks(file_content) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
 
+    # Normalize URLs
+    from utils.ui_helpers import normalize_url
+    for col in ["source_url", "target_url"]:
+        if col in df.columns:
+            df[col] = df[col].apply(normalize_url)
+
     # Extract source domain
     if "source_url" in df.columns:
         df["source_domain"] = df["source_url"].apply(_extract_domain)
@@ -220,6 +226,12 @@ def parse_organic_keywords(file_content) -> pd.DataFrame:
     for col in ["volume", "keyword_difficulty", "position", "est_traffic"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    # Normalize page URLs
+    from utils.ui_helpers import normalize_url
+    for col in ["page", "prev_page"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).apply(normalize_url)
 
     return df
 
