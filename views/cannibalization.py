@@ -128,21 +128,58 @@ def render():
                         risk_color = "#ff4455" if risk == "HIGH" else "#ffaa33" if risk == "MEDIUM" else "#33dd88"
                         st.markdown(f"`{page}`: **{rd}** referring domains — <span style='color:{risk_color}'>{risk} risk</span>", unsafe_allow_html=True)
 
-                    # Recommend which page to keep
+                    # Detect page intents before recommending
+                    from urllib.parse import urlparse as _up
+                    def _intent(url):
+                        path = _up(url).path.lower()
+                        if path.rstrip("/") == "":
+                            return "homepage"
+                        if "/blog/" in path or "/guide/" in path or "/artikel/" in path:
+                            return "informational"
+                        if any(loc in path for loc in ["/goteborg", "/stockholm", "/malmo", "/ullared", "/butik", "/vara-butiker"]):
+                            return "local"
+                        if "/topplistan/" in path or "/topp-" in path:
+                            return "listicle"
+                        return "transactional"
+
                     p1, p2 = cluster["page_1"], cluster["page_2"]
+                    i1, i2 = _intent(p1), _intent(p2)
                     s1 = page_scores.get(p1, {})
                     s2 = page_scores.get(p2, {})
-                    keep = p1 if s1.get("rd", 0) >= s2.get("rd", 0) else p2
-                    redirect = p2 if keep == p1 else p1
+
+                    if i1 != i2:
+                        # Different intents — don't merge
+                        box_color = "#ffaa33"
+                        box_title = "DIFFERENT INTENTS — DO NOT MERGE"
+                        box_body = (
+                            f"<strong>{p1.split('/')[-1] or 'homepage'}:</strong> {i1} intent<br>"
+                            f"<strong>{p2.split('/')[-1] or 'homepage'}:</strong> {i2} intent<br><br>"
+                            f"These pages serve different user needs. Don't merge — instead:<br>"
+                            f"1) Differentiate content so each page targets its unique keywords<br>"
+                            f"2) Add a link from the {i1} page to the {i2} page (and vice versa)<br>"
+                            f"3) Use distinct primary keywords in title + H1 for each page"
+                        )
+                    elif i1 == "homepage":
+                        box_color = "#ffaa33"
+                        box_title = "HOMEPAGE INVOLVED — DO NOT MERGE"
+                        box_body = "Don't redirect category/product pages to homepage. Strengthen each page's unique keyword focus."
+                    else:
+                        # Same intent — merge candidate
+                        keep = p1 if s1.get("rd", 0) >= s2.get("rd", 0) else p2
+                        redirect = p2 if keep == p1 else p1
+                        box_color = "#5533ff"
+                        box_title = "MERGE RECOMMENDATION"
+                        box_body = (
+                            f"<strong>KEEP:</strong> {keep} ({s1.get('rd', 0) if keep == p1 else s2.get('rd', 0)} backlinks)<br>"
+                            f"<strong>REDIRECT:</strong> {redirect} → {keep} (301 redirect)<br>"
+                            f"<strong>Steps:</strong> 1) Copy unique content from {redirect.split('/')[-2]} to {keep.split('/')[-2]} "
+                            f"2) Set up 301 redirect 3) Update internal links pointing to old URL"
+                        )
+
                     st.markdown(
-                        f"<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.8rem; margin-top:0.5rem; border-radius:0 6px 6px 0;'>"
-                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#5533ff; margin-bottom:0.3rem;'>MERGE RECOMMENDATION</div>"
-                        f"<div style='font-size:0.85rem; color:#c8b4ff;'>"
-                        f"<strong>KEEP:</strong> {keep} ({s1.get('rd', 0) if keep == p1 else s2.get('rd', 0)} backlinks)<br>"
-                        f"<strong>REDIRECT:</strong> {redirect} → {keep} (301 redirect)<br>"
-                        f"<strong>Steps:</strong> 1) Copy unique content from {redirect.split('/')[-2]} to {keep.split('/')[-2]} "
-                        f"2) Set up 301 redirect 3) Update internal links pointing to old URL"
-                        f"</div></div>",
+                        f"<div style='background:#0d0d15; border-left:3px solid {box_color}; padding:0.8rem; margin-top:0.5rem; border-radius:0 6px 6px 0;'>"
+                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:{box_color}; margin-bottom:0.3rem;'>{box_title}</div>"
+                        f"<div style='font-size:0.85rem; color:#c8b4ff;'>{box_body}</div></div>",
                         unsafe_allow_html=True,
                     )
 
