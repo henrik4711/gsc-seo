@@ -302,9 +302,36 @@ def render():
                                 "msg": issue["msg"],
                             })
                     else:
-                        result["_data_warnings"] = ["Scrape failed — all page data is missing"]
-                        result["meta_score"] = None
-                        result["issues"] = [{"type": "critical", "field": "url", "msg": f"Could not fetch the page: {result.get('error', page_data.get('error'))}"}]
+                        # Scrape failed — try Screaming Frog data as fallback
+                        sf_pages = st.session_state.get("sf_pages")
+                        sf_fallback = False
+                        if sf_pages is not None and not sf_pages.empty:
+                            from utils.ui_helpers import normalize_url as _nfu
+                            sf_match = sf_pages[sf_pages["url"].apply(_nfu) == _nfu(url)]
+                            if not sf_match.empty:
+                                sf_row = sf_match.iloc[0]
+                                result["title"] = sf_row.get("title") or result.get("title")
+                                result["meta_description"] = sf_row.get("meta_description") or result.get("meta_description")
+                                result["h1"] = sf_row.get("h1") or result.get("h1")
+                                result["word_count"] = int(sf_row.get("word_count", 0)) or result.get("word_count", 0)
+                                result["title_length"] = len(result.get("title") or "")
+                                result["description_length"] = len(result.get("meta_description") or "")
+                                result["success"] = True
+                                sf_fallback = True
+                                result["_data_warnings"] = [
+                                    f"Live scrape failed ({result.get('error', 'unknown')}). Using Screaming Frog data as fallback — title, meta, word count from SF crawl.",
+                                ]
+
+                        if sf_fallback:
+                            # Run meta eval + content audit with SF data
+                            meta_eval = evaluate_meta(result, target_keywords)
+                            result["meta_score"] = meta_eval["score"]
+                            result["issues"] = meta_eval["issues"]
+                            result["meta_eval"] = meta_eval
+                        else:
+                            result["_data_warnings"] = ["Scrape failed and no Screaming Frog data available"]
+                            result["meta_score"] = None
+                            result["issues"] = [{"type": "critical", "field": "url", "msg": f"Could not fetch the page: {result.get('error', page_data.get('error'))}"}]
                 else:
                     result["success"] = True
                     result["title"] = "(not fetched - scraping disabled)"
