@@ -22,7 +22,7 @@ _playwright_failed = False  # Don't retry if it failed once
 
 
 def _get_browser():
-    """Get or create a shared Playwright browser instance. Returns None if unavailable."""
+    """Get or create a shared Playwright browser instance. Restarts if crashed."""
     global _browser, _playwright, _playwright_failed
     if _playwright_failed:
         return None
@@ -32,6 +32,18 @@ def _get_browser():
                 return _browser
         except Exception:
             pass
+        # Browser died — clean up and restart
+        print("[scraper] Browser crashed, restarting...")
+        try:
+            _browser.close()
+        except Exception:
+            pass
+        try:
+            _playwright.stop()
+        except Exception:
+            pass
+        _browser = None
+        _playwright = None
     try:
         from playwright.sync_api import sync_playwright
         _playwright = sync_playwright().start()
@@ -48,11 +60,9 @@ def _get_browser():
         return _browser
     except Exception as e:
         import traceback
-        _playwright_error = str(e)
         print(f"[scraper] Playwright unavailable: {e}")
         print(traceback.format_exc())
         _playwright_failed = True
-        # Store error for debug display
         import streamlit as _st
         _st.session_state["_playwright_error"] = f"{e}\n{traceback.format_exc()}"
         return None
@@ -90,7 +100,6 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
 
     browser = _get_browser()
     if not browser:
-        # Fallback to requests if Playwright not available
         result["_scraper"] = "requests (Playwright unavailable)"
         return _scrape_with_requests(url, timeout, result)
 
@@ -131,17 +140,52 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
         page.close()
 
     except Exception as e:
-        result["error"] = str(e)
         try:
             page.close()
         except Exception:
             pass
+        # If browser crashed, force restart and retry once
+        if "closed" in str(e).lower() or "crashed" in str(e).lower():
+            global _browser
+            print(f"[scraper] Browser crash on {url}, restarting and retrying...")
+            _browser = None
+            browser = _get_browser()
+            if browser:
+                try:
+                    page = browser.new_page(
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    )
+                    page.set_default_timeout(timeout * 1000)
+                    page.goto(url, wait_until="domcontentloaded")
+                    try:
+                        page.wait_for_selector("div.xmx-page-content, main, article, [role='main']", timeout=5000)
+                    except Exception:
+                        pass
+                    html = page.content()
+                    page.close()
+                    # Success on retry — continue to parsing below
+                    soup = BeautifulSoup(html, "html.parser")
+                    result["success"] = True
+                    result["_scraper"] = "playwright (retry)"
+                    # Jump to parsing (duplicated to avoid goto)
+                    return _parse_html(result, soup, html, url)
+                except Exception as e2:
+                    result["error"] = f"Retry also failed: {e2}"
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+                    return result
+        result["error"] = str(e)
         return result
 
-    # Parse rendered HTML with BeautifulSoup
-    soup = BeautifulSoup(html, "html.parser")
+    # Parse rendered HTML
     result["success"] = True
+    return _parse_html(result, BeautifulSoup(html, "html.parser"), html, url)
 
+
+def _parse_html(result: dict, soup, html: str, url: str) -> dict:
+    """Parse HTML into result dict. Shared by normal scrape and retry."""
     # Title
     title_tag = soup.find("title")
     if title_tag:
