@@ -12,8 +12,6 @@ from config import get_anthropic_key, has_anthropic_key
 
 def _auto_connect_gsc():
     """Try to auto-connect GSC using env var credentials."""
-    if "gsc_data" in st.session_state:
-        return  # already connected
     creds = st.session_state.get("gsc_credentials")
     site_url = st.session_state.get("gsc_site_url", os.environ.get("GSC_SITE_URL", ""))
     if not creds or not site_url:
@@ -26,11 +24,8 @@ def _auto_connect_gsc():
         properties = list_properties(service)
         st.session_state["gsc_service"] = service
         st.session_state["gsc_properties"] = properties
-        # Auto-fetch if site URL matches a property
-        if site_url in properties:
-            from utils.gsc_client import fetch_gsc_data
-            df = fetch_gsc_data(service, site_url)
-            st.session_state["gsc_data"] = df
+        # Set site if not already set
+        if site_url in properties and "gsc_site" not in st.session_state:
             st.session_state["gsc_site"] = site_url
             st.session_state["demo_mode"] = False
     except Exception:
