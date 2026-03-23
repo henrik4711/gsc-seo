@@ -88,12 +88,11 @@ def render():
         show_keywords = st.number_input("Top N keywords per page", min_value=3, max_value=15, value=5)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        run_audit = st.button("Run Audit", type="primary", use_container_width=True)
+        if st.button("Run Audit", type="primary", use_container_width=True):
+            st.session_state["_run_single_audit"] = True
 
     urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
-
-    # Debug info
-    st.caption(f"DEBUG: urls_input='{urls_input[:80]}' | urls={len(urls)} | run_audit={run_audit}")
+    run_audit = st.session_state.pop("_run_single_audit", False)
 
     # ── Bulk audit ALL pages ──────────────────────────────────────
     all_pages = df["page"].unique().tolist()
