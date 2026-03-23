@@ -70,6 +70,17 @@ def _volume_available() -> bool:
     return os.path.isdir(DATA_DIR)
 
 
+def _normalize_df_urls(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize URL columns in DataFrames loaded from disk.
+    Ensures old data (saved before normalization was added) is consistent."""
+    from utils.ui_helpers import normalize_url
+    url_cols = [c for c in df.columns if c in ("page", "url", "source", "target", "source_url", "target_url", "prev_page")]
+    for col in url_cols:
+        if df[col].dtype == object:  # Only string columns
+            df[col] = df[col].apply(lambda x: normalize_url(str(x)) if pd.notna(x) else x)
+    return df
+
+
 # ── Bundled data: shipped as .gz in git, unpacked to /data on first run ──
 
 BUNDLED_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bundled_data")
@@ -120,6 +131,7 @@ def _unpack_bundled_data():
             if dtype == "dataframe":
                 df = pd.read_csv(target_path)
                 if not df.empty:
+                    df = _normalize_df_urls(df)
                     st.session_state[key] = df
                     unpacked.append(key)
             elif dtype == "json":
@@ -272,6 +284,8 @@ def load_all():
             elif data_type == "dataframe":
                 df = pd.read_csv(path)
                 if not df.empty:
+                    # Normalize URL columns loaded from disk
+                    df = _normalize_df_urls(df)
                     st.session_state[key] = df
                     loaded.append(key)
             elif data_type == "json":
