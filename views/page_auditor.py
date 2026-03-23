@@ -290,9 +290,12 @@ def render():
                         # Scrape failed — try Screaming Frog data as fallback
                         sf_pages = st.session_state.get("sf_pages")
                         sf_fallback = False
+                        print(f"[audit] Scrape failed for {url}, trying SF fallback. SF pages: {len(sf_pages) if sf_pages is not None else 'None'}")
                         if sf_pages is not None and not sf_pages.empty:
                             from utils.ui_helpers import normalize_url as _nfu
-                            sf_match = sf_pages[sf_pages["url"].apply(_nfu) == _nfu(url)]
+                            url_norm = _nfu(url)
+                            sf_match = sf_pages[sf_pages["url"].apply(_nfu) == url_norm]
+                            print(f"[audit] SF lookup: url_norm={url_norm}, matches={len(sf_match)}, SF sample URLs: {sf_pages['url'].head(3).tolist()}")
                             if not sf_match.empty:
                                 sf_row = sf_match.iloc[0]
                                 result["title"] = sf_row.get("title") or result.get("title")
