@@ -7,9 +7,19 @@ import pandas as pd
 import numpy as np
 
 
+def _get_brand_keywords(df: pd.DataFrame) -> set:
+    """Detect brand keywords: queries that appear on >30% of all pages."""
+    total_pages = df["page"].nunique()
+    if total_pages < 3:
+        return set()
+    kw_page_counts = df.groupby("query")["page"].nunique()
+    return set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
+
+
 def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.DataFrame:
     """
     Find queries where multiple pages rank, indicating cannibalization.
+    Filters out brand keywords (appear on >30% of pages) — these are NOT cannibalization.
 
     Returns DataFrame with columns:
     - query, page_count, pages (list), positions, clicks, impressions
@@ -22,6 +32,11 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
 
     # Filter low-impression noise
     filtered = df[df["impressions"] >= min_impressions].copy()
+
+    # Filter out brand keywords — they naturally rank on many pages
+    brand_kws = _get_brand_keywords(filtered)
+    if brand_kws:
+        filtered = filtered[~filtered["query"].isin(brand_kws)].copy()
 
     # Group by query: find queries with multiple pages
     query_pages = (
@@ -87,13 +102,34 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                 winner_score = score
                 winner_page = pd_item["page"]
 
-        # Generate merge instruction
+        # Generate merge instruction — but only if pages serve same intent
         loser_pages = [p["page"] for p in pages_detail if p["page"] != winner_page]
-        merge_action = (
-            f"KEEP: {winner_page} (redirect others here). "
-            f"REDIRECT: {', '.join(loser_pages[:3])} -> {winner_page} (301 redirect). "
-            f"Merge unique content from loser pages into winner before redirecting."
-        )
+        from urllib.parse import urlparse
+        winner_depth = len(urlparse(winner_page).path.strip("/").split("/"))
+        loser_depths = [len(urlparse(lp).path.strip("/").split("/")) for lp in loser_pages]
+
+        # Don't suggest merging pages at very different URL depths (homepage vs category)
+        # or pages that clearly serve different intents
+        depth_diff = max(abs(winner_depth - d) for d in loser_depths) if loser_depths else 0
+        if depth_diff >= 2:
+            merge_action = (
+                f"These pages serve different intents (depth difference: {depth_diff}). "
+                f"Don't merge — instead differentiate their content. "
+                f"Make each page's topic focus distinct so Google ranks the right one."
+            )
+        elif row["page_count"] == 2 and position_spread < 3:
+            merge_action = (
+                f"Pages rank close together. Consider: "
+                f"1) Differentiate content — make each page's focus unique, OR "
+                f"2) KEEP: {winner_page} and REDIRECT: {loser_pages[0]} -> {winner_page} (301). "
+                f"Check if both pages need to exist separately."
+            )
+        else:
+            merge_action = (
+                f"KEEP: {winner_page} (redirect others here). "
+                f"REDIRECT: {', '.join(loser_pages[:3])} -> {winner_page} (301 redirect). "
+                f"Steps: 1) Copy unique content from loser to winner 2) Set up 301 redirect 3) Update internal links."
+            )
 
         # Classify severity
         if row["page_count"] >= 3 and position_spread > 5:
