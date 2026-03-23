@@ -258,7 +258,7 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
 
         if total < 3 and r.get("impressions", 0) > 100:
             # Check we haven't already flagged this page
-            already_has_actions = any(a["page_url"] == url for a in actions)
+            already_has_actions = any(_nu(a["page_url"]) == _nu(url) for a in actions)
             if not already_has_actions:
                 actions.append({
                     "id": action_id,

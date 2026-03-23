@@ -152,7 +152,7 @@ def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
 
         for p in pages:
             purl = p["page"]
-            role = "HUB" if purl == hub_url else "SPOKE"
+            role = "HUB" if _norm_url(purl) == _norm_url(hub_url) else "SPOKE"
             audit = audit_by_url.get(_norm_url(purl), {})
 
             # Keywords this page covers

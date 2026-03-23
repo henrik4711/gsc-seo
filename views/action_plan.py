@@ -132,9 +132,10 @@ def render():
             })
         else:
             # Move homepage to top
-            hp = next(p for p in pages if p["url"] == homepage_url)
-            pages.remove(hp)
-            pages.insert(0, hp)
+            hp = next((p for p in pages if _nu(p["url"]) == _nu(homepage_url)), None)
+            if hp:
+                pages.remove(hp)
+                pages.insert(0, hp)
 
     if not pages:
         st.info("No audited pages found")

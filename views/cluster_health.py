@@ -40,7 +40,7 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     spoke_keywords = {}
     for p in pages:
         purl = p["page"]
-        if purl == hub_url:
+        if _nu(purl) == _nu(hub_url):
             continue
         pa = _audit(purl)
         spokes.append({
