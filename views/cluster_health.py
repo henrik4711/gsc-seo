@@ -103,7 +103,8 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     # Cannibalization within cluster
     cannibalized = []
     if gsc_data is not None and not gsc_data.empty:
-        cluster_gsc = gsc_data[gsc_data["page"].isin(cluster_urls)]
+        cluster_urls_norm = set(_nu(u) for u in cluster_urls)
+        cluster_gsc = gsc_data[gsc_data["page"].apply(_nu).isin(cluster_urls_norm)]
         if not cluster_gsc.empty:
             kw_pages = cluster_gsc.groupby("query")["page"].apply(list).to_dict()
             for kw, kw_pages_list in kw_pages.items():

@@ -116,7 +116,8 @@ def render():
                 if "page_authority" in st.session_state:
                     auth = st.session_state["page_authority"]
                     for page in [cluster["page_1"], cluster["page_2"]]:
-                        page_auth = auth[auth["page"].str.rstrip("/").str.lower() == page.rstrip("/").lower()]
+                        from utils.ui_helpers import normalize_url as _nu
+                        page_auth = auth[auth["page"].apply(_nu) == _nu(page)]
                         if not page_auth.empty:
                             rd = page_auth.iloc[0].get("referring_domains", 0)
                             risk = page_auth.iloc[0].get("change_risk", "Unknown")

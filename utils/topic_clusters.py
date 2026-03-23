@@ -115,7 +115,8 @@ def identify_content_gaps(clusters: list, authority_data: pd.DataFrame = None) -
         if authority_data is not None and not authority_data.empty:
             for page_data in cluster["pages"]:
                 page = page_data["page"]
-                auth = authority_data[authority_data["page"].str.rstrip("/").str.lower() == page.rstrip("/").lower()]
+                from utils.ui_helpers import normalize_url as _nu
+                auth = authority_data[authority_data["page"].apply(_nu) == _nu(page)]
                 if not auth.empty and auth.iloc[0].get("referring_domains", 0) == 0:
                     issues.append(f"No backlinks to {page} - needs link building")
 

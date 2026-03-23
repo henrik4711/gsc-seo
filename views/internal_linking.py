@@ -8,6 +8,7 @@ import streamlit as st
 import json
 from urllib.parse import urlparse
 from config import get_anthropic_key, has_anthropic_key
+from utils.ui_helpers import normalize_url as _nu
 
 
 def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
@@ -43,13 +44,13 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
                 if u.startswith("/"):
                     domain = urlparse(url).netloc
                     u = f"https://{domain}{u}"
-                linked_urls.add(u.rstrip("/").lower())
+                linked_urls.add(_nu(u))
         # Enrich with SF link map if available
         if sf_link_map:
             sf_links = sf_link_map.get("links_from", {}).get(url, [])
             for sl in sf_links:
                 t = sl.get("target", "")
-                linked_urls.add(t.rstrip("/").lower())
+                linked_urls.add(_nu(t))
 
         known_links_by_page[url] = linked_urls
 
@@ -163,7 +164,7 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
         # Deduplicate: track which (source, target) pairs we already have
         existing_pairs = set()
         for a in actions:
-            existing_pairs.add((a["page_url"].rstrip("/").lower(), a.get("target_url", "").rstrip("/").lower()))
+            existing_pairs.add((_nu(a["page_url"]), _nu(a.get("target_url", ""))))
 
         for ov in overlap:
             p1 = ov.get("page_1", "")
@@ -183,13 +184,13 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
                 if source_url not in audited_urls:
                     continue
 
-                pair_key = (source_url.rstrip("/").lower(), target_url.rstrip("/").lower())
+                pair_key = (_nu(source_url), _nu(target_url))
                 if pair_key in existing_pairs:
                     continue
 
                 # Check if we KNOW the page already links there
                 known = known_links_by_page.get(source_url, set())
-                if target_url.rstrip("/").lower() in known:
+                if _nu(target_url) in known:
                     continue
 
                 # Filter: only suggest links between related pages
@@ -199,8 +200,8 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
                 is_sibling = (len(src_parts) >= 2 and len(tgt_parts) >= 2
                               and src_parts[0] == tgt_parts[0])
                 is_parent_child = (
-                    target_url.rstrip("/").lower().startswith(source_url.rstrip("/").lower() + "/") or
-                    source_url.rstrip("/").lower().startswith(target_url.rstrip("/").lower() + "/")
+                    _nu(target_url).startswith(_nu(source_url) + "/") or
+                    _nu(source_url).startswith(_nu(target_url) + "/")
                 )
                 shares_topic = shared_count >= 2  # They share 2+ topic clusters = related
                 if not is_sibling and not is_parent_child and not shares_topic:

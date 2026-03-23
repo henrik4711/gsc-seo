@@ -1192,11 +1192,13 @@ def _audit_internal_linking(
 
     # ── Incoming anchor text analysis (from SF link map) ─────────
     import streamlit as _st
+    from utils.ui_helpers import normalize_url as _nurl
     sf_link_map = _st.session_state.get("sf_link_map")
     inbound_anchor_stats = {}
+    url_norm = _nurl(url)
     if sf_link_map:
-        # Get anchor quality stats for this page
-        aq = sf_link_map.get("anchor_quality", {}).get(url, {})
+        # Get anchor quality stats for this page (normalized lookup)
+        aq = sf_link_map.get("anchor_quality", {}).get(url_norm, {})
         if aq:
             inbound_anchor_stats = aq
 
@@ -1215,7 +1217,7 @@ def _audit_internal_linking(
                 penalty += 2
 
         # Check if inbound anchors match this page's cluster terms
-        links_to = sf_link_map.get("links_to", {}).get(url, [])
+        links_to = sf_link_map.get("links_to", {}).get(url_norm, [])
         if links_to and topic_clusters and keywords:
             kw_set = set(k.lower() for k in keywords[:15])
             cluster_match = 0
