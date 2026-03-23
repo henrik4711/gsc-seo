@@ -72,31 +72,22 @@ def render():
     df = st.session_state["gsc_data"]
 
     # ── URL Input ─────────────────────────────────────────────────
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        urls_input = st.text_area(
-            "URLs to analyze (one per line)",
-            height=150,
-            help="Enter the URLs you want to audit",
-        )
-
-    with col2:
-        st.markdown("#### Settings")
-        scrape_live = st.toggle("Scrape live pages", value=True, help="Fetch current content from the website")
-        deep_category = st.toggle("Deep category analysis", value=True, help="Separates editorial content from product grid on category pages")
-        show_keywords = st.number_input("Top N keywords per page", min_value=3, max_value=15, value=5)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Run Audit", type="primary", use_container_width=True):
-            # Save URLs + flag — both survive the rerun
-            st.session_state["_run_single_audit"] = True
-            st.session_state["_audit_urls"] = [u.strip() for u in urls_input.split("\n") if u.strip()]
+    with st.form("audit_form"):
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            urls_input = st.text_area(
+                "URLs to analyze (one per line)",
+                height=150,
+                help="Enter the URLs you want to audit",
+            )
+        with col2:
+            st.markdown("#### Settings")
+            scrape_live = st.toggle("Scrape live pages", value=True, help="Fetch current content from the website")
+            deep_category = st.toggle("Deep category analysis", value=True, help="Separates editorial content from product grid on category pages")
+            show_keywords = st.number_input("Top N keywords per page", min_value=3, max_value=15, value=5)
+        run_audit = st.form_submit_button("Run Audit", type="primary")
 
     urls = [u.strip() for u in urls_input.split("\n") if u.strip()]
-    run_audit = st.session_state.pop("_run_single_audit", False)
-    if run_audit:
-        urls = st.session_state.pop("_audit_urls", urls)
 
     # ── Bulk audit ALL pages ──────────────────────────────────────
     all_pages = df["page"].unique().tolist()
