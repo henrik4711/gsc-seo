@@ -8,12 +8,53 @@ import numpy as np
 
 
 def _get_brand_keywords(df: pd.DataFrame) -> set:
-    """Detect brand keywords: queries that appear on >30% of all pages."""
+    """
+    Detect brand/navigational keywords that should be excluded from cannibalization.
+
+    Brand keywords are identified by:
+    1. Queries containing the domain name (e.g. "mshop" from mshop.se)
+    2. Queries appearing on many pages (>5% of all pages or 10+ pages)
+    3. Queries where homepage has >10x more clicks than any other page
+    """
+    import streamlit as st
+    brand_kws = set()
+
+    # Method 1: Domain-based brand terms
+    site = st.session_state.get("gsc_site", "")
+    if site:
+        from urllib.parse import urlparse
+        domain = urlparse(site).netloc.replace("www.", "").split(".")[0]  # "mshop" from "www.mshop.se"
+        if domain and len(domain) >= 3:
+            # Any query containing the domain name is a brand query
+            brand_mask = df["query"].str.contains(domain, case=False, na=False)
+            brand_kws.update(df[brand_mask]["query"].unique())
+
+    # Method 2: Queries on many pages (navigational queries)
     total_pages = df["page"].nunique()
-    if total_pages < 3:
-        return set()
-    kw_page_counts = df.groupby("query")["page"].nunique()
-    return set(kw_page_counts[kw_page_counts >= total_pages * 0.3].index)
+    if total_pages >= 10:
+        kw_page_counts = df.groupby("query")["page"].nunique()
+        threshold = max(10, total_pages * 0.05)  # 5% of pages or 10, whichever is higher
+        brand_kws.update(kw_page_counts[kw_page_counts >= threshold].index)
+
+    # Method 3: Homepage-dominated queries (navigational intent)
+    homepage = st.session_state.get("gsc_site", "").rstrip("/")
+    if homepage:
+        from utils.ui_helpers import normalize_url
+        hp_norm = normalize_url(homepage)
+        for query in df["query"].unique():
+            q_data = df[df["query"] == query]
+            if len(q_data) < 2:
+                continue
+            hp_rows = q_data[q_data["page"].apply(normalize_url) == hp_norm]
+            if hp_rows.empty:
+                continue
+            hp_clicks = hp_rows["clicks"].sum()
+            other_clicks = q_data["clicks"].sum() - hp_clicks
+            # If homepage gets >10x the clicks of all other pages combined → navigational
+            if hp_clicks > 0 and (other_clicks == 0 or hp_clicks / max(other_clicks, 1) > 10):
+                brand_kws.add(query)
+
+    return brand_kws
 
 
 def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.DataFrame:
