@@ -286,6 +286,38 @@ def render():
             status_row("Playwright (Chrome)", False, f"Import error: {str(e)[:80]}")
             st.code(str(e), language="text")
 
+        # ── RESET ALL DATA ─────────────────────────────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### Reset All Data")
+        st.markdown("<p style='color:#ff4455; font-size:0.8rem;'>Clears ALL cached data and forces fresh start. Bundled Ahrefs + SF data will auto-reload.</p>", unsafe_allow_html=True)
+        if st.button("RESET ALL DATA", type="secondary", key="btn_reset_all"):
+            import shutil
+            from utils.persistence import DATA_DIR, AI_CACHE_DIR, PERSIST_KEYS
+            # Clear session state (keep only credentials + settings)
+            keep_keys = {"gsc_credentials", "gsc_service", "gsc_properties", "gsc_site_url",
+                         "gsc_site", "anthropic_key", "site_context", "content_language",
+                         "demo_mode", "_persistence_loaded"}
+            for key in list(st.session_state.keys()):
+                if key not in keep_keys:
+                    del st.session_state[key]
+            # Clear disk (keep settings, delete everything else)
+            if os.path.isdir(DATA_DIR):
+                for f in os.listdir(DATA_DIR):
+                    path = os.path.join(DATA_DIR, f)
+                    if f in ("site_context.txt", "content_language.txt", "gsc_site.txt"):
+                        continue  # Keep settings
+                    try:
+                        if os.path.isdir(path):
+                            shutil.rmtree(path)
+                        else:
+                            os.remove(path)
+                    except Exception:
+                        pass
+            # Force bundled data to re-unpack on next load
+            st.session_state.pop("_persistence_loaded", None)
+            st.success("All data cleared. Refresh the page to restart.")
+            st.rerun()
+
         if gsc_connected:
             df = st.session_state["gsc_data"]
 
