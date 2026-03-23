@@ -70,6 +70,32 @@ def _volume_available() -> bool:
     return os.path.isdir(DATA_DIR)
 
 
+def _normalize_json_urls(key: str, data):
+    """Normalize URLs in JSON data loaded from disk."""
+    from utils.ui_helpers import normalize_url
+    # audit_results: list of dicts with "url" key
+    if key == "audit_results" and isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and "url" in item:
+                item["url"] = normalize_url(item["url"])
+    # topic_clusters: dict with "page_topics" keyed by URL
+    elif key == "topic_clusters" and isinstance(data, dict):
+        pt = data.get("page_topics", {})
+        if pt:
+            data["page_topics"] = {normalize_url(k): v for k, v in pt.items()}
+        for cluster in data.get("clusters", []):
+            for page in cluster.get("pages", []):
+                if "page" in page:
+                    page["page"] = normalize_url(page["page"])
+    # sf_link_map: dict with URL-keyed sub-dicts
+    elif key == "sf_link_map" and isinstance(data, dict):
+        for sub_key in ("links_from", "links_to", "anchor_quality"):
+            sub = data.get(sub_key, {})
+            if sub and isinstance(sub, dict):
+                data[sub_key] = {normalize_url(k): v for k, v in sub.items()}
+    return data
+
+
 def _normalize_df_urls(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize URL columns in DataFrames loaded from disk.
     Ensures old data (saved before normalization was added) is consistent."""
@@ -292,6 +318,7 @@ def load_all():
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if data:
+                    data = _normalize_json_urls(key, data)
                     st.session_state[key] = data
                     loaded.append(key)
         except Exception as e:
