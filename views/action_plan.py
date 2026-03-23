@@ -72,9 +72,16 @@ def render():
     site_context = st.session_state.get("site_context", "")
     language = st.session_state.get("content_language", "Swedish")
 
-    # ── Normalized lookup helpers (cross-source matching) ─────────
+    # ── Deduplicate audit_results by normalized URL (keep last = newest) ──
     from utils.ui_helpers import normalize_url as _nu
-    # Audit lookup: normalized URL → audit result dict
+    _seen_urls = {}
+    for r in audit_results:
+        norm = _nu(r.get("url", ""))
+        _seen_urls[norm] = r  # Last entry wins (newest)
+    audit_results = list(_seen_urls.values())
+    st.session_state["audit_results"] = audit_results
+
+    # ── Normalized lookup helpers (cross-source matching) ─────────
     _audit_by_norm = {}
     for r in audit_results:
         if r.get("url"):
