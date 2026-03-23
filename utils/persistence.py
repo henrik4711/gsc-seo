@@ -70,6 +70,86 @@ def _volume_available() -> bool:
     return os.path.isdir(DATA_DIR)
 
 
+# ── Bundled data: shipped as .gz in git, unpacked to /data on first run ──
+
+BUNDLED_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bundled_data")
+
+# Map: gz filename -> (target path in /data, persist key, data type)
+BUNDLED_FILES = {
+    "sf_inlinks.csv.gz": ("sf_inlinks.csv", "sf_inlinks", "dataframe"),
+    "sf_link_map.json.gz": ("sf_link_map.json", "sf_link_map", "json"),
+    "sf_pages.csv.gz": ("sf_pages.csv", "sf_pages", "dataframe"),
+    "ahrefs_best_by_links.csv.gz": ("ahrefs_best_by_links.csv", "ahrefs_best_by_links", "dataframe"),
+    "ahrefs_backlinks.csv.gz": ("ahrefs_backlinks.csv", "ahrefs_backlinks", "dataframe"),
+    "ahrefs_organic_keywords.csv.gz": ("ahrefs_organic_keywords.csv", "ahrefs_organic_keywords", "dataframe"),
+}
+
+
+def _unpack_bundled_data():
+    """Decompress bundled .gz files to /data volume on first run."""
+    if not _volume_available() or not os.path.isdir(BUNDLED_DIR):
+        return
+
+    import gzip
+    unpacked = []
+    for gz_name, (target_name, key, dtype) in BUNDLED_FILES.items():
+        gz_path = os.path.join(BUNDLED_DIR, gz_name)
+        target_path = os.path.join(DATA_DIR, target_name)
+
+        # Skip if already unpacked or already loaded
+        if os.path.exists(target_path) or key in st.session_state:
+            continue
+        if not os.path.exists(gz_path):
+            continue
+
+        try:
+            print(f"[bundled] Unpacking {gz_name}...")
+            with gzip.open(gz_path, "rb") as f_in:
+                with open(target_path, "wb") as f_out:
+                    # Stream in chunks to avoid memory spike
+                    while True:
+                        chunk = f_in.read(8 * 1024 * 1024)  # 8MB chunks
+                        if not chunk:
+                            break
+                        f_out.write(chunk)
+
+            size_mb = os.path.getsize(target_path) / (1024 * 1024)
+            print(f"[bundled] Unpacked {target_name} ({size_mb:.1f} MB)")
+
+            # Load into session state
+            if dtype == "dataframe":
+                df = pd.read_csv(target_path)
+                if not df.empty:
+                    st.session_state[key] = df
+                    unpacked.append(key)
+            elif dtype == "json":
+                with open(target_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if data:
+                    st.session_state[key] = data
+                    unpacked.append(key)
+
+        except Exception as e:
+            print(f"[bundled] Failed {gz_name}: {e}")
+
+    if unpacked:
+        print(f"[bundled] Loaded from bundled data: {', '.join(unpacked)}")
+
+        # If we loaded Ahrefs raw data, build page_authority
+        if any(k.startswith("ahrefs_") for k in unpacked) and "page_authority" not in st.session_state:
+            try:
+                from utils.ahrefs_import import build_page_authority
+                authority = build_page_authority(
+                    best_by_links_df=st.session_state.get("ahrefs_best_by_links"),
+                    backlinks_df=st.session_state.get("ahrefs_backlinks"),
+                )
+                st.session_state["page_authority"] = authority
+                save("page_authority")
+                print(f"[bundled] Built page_authority ({len(authority)} pages)")
+            except Exception as e:
+                print(f"[bundled] Failed to build authority: {e}")
+
+
 def _file_path(key: str, data_type: str) -> str:
     ext = "csv" if data_type == "dataframe" else ("txt" if data_type == "setting" else "json")
     return os.path.join(DATA_DIR, f"{key}.{ext}")
@@ -245,6 +325,9 @@ def load_all():
             print("[persistence] Migrated ai_cache.json to individual files")
         except Exception:
             pass
+
+    # ── Unpack bundled data (shipped in git as .gz) ─────────────
+    _unpack_bundled_data()
 
     st.session_state["_persistence_loaded"] = True
     if loaded:
