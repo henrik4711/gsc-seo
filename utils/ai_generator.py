@@ -1616,6 +1616,7 @@ CRITICAL RULES:
     - Anchor texts must be contextually appropriate for the cluster relationship
 16. E-E-A-T: If the page lacks trust signals (no FAQ, no buying guide, no expert voice, no reviews), recommend adding them.
 17. SEARCH INTENT ALIGNMENT: Check the Search intent data. If the dominant intent is TRANSACTIONAL but the content reads like an informational guide, flag this — the content needs to be rewritten for purchase intent (product comparisons, CTAs, buying guidance). If intent is INFORMATIONAL but page is thin product listing, recommend adding educational content.
+18. PROTECT HIGH-PERFORMING PAGES: If a page has position 1-3 for its main keywords, do NOT recommend major content rewrites or structural changes. Only suggest incremental improvements (adding FAQ, improving meta, adding internal links). Changing content on a page that already ranks well is HIGH RISK.
 
 ## OUTPUT FORMAT (JSON only):
 

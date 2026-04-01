@@ -236,17 +236,23 @@ def render():
                     page_kws = ahrefs_kw[ahrefs_kw["page"].apply(_ni) == _ni(url)]
                     if not page_kws.empty:
                         # Dominant intent: weighted by volume
+                        # In e-commerce: transactional+commercial outweigh informational
                         vol = page_kws["volume"].fillna(0)
                         total_vol = max(vol.sum(), 1)
                         info_pct = (vol[page_kws.get("intent_informational", False) == True].sum() / total_vol * 100)
                         comm_pct = (vol[page_kws.get("intent_commercial", False) == True].sum() / total_vol * 100)
                         trans_pct = (vol[page_kws.get("intent_transactional", False) == True].sum() / total_vol * 100)
-                        if trans_pct >= 40:
-                            dominant_intent = "transactional"
-                        elif comm_pct >= 40:
-                            dominant_intent = "commercial"
-                        elif info_pct >= 60:
+                        # Combined purchase intent (transactional + commercial)
+                        purchase_pct = trans_pct + comm_pct
+                        if purchase_pct >= 50:
+                            # Majority is purchase intent
+                            dominant_intent = "transactional" if trans_pct > comm_pct else "commercial"
+                        elif info_pct >= 70 and purchase_pct < 20:
+                            # Strongly informational (guides, blogs)
                             dominant_intent = "informational"
+                        elif purchase_pct >= 30:
+                            # E-commerce bias: if 30%+ is purchase, call it commercial
+                            dominant_intent = "commercial"
                         else:
                             dominant_intent = "mixed"
                         result["search_intent"] = dominant_intent
