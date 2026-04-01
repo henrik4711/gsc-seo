@@ -1573,25 +1573,29 @@ Language: {language}
 Create a step-by-step implementation plan. For each step, be SPECIFIC — tell the user exactly what to change and why.
 
 CRITICAL RULES:
-1. KEYWORD RELEVANCE: Only include keywords that a user searching for them would expect to find on THIS specific page. A keyword for subcategory A does NOT belong on subcategory B. Generic keywords belong on the parent category, not subcategories. Be STRICT about this.
-2. Do NOT recommend adding a keyword to H1 if H1 already contains it (handle Swedish/Danish chars: ä=a, ö=o, å=a)
-3. INTERNAL LINKS: Check the EXISTING LINKS list above first. Do NOT recommend adding links that already exist. Only suggest NEW links. PREFER CATEGORY pages over individual product pages. Use EXACT URLs from the site URL list. Do NOT invent URLs. Verify anchor texts are descriptive.
-4. META TITLE: Must be under 60 chars. Primary keyword first. Not a brand name.
-5. META DESCRIPTION: Must be 140-160 chars. Include primary keyword + CTA.
-6. ALWAYS show meta title + description as the FIRST step if they need improvement.
-7. Only suggest schema types appropriate for this page type (no Product schema on category pages)
-8. Be honest: if the page is already good, say so. Don't invent problems.
-9. Each step must have a time estimate in minutes
-10. For content steps: specify EXACTLY what text to add, which H2 heading, and where on the page
-11. If keywords indicate topics not covered by ANY existing page, suggest a NEW article/blog
-12. For thin/generic text: specify which sections need rewriting and what angle to take
-13. VALIDATION: Before including any keyword in your plan, ask yourself: "Would a user searching THIS keyword expect to land on THIS page?" If not, exclude it.
-14. BACKLINKS: If the page has high impressions but few or zero referring domains, recommend building backlinks. This is often the single biggest factor for improving rankings.
-15. CLUSTER CONTEXT: Check the TOPIC CLUSTER CONTEXT section. All recommendations must fit the page's role:
-    - PILLAR pages: recommend content that overviews ALL child topics, links DOWN to each child
-    - SPOKE pages: recommend deep content on THIS specific subtopic, link UP to hub, cross-link to siblings
-    - New articles must fill gaps in the cluster structure, not duplicate existing pages
+1. CONTENT-TOPIC ALIGNMENT (evaluate FIRST): Read the CURRENT PAGE TEXT and compare it to the page's TARGET KEYWORDS and TOPIC CLUSTER. Does the text ACTUALLY discuss the right topic? If the text talks about a different topic than what the page should rank for, flag this as the #1 priority — the content needs refocusing, not just keyword insertion.
+2. KEYWORD RELEVANCE: Only include keywords that a user searching for them would expect to find on THIS specific page. A keyword for subcategory A does NOT belong on subcategory B. Be STRICT about this.
+3. Do NOT recommend adding a keyword to H1 if H1 already contains it (handle Swedish/Danish chars: ä=a, ö=o, å=a)
+4. INTERNAL LINKS — BOTH ADD AND REMOVE:
+   - Check EXISTING LINKS: do NOT recommend adding links already present
+   - Check LINKS TO REMOVE: these are links to unrelated pages that dilute topical focus — recommend removing them
+   - PREFER CATEGORY pages over product pages for new links
+   - Use EXACT URLs from the site URL list. Do NOT invent URLs.
+5. META TITLE: Must be under 60 chars. Primary keyword first.
+6. META DESCRIPTION: Must be 140-160 chars. Include primary keyword + CTA.
+7. ALWAYS show meta title + description as the FIRST step if they need improvement.
+8. Only suggest schema types appropriate for this page type
+9. Be honest: if the page is already good, say so. Don't invent problems.
+10. Each step must have a time estimate in minutes
+11. For content steps: specify EXACTLY what text to add, which H2 heading, and where
+12. If keywords indicate topics not covered by ANY existing page, suggest a NEW article/blog
+13. For thin/generic/off-topic text: specify which sections need rewriting and what angle to take
+14. BACKLINKS: If high impressions but few referring domains, recommend link building.
+15. CLUSTER CONTEXT: All recommendations must fit the page's role:
+    - PILLAR pages: must overview ALL child topics, link DOWN to each child
+    - SPOKE pages: must go deep on THIS specific subtopic, link UP to hub, cross-link to siblings
     - Anchor texts must be contextually appropriate for the cluster relationship
+16. E-E-A-T: If the page lacks trust signals (no FAQ, no buying guide, no expert voice, no reviews), recommend adding them. Content should demonstrate Experience, Expertise, Authority, and Trust.
 
 ## OUTPUT FORMAT (JSON only):
 
