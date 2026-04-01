@@ -616,13 +616,16 @@ def _render_crawl_data():
     missing = len(issues.get("missing_meta", []))
     non_idx = len(issues.get("non_indexable", []))
     slow = len(issues.get("slow_pages", []))
-    total = broken + redirects + orphans + deep + thin + missing + non_idx + slow
+    canonicals = len(issues.get("canonical_issues", []))
+    faceted = len(issues.get("faceted_urls", []))
+    near_dupes = len(issues.get("near_duplicates", []))
+    total = broken + redirects + orphans + deep + thin + missing + non_idx + slow + canonicals + faceted + near_dupes
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total issues", total)
     c2.metric("Broken links", broken)
     c3.metric("Orphan pages", orphans)
-    c4.metric("Deep pages", deep)
+    c4.metric("Canonicals + Duplicates", canonicals + near_dupes)
 
     st.markdown("---")
 
@@ -644,6 +647,12 @@ def _render_crawl_data():
          "These pages are blocked from indexing. Verify this is intentional."),
         ("slow_pages", "Slow Pages (>2s response)", "#ffaa33",
          "Optimize server response time for better user experience and rankings."),
+        ("canonical_issues", "Canonical Mismatches", "#ff4455",
+         "These pages have a canonical tag pointing to a different URL — their SEO signals are sent elsewhere."),
+        ("faceted_urls", "Faceted/Parameter URLs (Magento 1.9)", "#ffaa33",
+         "URLs with filter, sort, or pagination parameters. Block via robots.txt or noindex to prevent crawl waste."),
+        ("near_duplicates", "Near-Duplicate Content", "#ff4455",
+         "Pages with very similar content. Consolidate or use canonical tags to prevent signal splitting."),
     ]
 
     for key, title, color, description in issue_types:

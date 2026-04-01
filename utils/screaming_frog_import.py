@@ -547,6 +547,50 @@ def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_do
                 "action": f"Response time {row['response_time']:.1f}s — optimize server response, compress images, enable caching.",
             })
 
+    # ── Canonical mismatches ────────────────────────────────────
+    issues["canonical_issues"] = []
+    if "canonical" in pages_df.columns:
+        for _, row in pages_df.iterrows():
+            canon = str(row.get("canonical", "")).strip()
+            page_url = str(row.get("url", "")).strip()
+            if canon and canon != "nan" and _norm_url(canon) != _norm_url(page_url):
+                issues["canonical_issues"].append({
+                    "url": page_url,
+                    "canonical": canon,
+                    "action": f"Canonical points to {canon} — this page's signals go to the canonical. If this page should rank independently, fix the canonical tag.",
+                })
+
+    # ── Faceted/parameter URLs (Magento 1.9 specific) ────────────
+    issues["faceted_urls"] = []
+    param_patterns = ["?", "SID=", "dir=", "limit=", "mode=", "order=", "p=", "product_list"]
+    raw_url_col = "URL Encoded Address" if "URL Encoded Address" in pages_df.columns else "url"
+    for _, row in pages_df.iterrows():
+        raw_url = str(row.get(raw_url_col, ""))
+        if any(p in raw_url for p in param_patterns):
+            issues["faceted_urls"].append({
+                "url": row.get("url", raw_url),
+                "raw_url": raw_url,
+                "action": "URL contains filter/sort/pagination parameters — block via robots.txt or set noindex to prevent crawl waste.",
+            })
+
+    # ── Near-duplicate content ───────────────────────────────────
+    issues["near_duplicates"] = []
+    if "No. Near Duplicates" in pages_df.columns:
+        for _, row in pages_df.iterrows():
+            n_dupes = row.get("No. Near Duplicates", 0)
+            try:
+                n_dupes = int(float(n_dupes)) if pd.notna(n_dupes) else 0
+            except (ValueError, TypeError):
+                n_dupes = 0
+            if n_dupes > 0:
+                closest = row.get("Closest Near Duplicate Match", "")
+                issues["near_duplicates"].append({
+                    "url": row["url"],
+                    "duplicate_count": n_dupes,
+                    "closest_match": str(closest) if pd.notna(closest) else "",
+                    "action": f"{n_dupes} near-duplicate(s). Closest: {closest}. Consolidate or add canonical.",
+                })
+
     return issues
 
 

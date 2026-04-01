@@ -235,27 +235,45 @@ def render():
                     from utils.ui_helpers import normalize_url as _ni
                     page_kws = ahrefs_kw[ahrefs_kw["page"].apply(_ni) == _ni(url)]
                     if not page_kws.empty:
-                        # Dominant intent: weighted by volume
-                        # In e-commerce: transactional+commercial outweigh informational
+                        # TEMPLATE-FIRST intent: page type is primary signal
+                        # Keywords only override when strongly mismatched
                         vol = page_kws["volume"].fillna(0)
                         total_vol = max(vol.sum(), 1)
                         info_pct = (vol[page_kws.get("intent_informational", False) == True].sum() / total_vol * 100)
                         comm_pct = (vol[page_kws.get("intent_commercial", False) == True].sum() / total_vol * 100)
                         trans_pct = (vol[page_kws.get("intent_transactional", False) == True].sum() / total_vol * 100)
-                        # Combined purchase intent (transactional + commercial)
+
+                        # Step 1: Template-based intent (structural truth)
+                        pt = result.get("page_type", "unknown")
+                        if pt == "category":
+                            template_intent = "transactional"  # Categories are ALWAYS transactional
+                        elif pt == "product":
+                            template_intent = "transactional"
+                        elif pt == "blog":
+                            template_intent = "informational"
+                        elif pt == "faq":
+                            template_intent = "informational"
+                        else:
+                            template_intent = "mixed"
+
+                        # Step 2: Keyword-based intent (user signal)
                         purchase_pct = trans_pct + comm_pct
                         if purchase_pct >= 50:
-                            # Majority is purchase intent
-                            dominant_intent = "transactional" if trans_pct > comm_pct else "commercial"
+                            kw_intent = "transactional"
                         elif info_pct >= 70 and purchase_pct < 20:
-                            # Strongly informational (guides, blogs)
-                            dominant_intent = "informational"
-                        elif purchase_pct >= 30:
-                            # E-commerce bias: if 30%+ is purchase, call it commercial
-                            dominant_intent = "commercial"
+                            kw_intent = "informational"
                         else:
-                            dominant_intent = "mixed"
+                            kw_intent = "mixed"
+
+                        # Step 3: Final = template wins, keyword flags mismatch
+                        dominant_intent = template_intent
+                        intent_mismatch = ""
+                        if template_intent == "transactional" and kw_intent == "informational":
+                            intent_mismatch = "Page is structurally transactional (category/product) but keywords are informational — content may be too guide-like for purchase intent"
+                        elif template_intent == "informational" and kw_intent == "transactional":
+                            intent_mismatch = "Page is structurally informational (blog/guide) but keywords are transactional — consider adding product links and CTAs"
                         result["search_intent"] = dominant_intent
+                        result["intent_mismatch"] = intent_mismatch
                         result["intent_scores"] = {
                             "informational": round(info_pct),
                             "commercial": round(comm_pct),
