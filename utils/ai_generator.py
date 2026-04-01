@@ -1464,6 +1464,7 @@ def generate_page_implementation_plan(
     linking = content_audit.get("linking") or {}
     link_suggestions = linking.get("link_fix_suggestions") or []
     missing_crosslinks = linking.get("missing_crosslinks") or []
+    links_to_remove = (linking.get("details") or {}).get("links_to_remove") or []
     schema_types = page_data.get("schema_types", [])
     trust = content_audit.get("trust") or {}
     meta_score = page_data.get("meta_score")
@@ -1561,6 +1562,9 @@ Language: {language}
 
 ## MISSING TOPIC SECTIONS (subtopics not covered in page text)
 {', '.join(missing_subtopics) if missing_subtopics else 'None'}
+
+## LINKS TO REMOVE (pointing to unrelated pages outside topic cluster)
+{chr(10).join(f"- {l['url']} (anchor: '{l['anchor']}')" for l in links_to_remove) if links_to_remove else 'None'}
 
 ## CURRENT PAGE TEXT (first 1500 chars){' — NOTE: text is empty, possibly due to JS rendering issues. Do NOT assume page has no content.' if not body_snippet and word_count == 0 and title else ''}
 {body_snippet if body_snippet else '(no text captured)'}

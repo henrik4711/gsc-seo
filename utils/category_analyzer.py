@@ -858,6 +858,83 @@ def audit_category_content(
         recommendations.append(f"Integrate these keywords naturally: {', '.join(missing_kws[:8])}")
 
     # ═══════════════════════════════════════════════════════════
+    # C2. CONTENT-CLUSTER MISMATCH DETECTION
+    # ═══════════════════════════════════════════════════════════
+    # Check if page content talks about the WRONG topics (other cluster's terms)
+    if topic_clusters and full_text:
+        my_cluster_terms = set()
+        other_cluster_terms = {}  # cluster_name -> terms
+
+        for cluster in topic_clusters.get("clusters", []):
+            core = set(_norm_text(t) for t in cluster.get("core_terms", []) if len(t) > 3)
+            topic_name = cluster.get("topic", "")
+            # Is this page in this cluster?
+            page_in_cluster = any(
+                _norm_text(p.get("page", "")) == _norm_text(url)
+                for p in cluster.get("pages", [])
+            )
+            if page_in_cluster:
+                my_cluster_terms.update(core)
+            elif core:
+                other_cluster_terms[topic_name] = core
+
+        # Find foreign cluster terms that appear prominently in this page's text
+        if my_cluster_terms and other_cluster_terms:
+            foreign_topics = []
+            for topic_name, terms in other_cluster_terms.items():
+                foreign_hits = sum(1 for t in terms if t in full_text)
+                if foreign_hits >= 3 and foreign_hits > len(terms) * 0.5:
+                    foreign_topics.append((topic_name, foreign_hits, len(terms)))
+
+            if foreign_topics:
+                foreign_topics.sort(key=lambda x: -x[1])
+                top_foreign = foreign_topics[0]
+                issues.append({
+                    "severity": "warn", "area": "content_mismatch",
+                    "msg": f"Page content contains significant terms from a DIFFERENT cluster: '{top_foreign[0]}' ({top_foreign[1]}/{top_foreign[2]} terms found). Content may be off-topic.",
+                })
+                score -= 5
+                recommendations.append(
+                    f"Review content focus: this page should be about '{', '.join(list(my_cluster_terms)[:5])}', "
+                    f"but it contains many terms related to '{top_foreign[0]}'. "
+                    f"Either move that content to the correct page or refocus this page's topic."
+                )
+
+    # ═══════════════════════════════════════════════════════════
+    # C3. PILLAR PAGE SPOKE TOPIC COVERAGE
+    # ═══════════════════════════════════════════════════════════
+    if is_pillar and topic_clusters:
+        # Check if pillar page mentions all its child/spoke topics
+        spoke_topics_missing = []
+        for cluster in topic_clusters.get("clusters", []):
+            for p in cluster.get("pages", []):
+                p_path = _urlparse(p.get("page", "")).path.lower().rstrip("/")
+                if p_path != page_path and p_path.startswith(page_path + "/"):
+                    # This is a spoke page — does pillar mention its topic?
+                    spoke_slug = p_path.split("/")[-1].replace("-", " ")
+                    topic_name = cluster.get("topic", spoke_slug)
+                    # Check if ANY of the spoke's terms appear in pillar text
+                    spoke_terms = set(_norm_text(t) for t in cluster.get("core_terms", [])[:5] if len(t) > 3)
+                    spoke_terms.add(_norm_text(spoke_slug))
+                    hits = sum(1 for t in spoke_terms if t in full_text)
+                    if hits == 0:
+                        spoke_topics_missing.append(topic_name)
+
+        if spoke_topics_missing:
+            unique_missing = list(set(spoke_topics_missing))[:8]
+            issues.append({
+                "severity": "critical" if len(unique_missing) > 3 else "warn",
+                "area": "pillar_coverage",
+                "msg": f"PILLAR page does not mention {len(unique_missing)} spoke topics: {', '.join(unique_missing)}. "
+                       f"Google expects pillar pages to overview ALL child topics.",
+            })
+            score -= min(len(unique_missing) * 2, 10)
+            recommendations.append(
+                f"Add overview sections for these spoke topics: {', '.join(unique_missing)}. "
+                f"Each should have at least an H2 heading and 2-3 sentences linking down to the spoke page."
+            )
+
+    # ═══════════════════════════════════════════════════════════
     # D. CONTENT STRUCTURE
     # ═══════════════════════════════════════════════════════════
     editorial_h2s = [h for h in h2s if not re.search(r"produkt|vara|pris|^kr\s", h, re.I)]
@@ -1177,12 +1254,25 @@ def _audit_internal_linking(
             continue
         truly_unrelated.append(ns_link)
 
-    if truly_unrelated and len(truly_unrelated) > link_count * 0.4 and link_count > 5:
-        issues.append({
-            "severity": "warn", "area": "link_relevance",
-            "msg": f"{len(truly_unrelated)}/{link_count} internal links point to unrelated pages outside this topic cluster and URL hierarchy.",
-        })
-        penalty += 3
+    # Flag truly unrelated links for REMOVAL
+    links_to_remove = []
+    if truly_unrelated:
+        for tu in truly_unrelated[:5]:
+            tu_url = tu.get("url", "")
+            tu_anchor = tu.get("anchor", "")[:40]
+            links_to_remove.append({"url": tu_url, "anchor": tu_anchor})
+            recommendations.append(
+                f"REMOVE or REPLACE link to {tu_url.split('/')[-1] or tu_url[:40]} "
+                f"(anchor: '{tu_anchor}') — this page is outside your topic cluster and dilutes topical focus."
+            )
+
+        if len(truly_unrelated) > link_count * 0.3 and link_count > 3:
+            issues.append({
+                "severity": "warn", "area": "link_relevance",
+                "msg": f"{len(truly_unrelated)}/{link_count} internal links point to unrelated pages. "
+                       f"These dilute your topical authority — consider removing or replacing them.",
+            })
+            penalty += 3
 
     # Generate specific fix suggestions for missing links (WP1)
     link_fix_suggestions = _generate_link_fix_suggestions(
@@ -1246,6 +1336,7 @@ def _audit_internal_linking(
             "category_links": cat_link_count,
             "product_links": prod_link_count,
             "missing_crosslinks": missing_links[:10],
+            "links_to_remove": links_to_remove,
             "anchor_quality": "checked" if isinstance(internal_links, list) else "not_available",
             "inbound_anchor_stats": inbound_anchor_stats,
             "semantic_validation": semantic_validation,
