@@ -229,6 +229,37 @@ def render():
                     "authority_score": auth_score,
                 }
 
+                # ── Search intent from Ahrefs ────────────────────
+                ahrefs_kw = st.session_state.get("ahrefs_organic_keywords")
+                if ahrefs_kw is not None and not ahrefs_kw.empty:
+                    from utils.ui_helpers import normalize_url as _ni
+                    page_kws = ahrefs_kw[ahrefs_kw["page"].apply(_ni) == _ni(url)]
+                    if not page_kws.empty:
+                        # Dominant intent: weighted by volume
+                        vol = page_kws["volume"].fillna(0)
+                        total_vol = max(vol.sum(), 1)
+                        info_pct = (vol[page_kws.get("intent_informational", False) == True].sum() / total_vol * 100)
+                        comm_pct = (vol[page_kws.get("intent_commercial", False) == True].sum() / total_vol * 100)
+                        trans_pct = (vol[page_kws.get("intent_transactional", False) == True].sum() / total_vol * 100)
+                        if trans_pct >= 40:
+                            dominant_intent = "transactional"
+                        elif comm_pct >= 40:
+                            dominant_intent = "commercial"
+                        elif info_pct >= 60:
+                            dominant_intent = "informational"
+                        else:
+                            dominant_intent = "mixed"
+                        result["search_intent"] = dominant_intent
+                        result["intent_scores"] = {
+                            "informational": round(info_pct),
+                            "commercial": round(comm_pct),
+                            "transactional": round(trans_pct),
+                        }
+                        # Also get top volume keywords from Ahrefs (supplement GSC)
+                        top_ahrefs_kws = page_kws.sort_values("volume", ascending=False)["keyword"].head(5).tolist()
+                        result["ahrefs_keywords"] = top_ahrefs_kws
+                        result["ahrefs_volume"] = int(page_kws["volume"].sum())
+
                 if scrape_live:
                     from utils.page_scraper import scrape_page, evaluate_meta
                     from utils.category_analyzer import classify_page_type, deep_scrape_category, audit_category_content

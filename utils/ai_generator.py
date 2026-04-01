@@ -1447,7 +1447,10 @@ def generate_page_implementation_plan(
     h2s = page_data.get("h2s", [])[:10]
     page_type = page_data.get("page_type", "unknown")
     word_count = page_data.get("word_count", 0)
-    body_snippet = _clean_body_text(page_data, 1500)
+    # Send more text to AI for pillar/large pages, less for small pages
+    text_cap = 4000 if word_count > 500 else 2000
+    body_snippet = _clean_body_text(page_data, text_cap)
+    text_is_fragment = word_count > 0 and len(body_snippet.split()) < word_count * 0.7
     target_keywords = page_data.get("target_keywords", [])[:15]
     impressions = page_data.get("impressions", 0)
     lost_clicks = page_data.get("lost_clicks_estimate", 0)
@@ -1496,6 +1499,19 @@ def generate_page_implementation_plan(
     has_faq = page_data.get("has_faq", False)
     has_buying_guide = page_data.get("has_buying_guide", False)
 
+    # Search intent from Ahrefs
+    search_intent = page_data.get("search_intent", "")
+    intent_scores = page_data.get("intent_scores", {})
+    intent_info = ""
+    if search_intent:
+        intent_info = (f"\nSearch intent: {search_intent.upper()} "
+                       f"(informational: {intent_scores.get('informational', 0)}%, "
+                       f"commercial: {intent_scores.get('commercial', 0)}%, "
+                       f"transactional: {intent_scores.get('transactional', 0)}%)")
+
+    # Ahrefs keywords (supplement GSC with volume data)
+    ahrefs_kws = page_data.get("ahrefs_keywords", [])
+
     # Content quality verdict (if previously assessed)
     from utils.ui_helpers import stable_hash as _sh
     quality_key = f"_quality_{_sh(url)}"
@@ -1535,7 +1551,7 @@ Schema types present: {', '.join(schema_types) if schema_types else 'None'}
 {f"Products on page: {product_count}" if product_count else ""}
 {f"Has FAQ section: {'Yes' if has_faq else 'No'}" if page_type == "category" else ""}
 {f"Has buying guide: {'Yes' if has_buying_guide else 'No'}" if page_type == "category" else ""}
-{quality_info}
+{quality_info}{intent_info}
 
 ## EXISTING INTERNAL LINKS ON THIS PAGE (already present — do NOT suggest these again)
 {_format_existing_links(page_data)}
@@ -1557,6 +1573,9 @@ Language: {language}
 ## GSC KEYWORDS (sorted by impressions, these are queries users search to find this page)
 {', '.join(target_keywords)}
 
+## AHREFS KEYWORDS (with search volume — use these if GSC keywords are weak)
+{', '.join(ahrefs_kws) if ahrefs_kws else 'None'}
+
 ## MISSING KEYWORDS (from audit — keywords in GSC but NOT found on page text)
 {', '.join(missing_kws) if missing_kws else 'None'}
 
@@ -1566,7 +1585,7 @@ Language: {language}
 ## LINKS TO REMOVE (pointing to unrelated pages outside topic cluster)
 {chr(10).join(f"- {l['url']} (anchor: '{l['anchor']}')" for l in links_to_remove) if links_to_remove else 'None'}
 
-## CURRENT PAGE TEXT (first 1500 chars){' — NOTE: text is empty, possibly due to JS rendering issues. Do NOT assume page has no content.' if not body_snippet and word_count == 0 and title else ''}
+## CURRENT PAGE TEXT ({len(body_snippet.split())} of {word_count} words shown){' — FRAGMENT: only partial text shown, full page has more content' if text_is_fragment else ''}{' — NOTE: text is empty, possibly due to JS rendering issues. Do NOT assume page has no content.' if not body_snippet and word_count == 0 and title else ''}
 {body_snippet if body_snippet else '(no text captured)'}
 
 ## YOUR TASK
@@ -1595,7 +1614,8 @@ CRITICAL RULES:
     - PILLAR pages: must overview ALL child topics, link DOWN to each child
     - SPOKE pages: must go deep on THIS specific subtopic, link UP to hub, cross-link to siblings
     - Anchor texts must be contextually appropriate for the cluster relationship
-16. E-E-A-T: If the page lacks trust signals (no FAQ, no buying guide, no expert voice, no reviews), recommend adding them. Content should demonstrate Experience, Expertise, Authority, and Trust.
+16. E-E-A-T: If the page lacks trust signals (no FAQ, no buying guide, no expert voice, no reviews), recommend adding them.
+17. SEARCH INTENT ALIGNMENT: Check the Search intent data. If the dominant intent is TRANSACTIONAL but the content reads like an informational guide, flag this — the content needs to be rewritten for purchase intent (product comparisons, CTAs, buying guidance). If intent is INFORMATIONAL but page is thin product listing, recommend adding educational content.
 
 ## OUTPUT FORMAT (JSON only):
 
