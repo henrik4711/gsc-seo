@@ -1543,6 +1543,7 @@ Title: "{title}" ({len(title)} chars)
 Meta description: "{meta_desc}" ({len(meta_desc)} chars)
 H1: "{h1}"
 H2s: {', '.join(h2s) if h2s else 'None'}
+H3s: {', '.join(page_data.get('h3s', [])[:10]) if page_data.get('h3s') else 'None'}
 Word count: {word_count}
 Internal links on page: {link_count}
 Schema types present: {', '.join(schema_types) if schema_types else 'None'}
@@ -1582,7 +1583,7 @@ Language: {language}
 ## MISSING TOPIC SECTIONS (subtopics not covered in page text)
 {', '.join(missing_subtopics) if missing_subtopics else 'None'}
 
-## LINKS TO REMOVE (pointing to unrelated pages outside topic cluster)
+## LINKS TO REVIEW (pointing to pages outside topic cluster — be CONSERVATIVE, only recommend removal if clearly harmful to topical focus. Many cross-cluster links are valid for user navigation.)
 {chr(10).join(f"- {l['url']} (anchor: '{l['anchor']}')" for l in links_to_remove) if links_to_remove else 'None'}
 
 ## CURRENT PAGE TEXT ({len(body_snippet.split())} of {word_count} words shown){' — FRAGMENT: only partial text shown, full page has more content' if text_is_fragment else ''}{' — NOTE: text is empty, possibly due to JS rendering issues. Do NOT assume page has no content.' if not body_snippet and word_count == 0 and title else ''}
@@ -1595,9 +1596,9 @@ CRITICAL RULES:
 1. CONTENT-TOPIC ALIGNMENT (evaluate FIRST): Read the CURRENT PAGE TEXT and compare it to the page's TARGET KEYWORDS and TOPIC CLUSTER. Does the text ACTUALLY discuss the right topic? If the text talks about a different topic than what the page should rank for, flag this as the #1 priority — the content needs refocusing, not just keyword insertion.
 2. KEYWORD RELEVANCE: Only include keywords that a user searching for them would expect to find on THIS specific page. A keyword for subcategory A does NOT belong on subcategory B. Be STRICT about this.
 3. Do NOT recommend adding a keyword to H1 if H1 already contains it (handle Swedish/Danish chars: ä=a, ö=o, å=a)
-4. INTERNAL LINKS — BOTH ADD AND REMOVE:
+4. INTERNAL LINKS — ADD new links, REVIEW flagged links:
    - Check EXISTING LINKS: do NOT recommend adding links already present
-   - Check LINKS TO REMOVE: these are links to unrelated pages that dilute topical focus — recommend removing them
+   - Check LINKS TO REVIEW: only recommend removing a link if it clearly damages topical focus AND has no user navigation value. Most cross-cluster links are FINE — users need to navigate between categories. Be VERY conservative with removal.
    - PREFER CATEGORY pages over product pages for new links
    - Use EXACT URLs from the site URL list. Do NOT invent URLs.
 5. META TITLE: Must be under 60 chars. Primary keyword first.
