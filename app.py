@@ -255,6 +255,25 @@ init_from_env()
 # Load persisted data from volume (audit results, SF data, Ahrefs, etc.)
 load_all()
 
+# ── Deep-link from ECN2: ?url=https://... ─────────────────────────
+_ecn2_url = st.query_params.get("url")
+if _ecn2_url and not st.session_state.get("_ecn2_handled"):
+    from utils.ui_helpers import normalize_url as _nu_ecn
+    _ecn2_url_norm = _nu_ecn(_ecn2_url)
+    st.session_state["_ecn2_url"] = _ecn2_url_norm
+    st.session_state["_ecn2_handled"] = True
+    # Pre-fill audit queue so Page Auditor picks it up
+    st.session_state["audit_queue"] = [_ecn2_url_norm]
+    # Pre-fill content generator target
+    st.session_state["generate_for_url"] = _ecn2_url_norm
+    # Navigate to Page Auditor if audit data exists, otherwise Setup
+    if "audit_results" in st.session_state:
+        st.session_state["selected_page"] = "6. Page Auditor"
+    elif "gsc_data" in st.session_state:
+        st.session_state["selected_page"] = "6. Page Auditor"
+    else:
+        st.session_state["selected_page"] = "1. Setup & Connect"
+
 # Header
 st.markdown("""
 <div style="padding: 2rem 0 1rem 0; border-bottom: 1px solid #1e1e2e; margin-bottom: 2rem;">
@@ -269,6 +288,16 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
+# Show ECN2 deep-link banner (dismissible)
+if st.session_state.get("_ecn2_url") and not st.session_state.get("_ecn2_dismissed"):
+    _ecn2_col1, _ecn2_col2 = st.columns([10, 1])
+    with _ecn2_col1:
+        st.info(f"URL modtaget fra ECN2: **{st.session_state['_ecn2_url']}**")
+    with _ecn2_col2:
+        if st.button("X", key="dismiss_ecn2"):
+            st.session_state["_ecn2_dismissed"] = True
+            st.rerun()
 
 # ── Pipeline step definitions ──────────────────────────────────────
 STEPS = [
