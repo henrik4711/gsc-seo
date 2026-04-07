@@ -448,14 +448,18 @@ def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_do
             html_pages = pages_df[pages_df["status_code"].between(200, 299)]
         else:
             html_pages = pages_df
+        seen_orphans = set()
         for _, row in html_pages.iterrows():
             norm = _norm_url(row["url"])
+            if norm in seen_orphans:
+                continue
             inlink_count = row.get("unique_inlinks", row.get("inlinks", -1))
             if inlink_count == 0 or (inlink_count == -1 and norm not in linked_targets):
 
                 # Skip if SF All Pages shows this page has inlinks (nav/menu links)
                 if norm in nav_linked:
                     continue
+                seen_orphans.add(norm)
 
                 # Classify severity based on cross-check
                 in_google = norm in google_found
