@@ -117,6 +117,7 @@ def _generate_all_fixes(page):
         get_client,
         generate_page_implementation_plan,
         generate_category_bottom_text,
+        generate_intro_rewrite,
     )
     from urllib.parse import urlparse
 
@@ -196,6 +197,33 @@ def _generate_all_fixes(page):
             except Exception as e:
                 st.error(f"Text generation failed: {e}")
                 st.session_state[text_key] = {"error": str(e)}
+
+    # ── Generate intro text rewrite (only for category pages with thin/missing intro)
+    intro_key = f"_intro_text_{url_hash}"
+    intro_words = audit.get("intro_word_count", 0)
+    if (page["page_type"] == "category"
+            and intro_key not in st.session_state
+            and (intro_words < 50 or not audit.get("intro_text"))):
+        with st.spinner("Generating intro text..."):
+            try:
+                missing_kws = []
+                content_audit = audit.get("content_audit") or {}
+                kw_coverage = content_audit.get("keyword_coverage") or {}
+                missing_kws = (kw_coverage.get("missing", []) or [])[:8]
+
+                result = generate_intro_rewrite(
+                    client,
+                    missing_keywords=missing_kws,
+                    existing_intro=audit.get("intro_text", "") or "",
+                    page_type=page["page_type"],
+                    url=url,
+                    site_context=site_context,
+                    language=language,
+                )
+                st.session_state[intro_key] = result
+            except Exception as e:
+                st.error(f"Intro generation failed: {e}")
+                st.session_state[intro_key] = {"error": str(e)}
 
     from utils.persistence import save_ai_cache
     save_ai_cache()
@@ -332,12 +360,13 @@ def render():
         with col_h2:
             if st.button("Regenerate", key=f"regen_{url_hash}", help="Delete cached fixes and generate fresh"):
                 # Clear cached results for this page
-                for k in [plan_key, text_key]:
+                intro_key = f"_intro_text_{url_hash}"
+                for k in [plan_key, text_key, intro_key]:
                     st.session_state.pop(k, None)
                 # Also delete from disk cache
                 try:
                     import os
-                    for k in [plan_key, text_key]:
+                    for k in [plan_key, text_key, intro_key]:
                         path = os.path.join("/data/ai_cache", f"{k}.json")
                         if os.path.exists(path):
                             os.remove(path)
@@ -401,17 +430,86 @@ def render():
             _approval_button("Bottom Text", f"{url_hash}_text")
             st.markdown("---")
 
-        # ── Meta title + description ──
-        if plan.get("meta_changed"):
+        # ── Meta title + description (always show with assessment) ──
+        new_title = plan.get("meta_title", "") or page["title"]
+        new_desc = plan.get("meta_description", "") or page["meta_description"]
+        meta_changed = plan.get("meta_changed", False)
+
+        # Auto-detect if change needed
+        title_too_long = len(page["title"] or "") > 65
+        title_too_short = len(page["title"] or "") < 30
+        desc_too_long = len(page["meta_description"] or "") > 165
+        desc_too_short = len(page["meta_description"] or "") < 120
+        needs_meta_change = meta_changed or title_too_long or title_too_short or desc_too_long or desc_too_short
+
+        if needs_meta_change:
             st.markdown("#### [META] Update meta title + description")
-            new_title = plan.get("meta_title", "")
-            new_desc = plan.get("meta_description", "")
-            st.markdown(f"**Current title:** `{page['title']}` ({len(page['title'])} chars)")
-            st.markdown(f"**New title:** `{new_title}` ({len(new_title)} chars)")
-            st.markdown(f"**Current description:** `{page['meta_description'][:100]}...`")
-            st.markdown(f"**New description:** `{new_desc}` ({len(new_desc)} chars)")
-            st.code(f"Title: {new_title}\nDescription: {new_desc}", language="text")
+            st.markdown(
+                f"<div style='font-size:0.75rem; color:#ffaa33; margin-bottom:0.5rem;'>"
+                f"⚠ Changes needed</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Title
+            t_status = "⚠ TOO LONG" if title_too_long else "⚠ TOO SHORT" if title_too_short else "✓ OK"
+            st.markdown(f"**Current title:** `{page['title']}` ({len(page['title'])} chars) {t_status}")
+            if new_title and new_title != page['title']:
+                st.markdown(f"**New title:** `{new_title}` ({len(new_title)} chars)")
+            else:
+                st.markdown(f"<span style='color:#ffaa33;'>AI did not generate a new title — please write one manually</span>", unsafe_allow_html=True)
+
+            # Description
+            d_status = "⚠ TOO LONG" if desc_too_long else "⚠ TOO SHORT" if desc_too_short else "✓ OK"
+            st.markdown(f"**Current description:** `{(page['meta_description'] or '')[:100]}...` ({len(page['meta_description'] or '')} chars) {d_status}")
+            if new_desc and new_desc != page['meta_description']:
+                st.markdown(f"**New description:** `{new_desc}` ({len(new_desc)} chars)")
+            else:
+                st.markdown(f"<span style='color:#ffaa33;'>AI did not generate a new description — please write one manually</span>", unsafe_allow_html=True)
+
+            if new_title and new_desc and (new_title != page['title'] or new_desc != page['meta_description']):
+                st.code(f"Title: {new_title}\nDescription: {new_desc}", language="text")
             _approval_button("Meta", f"{url_hash}_meta")
+            st.markdown("---")
+        else:
+            st.markdown("#### [META] ✓ Meta is OK")
+            st.markdown(
+                f"<div style='font-size:0.75rem; color:#33dd88; margin-bottom:0.5rem;'>"
+                f"Title: {len(page['title'])} chars · Description: {len(page['meta_description'] or '')} chars · No changes needed</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("---")
+
+        # ── Intro text (above product grid) ──
+        intro_key = f"_intro_text_{url_hash}"
+        intro_data = st.session_state.get(intro_key)
+        intro_words_current = page["audit"].get("intro_word_count", 0)
+
+        if intro_data and not intro_data.get("error"):
+            st.markdown("#### [INTRO] New intro text (above product grid)")
+            st.markdown(
+                "<div style='background:#0d0d15; border:1px solid #5bb4d4; border-radius:6px; padding:0.6rem; margin-bottom:0.5rem;'>"
+                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5bb4d4;'>POSITION</div>"
+                "<div style='font-size:0.8rem; color:#e8e8f0;'>"
+                "This is the <strong>INTRO TEXT</strong> shown <strong>ABOVE</strong> the product grid. "
+                f"Current: {intro_words_current} words. "
+                "<br>In Magento 1.9: typically a CMS block above the products, or first paragraph of Description."
+                "</div></div>",
+                unsafe_allow_html=True,
+            )
+            new_intro = intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
+            new_intro_wc = len(new_intro.split()) if new_intro else 0
+            st.markdown(f"**New intro:** {new_intro_wc} words")
+            with st.expander("View intro text", expanded=False):
+                st.code(new_intro[:1500], language="html")
+            _approval_button("Intro", f"{url_hash}_intro")
+            st.markdown("---")
+        elif intro_words_current >= 50:
+            st.markdown("#### [INTRO] ✓ Intro text is OK")
+            st.markdown(
+                f"<div style='font-size:0.75rem; color:#33dd88; margin-bottom:0.5rem;'>"
+                f"Existing intro has {intro_words_current} words — sufficient, not regenerated</div>",
+                unsafe_allow_html=True,
+            )
             st.markdown("---")
 
         # ── Action steps (only if NOT replacing text) ──
@@ -430,15 +528,69 @@ def render():
                     st.markdown(f"<div style='color:#c8b4ff; font-size:0.85rem; margin-left:1rem;'>→ {s.get('instruction', '')}</div>", unsafe_allow_html=True)
             st.markdown("---")
 
-        # Fix 4: New articles to write
+        # ── New articles/blogs to write that support this page ──
         new_articles = plan.get("new_content_suggestions", [])
         if new_articles:
-            st.markdown(f"#### [4] {len(new_articles)} new article suggestions")
-            for art in new_articles[:3]:
+            st.markdown(f"#### [BLOGS] {len(new_articles)} new articles/guides to write")
+            st.markdown(
+                "<p style='color:#9b9bb8; font-size:0.8rem;'>"
+                "These articles should be created and linked TO this page to support topical authority.</p>",
+                unsafe_allow_html=True,
+            )
+            for art in new_articles[:5]:
                 st.markdown(f"- **{art.get('suggested_title', '')}**")
                 st.markdown(f"  <div style='color:#9b9bb8; font-size:0.85rem; margin-left:1rem;'>{art.get('why', '')[:200]}</div>", unsafe_allow_html=True)
+                if art.get("target_keywords"):
+                    st.markdown(f"  <div style='color:#c8b4ff; font-size:0.75rem; margin-left:1rem;'>Keywords: {', '.join(art.get('target_keywords', [])[:5])}</div>", unsafe_allow_html=True)
             _approval_button("Articles", f"{url_hash}_articles")
             st.markdown("---")
+        else:
+            st.markdown("#### [BLOGS] ✓ No new articles needed")
+            st.markdown(
+                "<div style='font-size:0.75rem; color:#33dd88; margin-bottom:0.5rem;'>"
+                "AI did not identify content gaps requiring new articles.</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("---")
+
+        # ── Internal links: pages that should link TO this page ──
+        content_audit = audit.get("content_audit") or {}
+        linking = content_audit.get("linking") or {}
+        link_details = linking.get("details") or {}
+        link_fix_suggestions = link_details.get("link_fix_suggestions") or []
+
+        # Find pages that link TO this page from SF link map
+        sf_link_map = st.session_state.get("sf_link_map", {})
+        links_to = sf_link_map.get("links_to", {}).get(url, []) if sf_link_map else []
+
+        # Inbound anchor stats
+        inbound_stats = link_details.get("inbound_anchor_stats") or {}
+
+        st.markdown("#### [INBOUND LINKS] Pages linking to this page")
+        if inbound_stats:
+            total_in = inbound_stats.get("total", 0)
+            descriptive = inbound_stats.get("descriptive", 0)
+            generic = inbound_stats.get("generic", 0)
+            empty = inbound_stats.get("empty", 0)
+            st.markdown(
+                f"**Current inbound links:** {total_in} total · "
+                f"{descriptive} descriptive · {generic} generic · {empty} empty anchors"
+            )
+            if total_in < 5:
+                st.warning(f"Only {total_in} inbound links — this page needs MORE pages linking to it for topic authority")
+            elif generic + empty > total_in * 0.3:
+                st.warning(f"{generic + empty}/{total_in} inbound links use generic/empty anchors — ask linking pages to use better anchor text")
+        else:
+            st.warning("No inbound links data — this page may have very few internal links pointing to it")
+
+        # Suggestions for which pages SHOULD link
+        if link_fix_suggestions:
+            st.markdown(f"**Suggested new internal links FROM other pages TO this page:** {len(link_fix_suggestions)}")
+            for fix in link_fix_suggestions[:5]:
+                st.markdown(f"- From: `{fix.get('from_url', '')}`  →  Add link with anchor: **{fix.get('suggested_anchor', '')}**")
+                if fix.get("reason"):
+                    st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{fix.get('reason', '')}</div>", unsafe_allow_html=True)
+        st.markdown("---")
 
         # Final actions
         st.markdown("### Done with this page?")
