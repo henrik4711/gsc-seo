@@ -656,17 +656,25 @@ def render():
 
     st.markdown("---")
 
-    # Detailed per-page view with pagination
+    # Detailed per-page view with pagination + search
     st.markdown("### Detailed Audit")
 
+    search_url = st.text_input("Search URL", key="audit_search", placeholder="Type part of URL to filter (e.g. sexleksaker-for-man)")
+    if search_url:
+        from utils.ui_helpers import normalize_url as _nu_search
+        search_norm = _nu_search(search_url) if search_url.startswith("http") else search_url.lower().strip()
+        filtered_results = [r for r in results if search_norm in r.get("url", "").lower()]
+    else:
+        filtered_results = results
+
     AUDIT_PER_PAGE = 10
-    total_audit_pages = max(1, (len(results) + AUDIT_PER_PAGE - 1) // AUDIT_PER_PAGE)
+    total_audit_pages = max(1, (len(filtered_results) + AUDIT_PER_PAGE - 1) // AUDIT_PER_PAGE)
     audit_page = st.number_input(
         "Page", min_value=1, max_value=total_audit_pages, value=1, key="audit_detail_page"
     )
     start_idx = (audit_page - 1) * AUDIT_PER_PAGE
-    visible_results = results[start_idx:start_idx + AUDIT_PER_PAGE]
-    st.markdown(f"**Showing {start_idx+1}-{min(start_idx+AUDIT_PER_PAGE, len(results))} of {len(results)} pages**")
+    visible_results = filtered_results[start_idx:start_idx + AUDIT_PER_PAGE]
+    st.markdown(f"**Showing {start_idx+1}-{min(start_idx+AUDIT_PER_PAGE, len(filtered_results))} of {len(filtered_results)} pages**")
 
     for r in visible_results:
         url_short = r["url"].replace("https://", "").replace("http://", "")
