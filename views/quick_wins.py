@@ -348,35 +348,57 @@ def render():
 
         plan = st.session_state.get(plan_key, {})
 
-        # ── PRIMARY ACTION: Replace existing text with AI-generated ──
+        # ── PRIMARY ACTION: Replace BOTTOM text with AI-generated ──
         if has_text:
-            st.markdown("#### [PRIMARY] Replace existing text with new AI-generated text")
-            st.markdown("<p style='color:#9b9bb8; font-size:0.85rem;'>This is the recommended approach. The new text already includes FAQ, keywords, internal links, and product cards. Just download and paste into Magento.</p>", unsafe_allow_html=True)
+            st.markdown("#### [PRIMARY] Replace BOTTOM TEXT (below product grid)")
+            st.markdown(
+                "<div style='background:#0d0d15; border:1px solid #ffaa33; border-radius:6px; padding:0.6rem; margin-bottom:0.5rem;'>"
+                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#ffaa33;'>POSITION</div>"
+                "<div style='font-size:0.8rem; color:#e8e8f0;'>"
+                "This is the <strong>BOTTOM TEXT</strong> shown <strong>BELOW</strong> the product grid on the category page. "
+                "<br>It is NOT the intro text above the products. "
+                "<br>In Magento 1.9: typically the <strong>Description</strong> field on the category."
+                "</div></div>",
+                unsafe_allow_html=True,
+            )
+
+            # Show current intro text length so user knows we don't touch it
+            intro_words = page["audit"].get("intro_word_count", 0)
+            bottom_words = page["audit"].get("bottom_word_count", 0)
+            st.markdown(
+                f"<div style='font-size:0.75rem; color:#6b6b8a; margin-bottom:0.5rem;'>"
+                f"Current intro text: {intro_words} words (above grid — NOT touched) · "
+                f"Current bottom text: {bottom_words} words (below grid — REPLACED)</div>",
+                unsafe_allow_html=True,
+            )
+
             text_data = st.session_state[text_key]
             html = text_data.get("html", "")
             wc = text_data.get("word_count", 0)
             kws = text_data.get("keywords_integrated", [])
             links = text_data.get("internal_links_added", [])
             prods = text_data.get("products_featured", [])
-            st.markdown(f"**Word count:** {wc} · **Keywords:** {len(kws)} · **Internal links:** {len(links)} · **Products:** {len(prods)}")
+            st.markdown(f"**New bottom text:** {wc} words · **Keywords:** {len(kws)} · **Internal links:** {len(links)} · **Products:** {len(prods)}")
             with st.expander("View HTML preview", expanded=False):
                 st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")
             st.download_button(
                 "Download HTML",
                 data=html,
-                file_name=f"{shorten_url(url).replace('/', '_').strip('_')}.html",
+                file_name=f"{shorten_url(url).replace('/', '_').strip('_')}_bottom.html",
                 mime="text/html",
                 key=f"dl_text_{url_hash}",
             )
             st.markdown(
                 "<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.8rem; margin:0.5rem 0;'>"
-                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5533ff;'>HOW TO USE</div>"
+                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5533ff;'>HOW TO USE IN MAGENTO 1.9</div>"
                 "<div style='font-size:0.85rem; color:#c8b4ff;'>"
-                "1) Download HTML  2) Open Magento Admin → Catalog → Categories → this category  "
-                "3) Paste into Description field  4) Save</div></div>",
+                "1) Download HTML  2) Magento Admin → Catalog → Categories → this category  "
+                "3) Paste into <strong>Description</strong> field (NOT 'Page Title' or 'Meta')  "
+                "4) Make sure 'Display Mode' is set to 'Products and Static Block' or 'Static Block and Products' "
+                "5) Save and clear cache</div></div>",
                 unsafe_allow_html=True,
             )
-            _approval_button("Text", f"{url_hash}_text")
+            _approval_button("Bottom Text", f"{url_hash}_text")
             st.markdown("---")
 
         # ── Meta title + description ──
