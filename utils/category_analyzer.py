@@ -60,9 +60,15 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
 
     # ── 1. URL pattern matching ───────────────────────────────
     product_patterns = ["/products/", "/produkt/", "/product/", "/p/"]
-    category_patterns = ["/kategori/", "/category/", "/collections/", "/c/", "/alla/"]
-    blog_patterns = ["/blog/", "/blogg/", "/artikel/", "/guide/", "/tips/", "/magazin/"]
+    category_patterns = ["/kategori/", "/category/", "/collections/", "/c/", "/alla/", "/sexleksaker/", "/bondage", "/apotek", "/sexiga-underklader"]
+    blog_patterns = ["/blog/", "/blogg/", "/artikel/", "/guide/", "/tips/", "/magazin/", "/topplistan/"]
     faq_patterns = ["/faq/", "/fragor/", "/hjalp/", "/help/", "/support/"]
+
+    # Magento flat URL category patterns (segment-based, no prefix)
+    # e.g. /sexleksaker-for-man, /vuxenleksaker-for-par, /goteborg
+    flat_category_keywords = ["sexleksaker", "vuxenleksaker", "leksaker", "bondage", "underklader",
+                              "glidmedel", "kondomer", "apotek", "rea", "ullared", "goteborg",
+                              "stockholm", "malmo", "vara-butiker", "private-collection"]
 
     if any(p in url_lower for p in product_patterns):
         result["page_type"] = "product"
@@ -76,6 +82,10 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
     elif any(p in url_lower for p in category_patterns):
         result["page_type"] = "category"
         result["signals"].append("URL contains category path")
+    elif len(segments) <= 2 and any(kw in (segments[0] if segments else "") for kw in flat_category_keywords):
+        # Magento flat URL: 1-2 segment category
+        result["page_type"] = "category"
+        result["signals"].append("Magento flat URL category pattern")
 
     if page_data:
         schema_types = [str(s).lower() for s in page_data.get("schema_types", [])]

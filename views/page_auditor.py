@@ -40,6 +40,7 @@ PAGE_TYPE_LABELS = {
     "category": ("CATEGORY", "#c8b4ff"),
     "product": ("PRODUCT", "#33dd88"),
     "blog": ("BLOG/GUIDE", "#ffaa33"),
+    "faq": ("FAQ/HELP", "#5bb4d4"),
     "unknown": ("UNKNOWN", "#6b6b8a"),
 }
 
