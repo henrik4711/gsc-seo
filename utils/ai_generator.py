@@ -1300,6 +1300,13 @@ def generate_category_bottom_text(
 Rewrite the category page bottom text following the EXACT format below.
 {ANTI_HALLUCINATION_RULES}
 
+## CRITICAL REQUIREMENTS — YOU MUST FOLLOW THESE
+1. You MUST include AT LEAST 8-12 internal links in the text. Use ALL subcategory URLs and at least 3 sibling URLs from the lists below.
+2. You MUST link every product card to its actual product URL using <a href="PRODUCT_URL"> wrapping the entire card.
+3. Product cards MUST include the actual product image with <img src="IMAGE_URL" alt="PRODUCT_NAME">.
+4. Product cards MUST show the actual price in <strong>Pris: PRICE</strong>.
+5. Every <h3> subcategory section MUST link to that subcategory's URL.
+
 ## PAGE
 URL: {url}
 Title: "{page_title}"

@@ -165,6 +165,18 @@ def _generate_all_fixes(page):
                     and urlparse(u).path.lower().rstrip("/").count("/") == page_path.count("/")
                 ][:15] if parent_path else []
 
+                # Build product list from audit data (deep_scrape_category stores rich data)
+                products = []
+                rich_products = audit.get("products", []) or []
+                for p in rich_products[:8]:
+                    products.append({
+                        "name": p.get("name", ""),
+                        "product_url": p.get("url", ""),
+                        "image_url": p.get("image", ""),
+                        "price": p.get("price", ""),
+                        "description": "",
+                    })
+
                 result = generate_category_bottom_text(
                     client, url,
                     audit.get("title", ""),
@@ -173,7 +185,7 @@ def _generate_all_fixes(page):
                     audit.get("target_keywords", []),
                     subcategory_urls=subcategory_urls,
                     sibling_urls=sibling_urls,
-                    products=None,
+                    products=products if products else None,
                     all_site_urls=all_site_urls,
                     site_context=site_context,
                     language=language,

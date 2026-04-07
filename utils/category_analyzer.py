@@ -406,10 +406,49 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
             product_elements = product_links
 
         result["product_count"] = len(product_elements)
+        result["products"] = []  # Rich product data with name, url, image, price
         for elem in product_elements[:30]:
             name = elem.get_text(strip=True)[:80]
             if name and len(name) > 3:
                 result["product_names"].append(name)
+
+            # Extract rich product data
+            prod = {"name": "", "url": "", "image": "", "price": ""}
+
+            # Find product link
+            if elem.name == "a" and elem.get("href"):
+                prod["url"] = elem["href"]
+            else:
+                link = elem.find("a", href=True)
+                if link:
+                    prod["url"] = link["href"]
+
+            # Find product name (try title attr, alt, or text from heading)
+            name_el = elem.find(["h2", "h3", "h4"]) or elem.find(attrs={"class": re.compile(r"name|title", re.I)})
+            if name_el:
+                prod["name"] = name_el.get_text(strip=True)[:80]
+            elif name:
+                prod["name"] = name
+
+            # Find image
+            img = elem.find("img")
+            if img:
+                src = img.get("src") or img.get("data-src") or ""
+                if src:
+                    if src.startswith("/"):
+                        src = f"https://{domain}{src}"
+                    prod["image"] = src
+
+            # Find price
+            price_el = elem.find(attrs={"class": re.compile(r"price", re.I)})
+            if price_el:
+                prod["price"] = price_el.get_text(strip=True)[:20]
+
+            if prod["url"] or prod["name"]:
+                # Make URL absolute
+                if prod["url"].startswith("/"):
+                    prod["url"] = f"https://{domain}{prod['url']}"
+                result["products"].append(prod)
 
         # ── Remove non-content for text extraction ────────────
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
