@@ -325,13 +325,63 @@ def render():
             _generate_all_fixes(page)
             st.rerun()
     else:
-        st.markdown("### AI-generated fixes")
+        # Regenerate button always available
+        col_h1, col_h2 = st.columns([4, 1])
+        with col_h1:
+            st.markdown("### AI-generated fixes")
+        with col_h2:
+            if st.button("Regenerate", key=f"regen_{url_hash}", help="Delete cached fixes and generate fresh"):
+                # Clear cached results for this page
+                for k in [plan_key, text_key]:
+                    st.session_state.pop(k, None)
+                # Also delete from disk cache
+                try:
+                    import os
+                    for k in [plan_key, text_key]:
+                        path = os.path.join("/data/ai_cache", f"{k}.json")
+                        if os.path.exists(path):
+                            os.remove(path)
+                except Exception:
+                    pass
+                _generate_all_fixes(page)
+                st.rerun()
 
         plan = st.session_state.get(plan_key, {})
 
-        # Fix 1: Meta title + description
+        # ── PRIMARY ACTION: Replace existing text with AI-generated ──
+        if has_text:
+            st.markdown("#### [PRIMARY] Replace existing text with new AI-generated text")
+            st.markdown("<p style='color:#9b9bb8; font-size:0.85rem;'>This is the recommended approach. The new text already includes FAQ, keywords, internal links, and product cards. Just download and paste into Magento.</p>", unsafe_allow_html=True)
+            text_data = st.session_state[text_key]
+            html = text_data.get("html", "")
+            wc = text_data.get("word_count", 0)
+            kws = text_data.get("keywords_integrated", [])
+            links = text_data.get("internal_links_added", [])
+            prods = text_data.get("products_featured", [])
+            st.markdown(f"**Word count:** {wc} · **Keywords:** {len(kws)} · **Internal links:** {len(links)} · **Products:** {len(prods)}")
+            with st.expander("View HTML preview", expanded=False):
+                st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")
+            st.download_button(
+                "Download HTML",
+                data=html,
+                file_name=f"{shorten_url(url).replace('/', '_').strip('_')}.html",
+                mime="text/html",
+                key=f"dl_text_{url_hash}",
+            )
+            st.markdown(
+                "<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.8rem; margin:0.5rem 0;'>"
+                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5533ff;'>HOW TO USE</div>"
+                "<div style='font-size:0.85rem; color:#c8b4ff;'>"
+                "1) Download HTML  2) Open Magento Admin → Catalog → Categories → this category  "
+                "3) Paste into Description field  4) Save</div></div>",
+                unsafe_allow_html=True,
+            )
+            _approval_button("Text", f"{url_hash}_text")
+            st.markdown("---")
+
+        # ── Meta title + description ──
         if plan.get("meta_changed"):
-            st.markdown("#### [1] Meta title + description")
+            st.markdown("#### [META] Update meta title + description")
             new_title = plan.get("meta_title", "")
             new_desc = plan.get("meta_description", "")
             st.markdown(f"**Current title:** `{page['title']}` ({len(page['title'])} chars)")
@@ -342,36 +392,20 @@ def render():
             _approval_button("Meta", f"{url_hash}_meta")
             st.markdown("---")
 
-        # Fix 2: Page text (category only)
-        if has_text:
-            st.markdown("#### [2] New page text (with FAQ + E-E-A-T)")
-            text_data = st.session_state[text_key]
-            html = text_data.get("html", "")
-            wc = text_data.get("word_count", 0)
-            kws = text_data.get("keywords_integrated", [])
-            links = text_data.get("internal_links_added", [])
-            st.markdown(f"**Word count:** {wc} · **Keywords integrated:** {len(kws)} · **Internal links:** {len(links)}")
-            with st.expander("View HTML preview", expanded=False):
-                st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")
-            st.download_button(
-                "Download HTML",
-                data=html,
-                file_name=f"{shorten_url(url).replace('/', '_').strip('_')}.html",
-                mime="text/html",
-                key=f"dl_text_{url_hash}",
-            )
-            _approval_button("Text", f"{url_hash}_text")
-            st.markdown("---")
-
-        # Fix 3: Implementation steps
+        # ── Action steps (only if NOT replacing text) ──
         steps = plan.get("steps", [])
         if steps:
-            st.markdown(f"#### [3] {len(steps)} action steps")
-            for i, s in enumerate(steps[:5], 1):
-                st.markdown(f"**{i}. {s.get('action', '')}** ({s.get('time_minutes', '?')} min)")
-                st.markdown(f"<div style='color:#9b9bb8; font-size:0.85rem; margin-left:1rem;'>{s.get('detail', '')}</div>", unsafe_allow_html=True)
-                st.markdown(f"<div style='color:#c8b4ff; font-size:0.85rem; margin-left:1rem;'>→ {s.get('instruction', '')}</div>", unsafe_allow_html=True)
-            _approval_button("Steps", f"{url_hash}_steps")
+            with st.expander(f"[ALTERNATIVE] {len(steps)} action steps (only if you want to keep existing text)", expanded=False):
+                st.markdown(
+                    "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+                    "These steps are for fixing the EXISTING text instead of replacing it. "
+                    "If you used the PRIMARY action above, you can skip these.</p>",
+                    unsafe_allow_html=True,
+                )
+                for i, s in enumerate(steps[:5], 1):
+                    st.markdown(f"**{i}. {s.get('action', '')}** ({s.get('time_minutes', '?')} min)")
+                    st.markdown(f"<div style='color:#9b9bb8; font-size:0.85rem; margin-left:1rem;'>{s.get('detail', '')}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='color:#c8b4ff; font-size:0.85rem; margin-left:1rem;'>→ {s.get('instruction', '')}</div>", unsafe_allow_html=True)
             st.markdown("---")
 
         # Fix 4: New articles to write
