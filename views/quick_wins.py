@@ -554,6 +554,7 @@ def render():
             st.markdown("---")
 
         # ── Internal links: pages that should link TO this page ──
+        audit = page["audit"]  # Local alias for the audit data
         content_audit = audit.get("content_audit") or {}
         linking = content_audit.get("linking") or {}
         link_details = linking.get("details") or {}

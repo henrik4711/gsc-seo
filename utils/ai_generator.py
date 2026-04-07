@@ -1608,9 +1608,9 @@ CRITICAL RULES:
    - Check LINKS TO REVIEW: only recommend removing a link if it clearly damages topical focus AND has no user navigation value. Most cross-cluster links are FINE — users need to navigate between categories. Be VERY conservative with removal.
    - PREFER CATEGORY pages over product pages for new links
    - Use EXACT URLs from the site URL list. Do NOT invent URLs.
-5. META TITLE: Must be under 60 chars. Primary keyword first.
-6. META DESCRIPTION: Must be 140-160 chars. Include primary keyword + CTA.
-7. ALWAYS show meta title + description as the FIRST step if they need improvement.
+5. META TITLE: MUST be under 60 chars (max 65). Primary keyword first. If current title is over 60 chars, you MUST generate a new optimized title and set meta_changed=true. Never leave the title field empty.
+6. META DESCRIPTION: MUST be 140-160 chars (max 165). Include primary keyword + CTA. If current description is over 165 chars or under 120 chars, you MUST generate a new one and set meta_changed=true. Never leave the description field empty.
+7. ALWAYS populate meta_title AND meta_description fields in the response, even if no change is needed (use current values). If ANY change is needed, set meta_changed=true.
 8. Only suggest schema types appropriate for this page type
 9. Be honest: if the page is already good, say so. Don't invent problems.
 10. Each step must have a time estimate in minutes
