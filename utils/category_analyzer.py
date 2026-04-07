@@ -113,13 +113,8 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             result["signals"].append(f"CMS template detected: {template_type}")
 
         # ── 2. HTML signals OVERRIDE URL patterns ─────────────
-        # Strong HTML evidence trumps URL guess
-
-        # FAQ: most headings are questions
-        question_h2s = sum(1 for h in h2s if h.startswith(("vad ", "hur ", "vilk", "när ", "var ", "what ", "how ", "why ", "when ", "?")) or "?" in h)
-        if h2_count >= 3 and question_h2s / h2_count > 0.5:
-            result["page_type"] = "faq"
-            result["signals"].append(f"{question_h2s}/{h2_count} H2s are questions = FAQ page")
+        # Order matters: Schema → Category signals → Product signals → Blog → FAQ
+        # FAQ is LAST because category pages often have FAQ sections in bottom text
 
         # Schema is strongest signal
         schema_str = " ".join(schema_types)
@@ -148,7 +143,11 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             result["signals"].append("Has filter/sort UI = listing page")
 
         # Long text + headings + no products = blog (overrides URL)
-        if word_count > 500 and h2_count >= 3 and product_count == 0 and not has_add_to_cart:
+        # Only if NOT already classified as category
+        if (result["page_type"] != "category"
+                and word_count > 500 and h2_count >= 3
+                and product_count == 0 and not has_add_to_cart
+                and internal_links < 20):
             result["page_type"] = "blog"
             result["signals"].append(f"Long text ({word_count} words) + {h2_count} H2s + no products = article/guide")
 
@@ -156,6 +155,14 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
         if has_add_to_cart and has_price and product_count <= 1 and internal_links < 30:
             result["page_type"] = "product"
             result["signals"].append("Has add-to-cart + price + few links = single product page")
+
+        # FAQ: ONLY if not already classified AND no products AND few links
+        # (category pages with FAQ section should NOT be classified as FAQ)
+        if result["page_type"] == "unknown" and product_count == 0 and internal_links < 15:
+            question_h2s = sum(1 for h in h2s if h.startswith(("vad ", "hur ", "vilk", "när ", "var ", "what ", "how ", "why ", "when ", "?")) or "?" in h)
+            if h2_count >= 3 and question_h2s / h2_count > 0.5:
+                result["page_type"] = "faq"
+                result["signals"].append(f"{question_h2s}/{h2_count} H2s are questions = FAQ page")
 
         # FAQ signals: question patterns in headings
         # Only classify as FAQ if MOST headings are questions (not just a FAQ section in bottom text)

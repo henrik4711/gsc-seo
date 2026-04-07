@@ -352,6 +352,36 @@ def render():
         st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
 
     st.markdown("---")
+    st.markdown("### Maintenance")
+
+    # Re-classify all audit results without re-scraping
+    if "audit_results" in st.session_state:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(
+                "<div style='font-size:0.85rem; color:#9b9bb8;'>"
+                "<strong>Re-classify all pages</strong><br>"
+                "Run new page type classifier on existing audit data without re-scraping. "
+                "Use this after fixing classification rules.</div>",
+                unsafe_allow_html=True,
+            )
+        with col2:
+            if st.button("Re-classify", key="rp_reclassify", use_container_width=True):
+                from utils.category_analyzer import classify_page_type
+                results = st.session_state["audit_results"]
+                changed = 0
+                for r in results:
+                    old_type = r.get("page_type", "unknown")
+                    new_class = classify_page_type(r.get("url", ""), r)
+                    new_type = new_class.get("page_type", "unknown")
+                    if new_type != old_type:
+                        r["page_type"] = new_type
+                        changed += 1
+                save_key("audit_results")
+                st.success(f"Re-classified {changed}/{len(results)} pages")
+                st.rerun()
+
+    st.markdown("---")
     st.markdown(
         "<div style='background:#0d0d15; border:1px solid #5533ff; border-radius:6px; padding:0.8rem;'>"
         "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#5533ff; margin-bottom:0.3rem;'>NEXT</div>"
