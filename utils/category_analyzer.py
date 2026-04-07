@@ -151,6 +151,18 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             result["page_type"] = "blog"
             result["signals"].append(f"Long text ({word_count} words) + {h2_count} H2s + no products = article/guide")
 
+        # URL pattern OVERRIDE: /blog/, /guide/, /artikel/ are always blog
+        # regardless of internal links count (blog posts often link to many products)
+        if any(p in url_lower for p in ["/blog/", "/blogg/", "/artikel/", "/guide/"]):
+            result["page_type"] = "blog"
+            result["signals"].append("URL contains blog/guide path — forced to blog")
+
+        # Local pages (store locator, individual locations) → category
+        local_patterns = ["/butik", "/vara-butiker", "/store-locator", "/butikker"]
+        if any(p in url_lower for p in local_patterns):
+            result["page_type"] = "category"  # Treat as category for SEO purposes
+            result["signals"].append("Local/store page → category")
+
         # Single product = product page (overrides URL)
         if has_add_to_cart and has_price and product_count <= 1 and internal_links < 30:
             result["page_type"] = "product"
