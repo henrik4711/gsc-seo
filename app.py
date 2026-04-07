@@ -302,6 +302,7 @@ if st.session_state.get("_ecn2_url") and not st.session_state.get("_ecn2_dismiss
 # ── Pipeline step definitions ──────────────────────────────────────
 STEPS = [
     ("Dashboard",             "dashboard",    "dashboard_viewed",  "What to do next"),
+    ("⚡ Run Pipeline",        "run_pipeline", "_run_pipeline_viewed", "One-click run all steps"),
     ("1. Setup & Connect",    "setup",        "gsc_data",          "Connect GSC + API keys"),
     ("2. Upload Ahrefs",      "ahrefs",       "page_authority",    "Upload backlink data"),
     ("3. CTR Analysis",       "ctr",          "ctr_gaps",          "Find underperformers"),
@@ -415,6 +416,9 @@ selected = page.split(". ", 1)[1] if ". " in page else page
 if "Dashboard" in selected:
     from views import dashboard
     dashboard.render()
+elif "Run Pipeline" in selected:
+    from views import run_pipeline
+    run_pipeline.render()
 elif "Setup" in selected:
     from views import setup
     setup.render()
