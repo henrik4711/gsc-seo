@@ -394,7 +394,7 @@ def _render_upload():
             from utils.screaming_frog_import import analyze_crawl_data
             site_domain = ""
             if "gsc_site" in st.session_state:
-                site_domain = st.session_state["gsc_site"].replace("https://", "").replace("http://", "").rstrip("/")
+                site_domain = st.session_state["gsc_site"].replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
             issues = analyze_crawl_data(
                 st.session_state.get("sf_pages", pd.DataFrame()),
                 st.session_state.get("sf_inlinks", pd.DataFrame()),
