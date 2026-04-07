@@ -105,6 +105,13 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
         add_to_cart_signals = ["lägg i varukorg", "add to cart", "buy now", "add to bag"]
         has_add_to_cart = any(s in body[:3000] for s in add_to_cart_signals)
 
+        # ── 0. TEMPLATE DETECTION (strongest signal) ──────────
+        # CMS body class / template containers — Magento 1.9, WooCommerce, etc.
+        template_type = page_data.get("template_type", "")
+        if template_type in ("category", "product", "blog"):
+            result["page_type"] = template_type
+            result["signals"].append(f"CMS template detected: {template_type}")
+
         # ── 2. HTML signals OVERRIDE URL patterns ─────────────
         # Strong HTML evidence trumps URL guess
 

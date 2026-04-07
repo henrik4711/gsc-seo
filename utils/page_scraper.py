@@ -230,6 +230,42 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         except Exception:
             pass
 
+    # ── Template detection (Magento 1.9 + generic e-commerce) ──
+    # Body class is the strongest signal — CMS platforms set it per page type
+    body_tag = soup.find("body")
+    body_classes = " ".join(body_tag.get("class", [])).lower() if body_tag else ""
+    template_type = ""
+
+    if body_classes:
+        # Magento 1.9 body class patterns
+        if "catalog-category-view" in body_classes or "category-" in body_classes:
+            template_type = "category"
+        elif "catalog-product-view" in body_classes or "product-" in body_classes:
+            template_type = "product"
+        elif "cms-" in body_classes or "page-cms" in body_classes:
+            template_type = "cms"  # Could be category landing or info page
+        elif "blog-" in body_classes or "post-" in body_classes:
+            template_type = "blog"
+        # Generic e-commerce platforms
+        elif "category" in body_classes and "product" not in body_classes:
+            template_type = "category"
+        elif "single-product" in body_classes or "type-product" in body_classes:
+            template_type = "product"
+        elif "single-post" in body_classes or "type-post" in body_classes or "blog-post" in body_classes:
+            template_type = "blog"
+
+    # Container-based detection (Magento 1.9 specific)
+    if not template_type:
+        if soup.find("div", class_=re.compile(r"category-products?|products-grid|category-view", re.I)):
+            template_type = "category"
+        elif soup.find("div", class_=re.compile(r"product-essential|product-shop|product-view", re.I)):
+            template_type = "product"
+        elif soup.find("div", class_=re.compile(r"post-content|blog-post-view|article-body", re.I)):
+            template_type = "blog"
+
+    result["template_type"] = template_type
+    result["body_classes"] = body_classes[:200]  # Store for debugging
+
     # ── Body text: extract from content area ──────────────────
     # Work on a copy for text extraction
     text_soup = BeautifulSoup(html, "html.parser")
