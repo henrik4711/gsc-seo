@@ -232,12 +232,83 @@ def _run_quality_check():
 
 
 def _run_site_validation():
-    from utils.ai_generator import get_client
-    from utils.ui_helpers import stable_hash
+    """Run AI site structure validation."""
     if not has_anthropic_key():
         raise ValueError("Anthropic API key missing")
-    # Trigger site_map_export validation by setting state
-    raise NotImplementedError("Run from 12. Site Map → Validate")
+    if "audit_results" not in st.session_state:
+        raise ValueError("Run bulk audit first")
+    if "topic_clusters" not in st.session_state:
+        raise ValueError("Run topic clusters first")
+
+    import json
+    from utils.ai_generator import get_client, _parse_ai_json
+    from views.site_map_export import _build_site_structure
+
+    audit_results = st.session_state["audit_results"]
+    gsc_data = st.session_state.get("gsc_data")
+    topic_clusters = st.session_state.get("topic_clusters", {})
+    page_authority = st.session_state.get("page_authority")
+
+    df_structure = _build_site_structure(audit_results, gsc_data, topic_clusters, page_authority)
+    if df_structure.empty:
+        raise ValueError("No site structure data")
+
+    orphans = len(df_structure[df_structure["Links In"] == 0]) if "Links In" in df_structure.columns else 0
+    no_cluster = len(df_structure[df_structure["Cluster(s)"] == ""]) if "Cluster(s)" in df_structure.columns else 0
+    thin = len(df_structure[df_structure.get("Word Count", 0) < 300]) if "Word Count" in df_structure.columns else 0
+
+    summary = {
+        "total_pages": len(df_structure),
+        "total_clusters": len(topic_clusters.get("clusters", [])),
+        "orphan_pages": int(orphans),
+        "pages_without_cluster": int(no_cluster),
+        "thin_pages": int(thin),
+        "total_impressions": int(df_structure["Impressions"].sum()) if "Impressions" in df_structure.columns else 0,
+        "total_clicks": int(df_structure["Clicks"].sum()) if "Clicks" in df_structure.columns else 0,
+        "page_types": df_structure["Page Type"].value_counts().to_dict() if "Page Type" in df_structure.columns else {},
+        "clusters_summary": [
+            {"topic": c.get("topic", ""), "pages": c.get("page_count", 0), "impressions": c.get("total_impressions", 0)}
+            for c in topic_clusters.get("clusters", [])[:20]
+        ],
+    }
+
+    client = get_client(get_anthropic_key())
+    prompt = f"""You are a senior SEO architect. Review this site structure and identify SYSTEMIC issues.
+
+## SITE SUMMARY
+{json.dumps(summary, ensure_ascii=False, indent=2)}
+
+## YOUR ANALYSIS
+Evaluate the OVERALL site health. Focus on:
+1. Cluster completeness
+2. Orphan pages ({orphans} found)
+3. Pages without clusters ({no_cluster})
+4. Content gaps
+5. Cannibalization patterns
+
+## OUTPUT (JSON):
+{{
+  "overall_health_score": 0,
+  "summary": "3-4 sentences about site SEO health",
+  "critical_issues": ["issue 1", "issue 2"],
+  "structural_problems": ["problem 1"],
+  "cluster_issues": ["cluster issue 1"],
+  "opportunities": ["opportunity 1"],
+  "priority_actions": [
+    {{"action": "what to do", "impact": "high/medium/low", "pages_affected": 0}}
+  ]
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    result = _parse_ai_json(message)
+    st.session_state["_site_validation"] = result
+    from utils.persistence import _save_ai_key, _volume_available
+    if _volume_available():
+        _save_ai_key("_site_validation", result)
 
 
 # ── Main render ────────────────────────────────────────────────
@@ -313,6 +384,39 @@ def render():
         if st.button("Open →", key="rp_audit_link", use_container_width=True):
             st.session_state["selected_page"] = "6. Page Auditor"
             st.rerun()
+    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
+
+    # ── Site Validation (step 9) ────────────────────────────
+    icon, status, color = _step_status("_site_validation")
+    val_data = st.session_state.get("_site_validation", {})
+    if isinstance(val_data, dict) and val_data.get("overall_health_score") is not None:
+        score = val_data.get("overall_health_score", 0)
+        status = f"Done (health score: {score}/100)"
+        color = "#33dd88" if score >= 70 else "#ffaa33" if score >= 40 else "#ff4455"
+    col1, col2, col3 = st.columns([1, 6, 2])
+    with col1:
+        st.markdown(
+            f"<div style='font-size:1.5rem; color:{color}; text-align:center; padding-top:0.5rem;'>{icon}</div>",
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f"<div style='font-weight:600; color:#e8e8f0;'>9. Site Validation</div>"
+            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI evaluates entire site architecture and gives health score</div>"
+            f"<div style='font-size:0.7rem; color:{color}; margin-top:0.2rem;'>{status}</div>",
+            unsafe_allow_html=True,
+        )
+    with col3:
+        if st.button("Run", key="rp_validation", use_container_width=True):
+            try:
+                with st.spinner("AI evaluating site architecture..."):
+                    _run_site_validation()
+                st.success("Validation done")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+                import traceback
+                st.code(traceback.format_exc())
     st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
 
     # AI Quality (only if audit is done)
