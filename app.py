@@ -304,6 +304,7 @@ STEPS = [
     ("Dashboard",             "dashboard",    "dashboard_viewed",  "What to do next"),
     ("⚡ Run Pipeline",        "run_pipeline", "_run_pipeline_viewed", "One-click run all steps"),
     ("🎯 Action Center",       "action_center","_action_center_viewed", "All recommendations + AI generation"),
+    ("⚡ Quick Wins",          "quick_wins",   "_quick_wins_viewed", "One page at a time, fully prepared"),
     ("1. Setup & Connect",    "setup",        "gsc_data",          "Connect GSC + API keys"),
     ("2. Upload Ahrefs",      "ahrefs",       "page_authority",    "Upload backlink data"),
     ("3. CTR Analysis",       "ctr",          "ctr_gaps",          "Find underperformers"),
@@ -423,6 +424,9 @@ elif "Run Pipeline" in selected:
 elif "Action Center" in selected:
     from views import action_center
     action_center.render()
+elif "Quick Wins" in selected:
+    from views import quick_wins
+    quick_wins.render()
 elif "Setup" in selected:
     from views import setup
     setup.render()
