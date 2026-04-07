@@ -13,29 +13,39 @@ def _step_status(state_key):
     if state_key in st.session_state and st.session_state[state_key] is not None:
         data = st.session_state[state_key]
         try:
-            # Special handling for topic_clusters dict
-            if state_key == "topic_clusters" and isinstance(data, dict):
-                clusters = data.get("clusters", [])
-                return "✓", f"Done ({len(clusters):,} clusters)", "#33dd88"
-            # Special handling for crawl issues dict
-            if state_key == "sf_crawl_issues" and isinstance(data, dict):
-                total = sum(len(v) for v in data.values() if hasattr(v, "__len__"))
-                return "✓", f"Done ({total:,} issues)", "#33dd88"
-            # DataFrames and lists
-            if hasattr(data, "__len__"):
-                count = len(data)
-                if count == 0:
-                    return "✗", "Empty", "#6b6b8a"
-                # Use proper labels per type
+            # DataFrames need .empty check, not just len()
+            import pandas as pd
+            if isinstance(data, pd.DataFrame):
+                if data.empty:
+                    return "✗", "Not run", "#6b6b8a"
                 labels = {
                     "gsc_data": "queries",
                     "ctr_gaps": "gaps",
                     "cannibalization": "conflicts",
                     "page_authority": "pages",
-                    "audit_results": "pages",
                 }
-                label = labels.get(state_key, "items")
-                return "✓", f"Done ({count:,} {label})", "#33dd88"
+                label = labels.get(state_key, "rows")
+                return "✓", f"Done ({len(data):,} {label})", "#33dd88"
+            # Special handling for topic_clusters dict
+            if state_key == "topic_clusters" and isinstance(data, dict):
+                clusters = data.get("clusters", [])
+                if not clusters:
+                    return "✗", "Not run", "#6b6b8a"
+                return "✓", f"Done ({len(clusters):,} clusters)", "#33dd88"
+            # Special handling for crawl issues dict
+            if state_key == "sf_crawl_issues" and isinstance(data, dict):
+                total = sum(len(v) for v in data.values() if hasattr(v, "__len__"))
+                if total == 0:
+                    return "✗", "Not run", "#6b6b8a"
+                return "✓", f"Done ({total:,} issues)", "#33dd88"
+            # Lists
+            if isinstance(data, list):
+                if not data:
+                    return "✗", "Not run", "#6b6b8a"
+                return "✓", f"Done ({len(data):,} items)", "#33dd88"
+            # Other dicts
+            if isinstance(data, dict) and data:
+                return "✓", "Done", "#33dd88"
         except Exception:
             pass
         return "✓", "Done", "#33dd88"
@@ -386,39 +396,6 @@ def render():
             st.rerun()
     st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
 
-    # ── Site Validation (step 9) ────────────────────────────
-    icon, status, color = _step_status("_site_validation")
-    val_data = st.session_state.get("_site_validation", {})
-    if isinstance(val_data, dict) and val_data.get("overall_health_score") is not None:
-        score = val_data.get("overall_health_score", 0)
-        status = f"Done (health score: {score}/100)"
-        color = "#33dd88" if score >= 70 else "#ffaa33" if score >= 40 else "#ff4455"
-    col1, col2, col3 = st.columns([1, 6, 2])
-    with col1:
-        st.markdown(
-            f"<div style='font-size:1.5rem; color:{color}; text-align:center; padding-top:0.5rem;'>{icon}</div>",
-            unsafe_allow_html=True,
-        )
-    with col2:
-        st.markdown(
-            f"<div style='font-weight:600; color:#e8e8f0;'>9. Site Validation</div>"
-            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI evaluates entire site architecture and gives health score</div>"
-            f"<div style='font-size:0.7rem; color:{color}; margin-top:0.2rem;'>{status}</div>",
-            unsafe_allow_html=True,
-        )
-    with col3:
-        if st.button("Run", key="rp_validation", use_container_width=True):
-            try:
-                with st.spinner("AI evaluating site architecture..."):
-                    _run_site_validation()
-                st.success("Validation done")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-                import traceback
-                st.code(traceback.format_exc())
-    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
-
     # AI Quality (only if audit is done)
     if "audit_results" in st.session_state:
         from utils.ui_helpers import stable_hash
@@ -445,15 +422,51 @@ def render():
                 unsafe_allow_html=True,
             )
         with col3:
-            if st.button("Run 50", key="rp_quality", use_container_width=True):
+            remaining = len(candidates) - checked
+            run_label = f"Run {min(50, remaining)}" if remaining > 0 else "Done"
+            if st.button(run_label, key="rp_quality", use_container_width=True, disabled=remaining == 0):
                 try:
-                    with st.spinner("AI checking quality of 50 pages..."):
+                    with st.spinner(f"AI checking quality of {min(50, remaining)} pages..."):
                         _run_quality_check()
                     st.success("Quality check done")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
         st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
+
+    # ── Site Validation (step 9) ────────────────────────────
+    icon, status, color = _step_status("_site_validation")
+    val_data = st.session_state.get("_site_validation", {})
+    if isinstance(val_data, dict) and val_data.get("overall_health_score") is not None:
+        score = val_data.get("overall_health_score", 0)
+        status = f"Done (health score: {score}/100)"
+        color = "#33dd88" if score >= 70 else "#ffaa33" if score >= 40 else "#ff4455"
+        icon = "✓"
+    col1, col2, col3 = st.columns([1, 6, 2])
+    with col1:
+        st.markdown(
+            f"<div style='font-size:1.5rem; color:{color}; text-align:center; padding-top:0.5rem;'>{icon}</div>",
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f"<div style='font-weight:600; color:#e8e8f0;'>9. Site Validation</div>"
+            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI evaluates entire site architecture and gives health score</div>"
+            f"<div style='font-size:0.7rem; color:{color}; margin-top:0.2rem;'>{status}</div>",
+            unsafe_allow_html=True,
+        )
+    with col3:
+        if st.button("Run", key="rp_validation", use_container_width=True):
+            try:
+                with st.spinner("AI evaluating site architecture..."):
+                    _run_site_validation()
+                st.success("Validation done")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("### Maintenance")
