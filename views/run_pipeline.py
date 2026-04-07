@@ -9,14 +9,33 @@ from config import get_anthropic_key, has_anthropic_key
 
 
 def _step_status(state_key):
-    """Returns status icon + label."""
+    """Returns status icon + label with smart count display."""
     if state_key in st.session_state and st.session_state[state_key] is not None:
         data = st.session_state[state_key]
-        # Get count if it's a list/dict/df
         try:
+            # Special handling for topic_clusters dict
+            if state_key == "topic_clusters" and isinstance(data, dict):
+                clusters = data.get("clusters", [])
+                return "✓", f"Done ({len(clusters):,} clusters)", "#33dd88"
+            # Special handling for crawl issues dict
+            if state_key == "sf_crawl_issues" and isinstance(data, dict):
+                total = sum(len(v) for v in data.values() if hasattr(v, "__len__"))
+                return "✓", f"Done ({total:,} issues)", "#33dd88"
+            # DataFrames and lists
             if hasattr(data, "__len__"):
                 count = len(data)
-                return "✓", f"Done ({count:,})", "#33dd88"
+                if count == 0:
+                    return "✗", "Empty", "#6b6b8a"
+                # Use proper labels per type
+                labels = {
+                    "gsc_data": "queries",
+                    "ctr_gaps": "gaps",
+                    "cannibalization": "conflicts",
+                    "page_authority": "pages",
+                    "audit_results": "pages",
+                }
+                label = labels.get(state_key, "items")
+                return "✓", f"Done ({count:,} {label})", "#33dd88"
         except Exception:
             pass
         return "✓", "Done", "#33dd88"

@@ -303,6 +303,7 @@ if st.session_state.get("_ecn2_url") and not st.session_state.get("_ecn2_dismiss
 STEPS = [
     ("Dashboard",             "dashboard",    "dashboard_viewed",  "What to do next"),
     ("⚡ Run Pipeline",        "run_pipeline", "_run_pipeline_viewed", "One-click run all steps"),
+    ("🎯 Action Center",       "action_center","_action_center_viewed", "All recommendations + AI generation"),
     ("1. Setup & Connect",    "setup",        "gsc_data",          "Connect GSC + API keys"),
     ("2. Upload Ahrefs",      "ahrefs",       "page_authority",    "Upload backlink data"),
     ("3. CTR Analysis",       "ctr",          "ctr_gaps",          "Find underperformers"),
@@ -419,6 +420,9 @@ if "Dashboard" in selected:
 elif "Run Pipeline" in selected:
     from views import run_pipeline
     run_pipeline.render()
+elif "Action Center" in selected:
+    from views import action_center
+    action_center.render()
 elif "Setup" in selected:
     from views import setup
     setup.render()
