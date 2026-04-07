@@ -443,10 +443,11 @@ def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_do
                 except (ValueError, TypeError):
                     pass
 
-        html_pages = pages_df[
-            (pages_df.get("status_code", pd.Series(dtype=int)).between(200, 299)) |
-            (~pages_df.columns.isin(["status_code"]))
-        ]
+        # Filter to HTML pages with status 200-299, or skip filter if no status_code column
+        if "status_code" in pages_df.columns:
+            html_pages = pages_df[pages_df["status_code"].between(200, 299)]
+        else:
+            html_pages = pages_df
         for _, row in html_pages.iterrows():
             norm = _norm_url(row["url"])
             inlink_count = row.get("unique_inlinks", row.get("inlinks", -1))
