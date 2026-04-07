@@ -583,13 +583,116 @@ def render():
         else:
             st.warning("No inbound links data — this page may have very few internal links pointing to it")
 
-        # Suggestions for which pages SHOULD link
         if link_fix_suggestions:
             st.markdown(f"**Suggested new internal links FROM other pages TO this page:** {len(link_fix_suggestions)}")
             for fix in link_fix_suggestions[:5]:
                 st.markdown(f"- From: `{fix.get('from_url', '')}`  →  Add link with anchor: **{fix.get('suggested_anchor', '')}**")
                 if fix.get("reason"):
                     st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{fix.get('reason', '')}</div>", unsafe_allow_html=True)
+        st.markdown("---")
+
+        # ── Links to REMOVE from this page ──
+        links_to_remove = link_details.get("links_to_remove") or []
+        if links_to_remove:
+            st.markdown(f"#### [REMOVE LINKS] {len(links_to_remove)} links to consider removing")
+            st.markdown(
+                "<p style='color:#9b9bb8; font-size:0.8rem;'>"
+                "These links point to pages outside this topic cluster. "
+                "Remove only if they don't serve user navigation.</p>",
+                unsafe_allow_html=True,
+            )
+            for l in links_to_remove[:5]:
+                st.markdown(f"- `{l.get('url', '')}` (anchor: '{l.get('anchor', '')}')")
+            _approval_button("Remove links", f"{url_hash}_remove")
+            st.markdown("---")
+
+        # ── Cannibalization: keywords competing with other pages ──
+        cannibal_df = st.session_state.get("cannibalization")
+        if cannibal_df is not None and not cannibal_df.empty:
+            page_cannibals = []
+            for _, row in cannibal_df.iterrows():
+                pages_detail = row.get("pages_detail", [])
+                if isinstance(pages_detail, list):
+                    for p in pages_detail:
+                        if normalize_url(p.get("page", "")) == normalize_url(url):
+                            page_cannibals.append({
+                                "query": row["query"],
+                                "severity": row["severity"],
+                                "lost_clicks": row["lost_clicks_estimate"],
+                                "winner": row.get("recommended_winner", ""),
+                                "merge_action": row.get("merge_action", ""),
+                                "page_count": row.get("page_count", 2),
+                            })
+                            break
+            if page_cannibals:
+                st.markdown(f"#### [CANNIBALIZATION] {len(page_cannibals)} keyword conflicts")
+                st.markdown(
+                    "<p style='color:#9b9bb8; font-size:0.8rem;'>"
+                    "This page competes with other pages for these keywords.</p>",
+                    unsafe_allow_html=True,
+                )
+                for c in page_cannibals[:5]:
+                    sev_color = {"severe": "#ff4455", "moderate": "#ffaa33", "mild": "#6b6b8a"}.get(c["severity"], "#6b6b8a")
+                    is_winner = normalize_url(c["winner"]) == normalize_url(url)
+                    winner_label = "✓ This page is WINNER" if is_winner else f"✗ Winner: {c['winner']}"
+                    st.markdown(
+                        f"- **{c['query']}** "
+                        f"<span style='color:{sev_color}; font-weight:600;'>[{c['severity'].upper()}]</span> · "
+                        f"{c['page_count']} pages · {c['lost_clicks']:,} lost clicks · {winner_label}",
+                        unsafe_allow_html=True,
+                    )
+                    if c.get("merge_action"):
+                        st.markdown(f"  <div style='color:#c8b4ff; font-size:0.75rem; margin-left:1rem;'>{c['merge_action'][:200]}</div>", unsafe_allow_html=True)
+                _approval_button("Cannibal", f"{url_hash}_cannibal")
+                st.markdown("---")
+
+        # ── Schema, alt text, crawl issues ──
+        st.markdown("#### [TECHNICAL]")
+        tech_items = []
+
+        # Schema
+        schema_types = audit.get("schema_types", []) or []
+        if not any("breadcrumb" in str(s).lower() for s in schema_types):
+            tech_items.append("Missing BreadcrumbList schema")
+        if page["page_type"] == "category" and not any("itemlist" in str(s).lower() or "collection" in str(s).lower() for s in schema_types):
+            tech_items.append("Missing ItemList/Collection schema (recommended for category pages)")
+
+        # Alt text
+        images_no_alt = audit.get("images_without_alt", 0)
+        if images_no_alt > 0:
+            tech_items.append(f"{images_no_alt} images missing alt text")
+
+        # Crawl issues for this URL
+        crawl_issues = st.session_state.get("sf_crawl_issues", {})
+        if crawl_issues:
+            for issue_type in ["broken_links", "non_indexable", "redirect_chains", "canonical_issues", "near_duplicates"]:
+                items = crawl_issues.get(issue_type, [])
+                for item in items:
+                    if normalize_url(item.get("url", "")) == normalize_url(url):
+                        tech_items.append(f"{issue_type.replace('_', ' ').title()}: {item.get('action', '')[:100]}")
+                        break
+
+        # Authority
+        rd = audit.get("referring_domains", 0)
+        if rd < 5:
+            tech_items.append(f"LOW backlink authority: only {rd} referring domains — this page needs link building")
+        elif rd >= 50:
+            tech_items.append(f"✓ Strong authority: {rd} referring domains")
+
+        # AI quality verdict
+        from utils.ui_helpers import stable_hash as _sh
+        quality = st.session_state.get(f"_quality_{_sh(url)}")
+        if quality:
+            verdict = quality.get("verdict", "")
+            score = quality.get("score", 0)
+            v_color = {"REWRITE": "#ff4455", "IMPROVE": "#ffaa33", "KEEP": "#33dd88"}.get(verdict, "#6b6b8a")
+            tech_items.append(f"<span style='color:{v_color}; font-weight:600;'>AI text quality: {verdict} ({score}/10)</span> — {quality.get('summary', '')[:120]}")
+
+        if tech_items:
+            for item in tech_items:
+                st.markdown(f"- {item}", unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='color:#33dd88;'>No technical issues detected</div>", unsafe_allow_html=True)
         st.markdown("---")
 
         # Final actions
