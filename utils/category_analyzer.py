@@ -59,32 +59,21 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
     }
 
     # ── 1. URL pattern matching ───────────────────────────────
-    product_patterns = ["/products/", "/produkt/", "/product/", "/p/"]
-    category_patterns = ["/kategori/", "/category/", "/collections/", "/c/", "/alla/", "/sexleksaker/", "/bondage", "/apotek", "/sexiga-underklader"]
-    blog_patterns = ["/blog/", "/blogg/", "/artikel/", "/guide/", "/tips/", "/magazin/", "/topplistan/"]
-    faq_patterns = ["/faq/", "/fragor/", "/faqs/", "/vanliga-fragor/"]
-    # "info" = static utility/corporate pages: help desk, contact, jobs, terms,
-    # shipping, privacy, about us, returns, customer service. These should
-    # NOT be treated as blog or category content — they have no SEO value.
-    info_patterns = [
-        "/hjalp/", "/help/", "/support/", "/kundservice", "/customer-service",
-        "/kontakt", "/contact", "/jobb", "/jobs", "/karriar", "/career",
-        "/om-oss", "/about", "/about-us",
-        "/villkor", "/terms", "/kopvillkor",
-        "/integritet", "/privacy", "/personuppgift",
-        "/leverans", "/shipping", "/delivery", "/frakt",
-        "/retur", "/returns", "/angerratt",
-        "/betalning", "/payment",
-        "/cookie", "/cookies",
-        "/nyhetsbrev", "/newsletter",
-        "/gift-card", "/presentkort",
-    ]
+    # All patterns come from site_patterns module which has universal defaults
+    # + per-site overrides via session_state. NO hardcoded Swedish/Mshop terms.
+    from utils.site_patterns import (
+        get_category_patterns, get_product_patterns, get_blog_patterns,
+        get_faq_patterns, get_info_patterns, get_flat_category_keywords,
+        get_local_patterns,
+    )
+    product_patterns = get_product_patterns()
+    category_patterns = get_category_patterns()
+    blog_patterns = get_blog_patterns()
+    faq_patterns = get_faq_patterns()
+    info_patterns = get_info_patterns()
 
-    # Magento flat URL category patterns (segment-based, no prefix)
-    # e.g. /sexleksaker-for-man, /vuxenleksaker-for-par, /goteborg
-    flat_category_keywords = ["sexleksaker", "vuxenleksaker", "leksaker", "bondage", "underklader",
-                              "glidmedel", "kondomer", "apotek", "rea", "ullared", "goteborg",
-                              "stockholm", "malmo", "vara-butiker", "private-collection"]
+    # Flat URL category keywords — per-site configurable. Empty default.
+    flat_category_keywords = get_flat_category_keywords()
 
     if any(p in url_lower for p in info_patterns):
         result["page_type"] = "info"
@@ -184,8 +173,8 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             result["signals"].append("URL is static info page — forced to info")
 
         # Local pages (store locator, individual locations) → category
-        local_patterns = ["/butik", "/vara-butiker", "/store-locator", "/butikker"]
-        if any(p in url_lower for p in local_patterns):
+        local_patterns = get_local_patterns()
+        if local_patterns and any(p in url_lower for p in local_patterns):
             result["page_type"] = "category"  # Treat as category for SEO purposes
             result["signals"].append("Local/store page → category")
 

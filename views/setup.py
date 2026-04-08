@@ -250,6 +250,75 @@ def render():
         for name, is_set in env_list:
             status_row(name, is_set, "Set" if is_set else "Not set")
 
+        # Site patterns configuration
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### Site URL Patterns")
+        st.caption("Configure URL patterns used for page type classification. Defaults work for most English-language sites. Add your language-specific terms as comma-separated lists.")
+
+        from utils.site_patterns import PRESETS
+        current_patterns = st.session_state.get("site_patterns") or {}
+
+        preset_choice = st.selectbox(
+            "Load preset",
+            ["(custom / keep current)"] + list(PRESETS.keys()),
+            key="sp_preset",
+        )
+        if preset_choice != "(custom / keep current)":
+            if st.button(f"Apply preset: {preset_choice}", key="sp_apply_preset"):
+                st.session_state["site_patterns"] = dict(PRESETS[preset_choice])
+                from utils.persistence import save
+                save("site_patterns") if "site_patterns" in st.session_state else None
+                st.success(f"Preset '{preset_choice}' applied. Re-run bulk audit or Re-classify to apply.")
+                st.rerun()
+
+        with st.expander("Edit patterns manually", expanded=False):
+            def _list_input(label, key, help_text=""):
+                current = current_patterns.get(key, [])
+                text = st.text_area(
+                    label,
+                    value=", ".join(current) if isinstance(current, list) else "",
+                    help=help_text,
+                    key=f"sp_{key}",
+                    height=68,
+                )
+                return [x.strip() for x in text.split(",") if x.strip()]
+
+            new_patterns = {}
+            new_patterns["category_patterns_extra"] = _list_input(
+                "Extra category path patterns",
+                "category_patterns_extra",
+                "E.g. /shop-now/, /store/, /sortiment/",
+            )
+            new_patterns["info_patterns_extra"] = _list_input(
+                "Extra info/corporate page patterns",
+                "info_patterns_extra",
+                "Static pages in your language. E.g. /hjalp, /kontakt, /villkor (Swedish).",
+            )
+            new_patterns["flat_category_keywords"] = _list_input(
+                "Flat URL category keywords",
+                "flat_category_keywords",
+                "For sites using flat URLs without /category/ prefix. E.g. sexleksaker, elektronik, mode.",
+            )
+            new_patterns["local_patterns"] = _list_input(
+                "Local/store location patterns",
+                "local_patterns",
+                "City or store paths to treat as location pages. E.g. /stockholm, /copenhagen, /butik.",
+            )
+            new_patterns["faceted_params_extra"] = _list_input(
+                "Extra faceted URL query parameters",
+                "faceted_params_extra",
+                "Query params to flag as facets (defaults already include SID, dir, limit, mode, order, p, sort, view).",
+            )
+
+            if st.button("Save site patterns", key="sp_save"):
+                # Only keep non-empty lists
+                cleaned = {k: v for k, v in new_patterns.items() if v}
+                st.session_state["site_patterns"] = cleaned
+                from utils.persistence import save
+                save("site_patterns")
+                st.success("Site patterns saved. Re-run bulk audit or Re-classify to apply.")
+                st.rerun()
+
         # Storage debug info
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### Disk Storage")

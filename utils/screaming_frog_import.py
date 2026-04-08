@@ -565,9 +565,11 @@ def analyze_crawl_data(pages_df: pd.DataFrame, inlinks_df: pd.DataFrame, site_do
                     "action": f"Canonical points to {canon} — this page's signals go to the canonical. If this page should rank independently, fix the canonical tag.",
                 })
 
-    # ── Faceted/parameter URLs (Magento 1.9 specific) ────────────
+    # ── Faceted/parameter URLs (config-driven, works for any site) ────
     issues["faceted_urls"] = []
-    param_patterns = ["?", "SID=", "dir=", "limit=", "mode=", "order=", "p=", "product_list"]
+    from utils.site_patterns import get_faceted_query_params
+    _params = get_faceted_query_params()
+    param_patterns = ["?"] + [f"{p}=" for p in _params] + ["product_list"]
     raw_url_col = "URL Encoded Address" if "URL Encoded Address" in pages_df.columns else "url"
     for _, row in pages_df.iterrows():
         raw_url = str(row.get(raw_url_col, ""))

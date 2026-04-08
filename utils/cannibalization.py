@@ -249,7 +249,9 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                 return "homepage"
             if "/blog/" in path or "/guide/" in path or "/artikel/" in path or "/tips/" in path:
                 return "informational"
-            if any(loc in path for loc in ["/goteborg", "/stockholm", "/malmo", "/ullared", "/butik", "/vara-butiker"]):
+            from utils.site_patterns import get_local_patterns
+            _local = get_local_patterns()
+            if _local and any(loc in path for loc in _local):
                 return "local"
             if "/topplistan/" in path or "/topp-" in path or "/bast-" in path:
                 return "listicle"

@@ -21,6 +21,7 @@ PERSIST_KEYS = {
     "gsc_site": "setting",
     "site_context": "setting",
     "content_language": "setting",
+    "site_patterns": "json",  # per-site URL pattern overrides
     # Analysis results
     "ctr_gaps": "dataframe",
     "cannibalization": "dataframe_json",  # DataFrame with nested list cols → records JSON
