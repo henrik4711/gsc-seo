@@ -23,7 +23,7 @@ PERSIST_KEYS = {
     "content_language": "setting",
     # Analysis results
     "ctr_gaps": "dataframe",
-    "cannibalization": "json",
+    "cannibalization": "dataframe_json",  # DataFrame with nested list cols → records JSON
     "topic_clusters": "json",
     "content_roadmap": "json",
     "content_gaps": "json",
@@ -189,7 +189,12 @@ def _unpack_bundled_data():
 
 
 def _file_path(key: str, data_type: str) -> str:
-    ext = "csv" if data_type == "dataframe" else ("txt" if data_type == "setting" else "json")
+    if data_type == "dataframe":
+        ext = "csv"
+    elif data_type == "setting":
+        ext = "txt"
+    else:  # "json" or "dataframe_json"
+        ext = "json"
     return os.path.join(DATA_DIR, f"{key}.{ext}")
 
 
@@ -230,6 +235,14 @@ def _save_persist_key(key: str, data):
             f.write(str(data))
     elif data_type == "dataframe" and isinstance(data, pd.DataFrame):
         data.to_csv(path, index=False)
+    elif data_type == "dataframe_json":
+        # DataFrame with nested list/dict columns — preserve them via records JSON
+        if isinstance(data, pd.DataFrame):
+            records = data.to_dict("records")
+        else:
+            records = data
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=1, default=_json_convert)
     elif data_type == "json":
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1, default=_json_convert)
@@ -314,6 +327,15 @@ def load_all():
                     df = _normalize_df_urls(df)
                     st.session_state[key] = df
                     loaded.append(key)
+            elif data_type == "dataframe_json":
+                with open(path, "r", encoding="utf-8") as f:
+                    records = json.load(f)
+                if records:
+                    df = pd.DataFrame(records)
+                    if not df.empty:
+                        df = _normalize_df_urls(df)
+                        st.session_state[key] = df
+                        loaded.append(key)
             elif data_type == "json":
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
