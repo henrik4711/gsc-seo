@@ -322,13 +322,14 @@ def render():
     else:
         st.info("💡 Run **Generate Ideal Structure** in Site Map to get AI-recommended merges, deletes, and new pages.")
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🔀 Merge",
         "➕ Create",
         "↗ Redirect",
         "🚫 Noindex",
         "🗑 Delete",
         "📝 Blogs review",
+        "🧩 Topic Gaps",
     ])
 
     # ── TAB 1: MERGE ─────────────────────────────────────────
@@ -476,3 +477,39 @@ def render():
                 st.markdown("2. **Delete** — if topic is irrelevant or covered elsewhere")
                 st.markdown("3. **Merge** — combine with another article on same topic")
                 st.markdown("4. **Redirect** — if better content exists, 301 to that page")
+
+    # ── TAB 7: TOPIC GAPS ────────────────────────────────────
+    with tab7:
+        gaps = st.session_state.get("content_gaps", []) or []
+        st.markdown(f"### {len(gaps)} topic clusters with content gaps")
+        st.markdown(
+            "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+            "Topics where the site underperforms: poor CTR despite impressions, "
+            "topic split across too many pages, thin coverage, or missing backlinks. "
+            "Source: topic cluster analysis (pipeline step 6).</p>",
+            unsafe_allow_html=True,
+        )
+        if not gaps:
+            st.info("No gaps found — run **Build Topic Clusters** in Run Pipeline first.")
+        else:
+            high = [g for g in gaps if isinstance(g, dict) and g.get("priority") == "high"]
+            medium = [g for g in gaps if isinstance(g, dict) and g.get("priority") == "medium"]
+
+            if high:
+                st.markdown("#### 🔴 High priority")
+                for g in high[:30]:
+                    with st.expander(f"{g.get('topic','?')} · {g.get('impressions',0):,} impressions · {g.get('queries',0)} queries"):
+                        for issue in g.get("issues", []):
+                            st.markdown(f"- {issue}")
+                        st.markdown(
+                            "<div style='color:#9b9bb8; font-size:0.75rem; margin-top:0.5rem;'>"
+                            "Action: review in Topic Clusters view for consolidation, new content, or link building.</div>",
+                            unsafe_allow_html=True,
+                        )
+
+            if medium:
+                st.markdown("#### 🟡 Medium priority")
+                for g in medium[:30]:
+                    with st.expander(f"{g.get('topic','?')} · {g.get('impressions',0):,} impressions · {g.get('queries',0)} queries"):
+                        for issue in g.get("issues", []):
+                            st.markdown(f"- {issue}")

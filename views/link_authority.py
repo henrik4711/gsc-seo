@@ -218,7 +218,6 @@ def _render_upload():
                 enriched = merge_authority_with_gsc(
                     st.session_state["gsc_data"], authority
                 )
-                st.session_state["gsc_data_enriched"] = enriched
                 st.session_state["gsc_data"] = enriched
 
             st.success(f"Authority calculated for {len(authority)} pages")

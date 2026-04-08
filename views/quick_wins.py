@@ -359,6 +359,33 @@ def _build_total_plan(page, plan_data, text_data, intro_data):
             "type": "blogs",
         })
 
+    # Priority 7b: Topic-level gaps (from content_gaps analysis)
+    content_gaps = st.session_state.get("content_gaps", []) or []
+    topic_clusters_data = st.session_state.get("topic_clusters", {}) or {}
+    page_topics_map = topic_clusters_data.get("page_topics", {}) if isinstance(topic_clusters_data, dict) else {}
+    # Find topics this page belongs to (normalize URLs for matching)
+    page_topic_names = set()
+    norm_url = normalize_url(url)
+    for p_url, topics in page_topics_map.items():
+        if normalize_url(p_url) == norm_url and isinstance(topics, list):
+            for t in topics:
+                if isinstance(t, dict) and t.get("topic"):
+                    page_topic_names.add(t["topic"])
+    page_gaps = [g for g in content_gaps
+                 if isinstance(g, dict) and g.get("topic") in page_topic_names and g.get("issues")]
+    if page_gaps:
+        all_issues = []
+        for g in page_gaps:
+            for iss in g.get("issues", []):
+                all_issues.append(f"[{g.get('topic','?')}] {iss}")
+        actions.append({
+            "priority": 7,
+            "title": f"Topic gaps: {len(all_issues)} issue(s) in clusters this page belongs to",
+            "detail": " · ".join(all_issues[:3]) + (" …" if len(all_issues) > 3 else ""),
+            "time": 15,
+            "type": "topic_gaps",
+        })
+
     # Priority 8: Technical fixes
     tech_items = []
     schema_types = audit.get("schema_types", []) or []
