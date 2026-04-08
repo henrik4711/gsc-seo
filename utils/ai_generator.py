@@ -1606,8 +1606,14 @@ CRITICAL RULES:
 4. INTERNAL LINKS — ADD new links, REVIEW flagged links:
    - Check EXISTING LINKS: do NOT recommend adding links already present
    - Check LINKS TO REVIEW: only recommend removing a link if it clearly damages topical focus AND has no user navigation value. Most cross-cluster links are FINE — users need to navigate between categories. Be VERY conservative with removal.
+   - **LINK TARGET VALIDATION**: When choosing a target URL for an anchor text, the anchor must match the TARGET PAGE'S TOPIC, not a brand name.
+     * If anchor is "penispumpar" → target MUST be a category page containing "penispump" in URL (e.g. /sexleksaker/sexleksaker-for-honom/penispumpar), NOT a brand page like /alla/bathmate
+     * If anchor is "vibratorer" → target MUST be /sexleksaker/vibratorer, NOT /alla/lelo (which is a brand)
+     * Brand pages (/alla/BRAND) should only be linked with the brand name as anchor text (e.g. "Bathmate" → /alla/bathmate is OK)
+     * Generic category anchors must link to generic category pages
    - PREFER CATEGORY pages over product pages for new links
    - Use EXACT URLs from the site URL list. Do NOT invent URLs.
+   - Before suggesting a link, ask: "If user clicks this anchor, will they land on a page about exactly that topic?" If the target is a brand page but anchor is a category term, the answer is NO — choose a different target.
 5. META TITLE: MUST be under 60 chars (max 65). Primary keyword first. If current title is over 60 chars, you MUST generate a new optimized title and set meta_changed=true. Never leave the title field empty.
 6. META DESCRIPTION: MUST be 140-160 chars (max 165). Include primary keyword + CTA. If current description is over 165 chars or under 120 chars, you MUST generate a new one and set meta_changed=true. Never leave the description field empty.
 7. ALWAYS populate meta_title AND meta_description fields in the response, even if no change is needed (use current values). If ANY change is needed, set meta_changed=true.

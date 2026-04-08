@@ -537,11 +537,61 @@ def render():
                 "These articles should be created and linked TO this page to support topical authority.</p>",
                 unsafe_allow_html=True,
             )
-            for art in new_articles[:5]:
-                st.markdown(f"- **{art.get('suggested_title', '')}**")
-                st.markdown(f"  <div style='color:#9b9bb8; font-size:0.85rem; margin-left:1rem;'>{art.get('why', '')[:200]}</div>", unsafe_allow_html=True)
+            for art_idx, art in enumerate(new_articles[:5]):
+                art_title = art.get('suggested_title', '')
+                art_hash = stable_hash(f"{url}_{art_title}")
+                art_cache_key = f"_gen_article_{art_hash}"
+
+                st.markdown(f"**{art_idx+1}. {art_title}**")
+                st.markdown(f"<div style='color:#9b9bb8; font-size:0.85rem; margin-left:1rem;'>{art.get('why', '')[:200]}</div>", unsafe_allow_html=True)
                 if art.get("target_keywords"):
-                    st.markdown(f"  <div style='color:#c8b4ff; font-size:0.75rem; margin-left:1rem;'>Keywords: {', '.join(art.get('target_keywords', [])[:5])}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='color:#c8b4ff; font-size:0.75rem; margin-left:1rem;'>Keywords: {', '.join(art.get('target_keywords', [])[:5])}</div>", unsafe_allow_html=True)
+                if art.get("link_from"):
+                    st.markdown(f"<div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>Link from: {art.get('link_from', '')}</div>", unsafe_allow_html=True)
+
+                if art_cache_key in st.session_state:
+                    article_data = st.session_state[art_cache_key]
+                    article_html = article_data.get("html", "") if isinstance(article_data, dict) else ""
+                    wc = article_data.get("word_count", 0) if isinstance(article_data, dict) else 0
+                    st.markdown(f"<div style='color:#33dd88; font-size:0.75rem; margin-left:1rem;'>✓ Generated: {wc} words</div>", unsafe_allow_html=True)
+                    with st.expander(f"View article {art_idx+1}", expanded=False):
+                        st.code(article_html[:3000] + ("..." if len(article_html) > 3000 else ""), language="html")
+                    st.download_button(
+                        "Download article HTML",
+                        data=article_html,
+                        file_name=f"blog_{art_hash}.html",
+                        mime="text/html",
+                        key=f"dl_art_{art_hash}",
+                    )
+                else:
+                    if st.button(f"Generate full article", key=f"gen_art_{art_hash}"):
+                        try:
+                            from utils.ai_generator import generate_full_article_html
+                            client = get_client(get_anthropic_key())
+                            with st.spinner(f"Generating article: {art_title}..."):
+                                audit_results_list = st.session_state.get("audit_results", [])
+                                raw_urls_s = set(r["url"] for r in audit_results_list if r.get("url"))
+                                all_site_urls_local = sorted(raw_urls_s)
+                                article_result = generate_full_article_html(
+                                    client,
+                                    title=art_title,
+                                    keywords=art.get("target_keywords", []),
+                                    content_type=art.get("type", "guide"),
+                                    products=None,
+                                    link_from_url=art.get("link_from", url),
+                                    tone_sample="",
+                                    site_context=st.session_state.get("site_context", ""),
+                                    language=st.session_state.get("content_language", "Swedish"),
+                                    all_site_urls=all_site_urls_local,
+                                    cluster_context=f"This article supports {url} as part of its topic cluster",
+                                )
+                            st.session_state[art_cache_key] = article_result
+                            from utils.persistence import save_ai_cache
+                            save_ai_cache()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Article generation failed: {e}")
+                st.markdown("")
             _approval_button("Articles", f"{url_hash}_articles")
             st.markdown("---")
         else:
