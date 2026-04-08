@@ -763,6 +763,37 @@ def render():
     url = page["url"]
     url_hash = stable_hash(url)
 
+    # Check if this page is scheduled for merge/delete in ideal structure
+    ideal = st.session_state.get("_ideal_structure", {})
+    merge_target = None
+    delete_reason = None
+    if isinstance(ideal, dict):
+        for m in ideal.get("merge", []) or []:
+            if isinstance(m, dict):
+                from_urls = [normalize_url(u) for u in m.get("from", [])]
+                if normalize_url(url) in from_urls:
+                    merge_target = {"to": m.get("to", ""), "why": m.get("why", "")}
+                    break
+        for d in ideal.get("delete", []) or []:
+            if isinstance(d, dict) and normalize_url(d.get("url", "")) == normalize_url(url):
+                delete_reason = d.get("why", "")
+                break
+
+    if merge_target:
+        st.error(
+            f"⚠ **AI Ideal Structure recommends MERGING this page** into `{merge_target['to']}`\n\n"
+            f"**Reason:** {merge_target['why']}\n\n"
+            f"**Action:** Copy unique content to target, set up 301 redirect, update internal links. "
+            f"Do NOT invest in improving this page — it should be removed."
+        )
+
+    if delete_reason:
+        st.error(
+            f"⚠ **AI Ideal Structure recommends DELETING this page**\n\n"
+            f"**Reason:** {delete_reason}\n\n"
+            f"**Action:** Delete the page, set up 301 redirect to a related page if it has backlinks."
+        )
+
     # Header card
     border = "#ff4455" if page["lost_clicks"] > 1000 else "#ffaa33" if page["lost_clicks"] > 200 else "#5533ff"
     st.markdown(

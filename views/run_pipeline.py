@@ -263,6 +263,163 @@ def _run_quality_check():
     save_ai_cache()
 
 
+def _run_ideal_structure():
+    """Generate AI ideal site structure: clusters, merges, deletes, creates."""
+    if not has_anthropic_key():
+        raise ValueError("Anthropic API key missing")
+    if "_site_validation" not in st.session_state:
+        raise ValueError("Run site validation first (step 9)")
+    if "topic_clusters" not in st.session_state:
+        raise ValueError("Run topic clusters first")
+
+    import json
+    from utils.ai_generator import get_client, _parse_ai_json
+
+    client = get_client(get_anthropic_key())
+    site_ctx = st.session_state.get("site_context", "")
+    site_issues = st.session_state.get("_site_validation", {})
+    topic_clusters = st.session_state.get("topic_clusters", {})
+    gsc_data = st.session_state.get("gsc_data")
+    audit_results = st.session_state.get("audit_results", [])
+
+    # Prepare keyword data
+    kw_lines = []
+    if gsc_data is not None and hasattr(gsc_data, "groupby"):
+        kw_summary = gsc_data.groupby("query").agg(
+            impressions=("impressions", "sum"),
+            clicks=("clicks", "sum"),
+        ).sort_values("impressions", ascending=False).head(80)
+        for kw, row in kw_summary.iterrows():
+            kw_lines.append(f"{kw}: {int(row['impressions'])} impr, {int(row['clicks'])} cl")
+    kw_text = chr(10).join(kw_lines)
+
+    current_clusters_text = chr(10).join(
+        f"- {c.get('topic', '')}: {c.get('query_count', 0)} queries, {c.get('total_impressions', 0)} impr"
+        for c in topic_clusters.get("clusters", [])[:20]
+    )
+    issues_text = chr(10).join(site_issues.get("critical_issues", [])[:5])
+
+    # Call 1: Cluster design
+    msg1 = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4000,
+        messages=[{"role": "user", "content": f"""Design 20-40 topic clusters for this e-commerce site.
+Site: {site_ctx}
+Problems: {issues_text}
+Top keywords:
+{kw_text}
+Current clusters: {current_clusters_text}
+For each cluster: name, intent (commercial/informational), hub URL, hub keyword, 2-5 spoke URLs.
+Output JSON: {{"clusters":[{{"name":"...","intent":"...","hub":"/url","hub_kw":"...","spokes":["/url1","/url2"]}}]}}"""}],
+    )
+    clusters_result = _parse_ai_json(msg1)
+
+    # Call 2: Merge/delete/create
+    cluster_names = [c.get("name", "") for c in clusters_result.get("clusters", [])]
+    msg2 = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": f"""Given these topic clusters for {site_ctx}:
+{chr(10).join(f'- {n}' for n in cluster_names)}
+The site has {len(audit_results)} pages. Problems: {issues_text}
+What pages should be:
+1. MERGED (multiple pages competing for same keyword)
+2. DELETED (no SEO value)
+3. CREATED (missing content)
+Output JSON: {{"merge":[{{"from":["/url1","/url2"],"to":"/url","why":"reason"}}],"delete":[{{"url":"/url","why":"reason"}}],"create":[{{"url":"/url","type":"blog","kw":"keyword","why":"reason"}}]}}"""}],
+    )
+    changes_result = _parse_ai_json(msg2)
+
+    # Call 3: Summary
+    msg3 = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": f"""Site: {site_ctx}
+Current score: {site_issues.get('overall_health_score', '?')}/100
+Proposed: {len(clusters_result.get('clusters', []))} clusters, {len(changes_result.get('merge', []))} merges, {len(changes_result.get('delete', []))} deletes, {len(changes_result.get('create', []))} new pages.
+Top 10 keywords and where they should live:
+{chr(10).join(kw_lines[:10])}
+Output JSON: {{"keyword_assignments":[{{"keyword":"kw","ideal_page":"/url","action":"keep|move|create"}}],"estimated_new_score":0,"summary":"3 sentences about ideal vs current"}}"""}],
+    )
+    summary_result = _parse_ai_json(msg3)
+
+    combined = {
+        "clusters": clusters_result.get("clusters", []),
+        "merge": changes_result.get("merge", []),
+        "delete": changes_result.get("delete", []),
+        "create": changes_result.get("create", []),
+        "keyword_assignments": summary_result.get("keyword_assignments", []),
+        "estimated_new_score": summary_result.get("estimated_new_score", 0),
+        "summary": summary_result.get("summary", ""),
+    }
+    st.session_state["_ideal_structure"] = combined
+    from utils.persistence import _save_ai_key, _volume_available
+    if _volume_available():
+        _save_ai_key("_ideal_structure", combined)
+
+
+def _run_gap_analysis():
+    """Generate migration plan from current to ideal structure."""
+    if not has_anthropic_key():
+        raise ValueError("Anthropic API key missing")
+    if "_ideal_structure" not in st.session_state:
+        raise ValueError("Run ideal structure first (step 10)")
+    if "_site_validation" not in st.session_state:
+        raise ValueError("Run site validation first")
+
+    import json
+    from utils.ai_generator import get_client, _parse_ai_json
+
+    client = get_client(get_anthropic_key())
+    site_val = st.session_state.get("_site_validation", {})
+    ideal = st.session_state.get("_ideal_structure", {})
+    audit_results = st.session_state.get("audit_results", [])
+
+    prompt = f"""Create a prioritized migration plan from current to ideal site structure.
+
+## CURRENT
+- Pages: {len(audit_results)}
+- Health score: {site_val.get('overall_health_score', '?')}/100
+- Critical issues: {'; '.join(site_val.get('critical_issues', [])[:5])}
+
+## IDEAL
+- Clusters: {len(ideal.get('clusters', []))}
+- Pages to merge: {len(ideal.get('merge', []))}
+- Pages to delete: {len(ideal.get('delete', []))}
+- Pages to create: {len(ideal.get('create', []))}
+- Estimated new score: {ideal.get('estimated_new_score', '?')}/100
+
+## TASK
+Create a 4-phase migration plan. Phase 1 = quick wins, Phase 4 = long-term.
+
+Output JSON:
+{{
+  "phases": [
+    {{
+      "phase": 1,
+      "name": "Quick wins",
+      "duration_weeks": 1,
+      "actions": ["action 1", "action 2"],
+      "risk": "low/medium/high"
+    }}
+  ],
+  "total_weeks": 0,
+  "risks": ["risk 1", "risk 2"],
+  "success_metrics": ["metric 1", "metric 2"]
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    result = _parse_ai_json(message)
+    st.session_state["_gap_analysis"] = result
+    from utils.persistence import _save_ai_key, _volume_available
+    if _volume_available():
+        _save_ai_key("_gap_analysis", result)
+
+
 def _run_site_validation():
     """Run AI site structure validation."""
     if not has_anthropic_key():
@@ -488,6 +645,65 @@ def render():
                 st.error(f"Error: {e}")
                 import traceback
                 st.code(traceback.format_exc())
+    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
+
+    # ── Step 10: Ideal Structure ────────────────────────────
+    icon10, status10, color10 = _step_status("_ideal_structure")
+    ideal_data = st.session_state.get("_ideal_structure", {})
+    if isinstance(ideal_data, dict) and ideal_data.get("clusters"):
+        n_merge = len(ideal_data.get("merge", []))
+        n_delete = len(ideal_data.get("delete", []))
+        n_create = len(ideal_data.get("create", []))
+        status10 = f"Done ({len(ideal_data.get('clusters', []))} clusters, {n_merge} merges, {n_delete} deletes, {n_create} creates)"
+        color10 = "#33dd88"
+        icon10 = "✓"
+    col1, col2, col3 = st.columns([1, 6, 2])
+    with col1:
+        st.markdown(f"<div style='font-size:1.5rem; color:{color10}; text-align:center; padding-top:0.5rem;'>{icon10}</div>", unsafe_allow_html=True)
+    with col2:
+        st.markdown(
+            f"<div style='font-weight:600; color:#e8e8f0;'>10. Generate Ideal Structure</div>"
+            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI designs optimal site structure: new clusters, merges, deletes, new pages needed (3 AI calls)</div>"
+            f"<div style='font-size:0.7rem; color:{color10}; margin-top:0.2rem;'>{status10}</div>",
+            unsafe_allow_html=True,
+        )
+    with col3:
+        if st.button("Run", key="rp_ideal", use_container_width=True):
+            try:
+                with st.spinner("AI designing ideal structure (3 calls, ~90 sec)..."):
+                    _run_ideal_structure()
+                st.success("Ideal structure generated")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
+
+    # ── Step 11: Gap Analysis ────────────────────────────────
+    icon11, status11, color11 = _step_status("_gap_analysis")
+    gap_data = st.session_state.get("_gap_analysis", {})
+    if isinstance(gap_data, dict) and gap_data.get("phases"):
+        status11 = f"Done ({len(gap_data.get('phases', []))} phases, {gap_data.get('total_weeks', 0)} weeks total)"
+        color11 = "#33dd88"
+        icon11 = "✓"
+    col1, col2, col3 = st.columns([1, 6, 2])
+    with col1:
+        st.markdown(f"<div style='font-size:1.5rem; color:{color11}; text-align:center; padding-top:0.5rem;'>{icon11}</div>", unsafe_allow_html=True)
+    with col2:
+        st.markdown(
+            f"<div style='font-weight:600; color:#e8e8f0;'>11. Gap Analysis (Migration Plan)</div>"
+            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI creates 4-phase plan to go from current to ideal structure</div>"
+            f"<div style='font-size:0.7rem; color:{color11}; margin-top:0.2rem;'>{status11}</div>",
+            unsafe_allow_html=True,
+        )
+    with col3:
+        if st.button("Run", key="rp_gap", use_container_width=True):
+            try:
+                with st.spinner("AI creating migration plan..."):
+                    _run_gap_analysis()
+                st.success("Gap analysis done")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
     st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
 
     st.markdown("---")
