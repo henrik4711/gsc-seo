@@ -1527,6 +1527,20 @@ def generate_page_implementation_plan(
     if quality:
         quality_info = f"\nAI content quality verdict: {quality.get('verdict', '?')} ({quality.get('score', '?')}/10) — {quality.get('summary', '')}"
 
+    # Site-level validation context (informs per-page recommendations)
+    site_validation = st.session_state.get("_site_validation")
+    site_context_info = ""
+    if isinstance(site_validation, dict):
+        health = site_validation.get("overall_health_score", 0)
+        critical = site_validation.get("critical_issues", [])[:3]
+        structural = site_validation.get("structural_problems", [])[:3]
+        site_context_info = f"\n\n## SITE-LEVEL CONTEXT (informs per-page recommendations)\nSite health score: {health}/100\n"
+        if critical:
+            site_context_info += f"Critical site issues: {'; '.join(critical)}\n"
+        if structural:
+            site_context_info += f"Structural problems: {'; '.join(structural)}\n"
+        site_context_info += "When recommending changes for this page, respect these site-level issues — don't suggest fixes that conflict with them."
+
     # Data quality warnings (from scraper validation)
     data_warnings = page_data.get("_data_warnings", [])
     data_warning_section = ""
@@ -1574,6 +1588,7 @@ Total backlinks: {backlinks}
 Authority score: {authority_score}{inbound_info}
 Site context: {site_context}
 Language: {language}
+{site_context_info}
 
 ## TOPIC CLUSTER CONTEXT (this page's role in the site's topic structure)
 {_format_cluster_context(page_data, topic_clusters)}

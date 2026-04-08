@@ -658,6 +658,47 @@ def render():
         st.warning("No audit data. Go to **⚡ Run Pipeline** and run all steps first.")
         return
 
+    # ── REQUIRED: Site validation before per-page work ───────
+    site_validation = st.session_state.get("_site_validation")
+    if not site_validation or not isinstance(site_validation, dict):
+        st.error(
+            "⚠ **Site structure validation NOT yet run.** "
+            "You should validate the OVERALL site structure before working on individual pages — "
+            "otherwise link recommendations and cleanup may be based on flawed assumptions."
+        )
+        if st.button("Go to Run Pipeline → Step 9: Site Validation", type="primary"):
+            st.session_state["selected_page"] = "⚡ Run Pipeline"
+            st.rerun()
+        st.warning("You can still continue below, but recommendations will be less accurate.")
+        st.markdown("---")
+    else:
+        # Show site health summary
+        health_score = site_validation.get("overall_health_score", 0)
+        summary = site_validation.get("summary", "")
+        critical_issues = site_validation.get("critical_issues", [])
+        priority_actions = site_validation.get("priority_actions", [])
+
+        score_color = "#33dd88" if health_score >= 70 else "#ffaa33" if health_score >= 40 else "#ff4455"
+
+        with st.expander(f"🏗 Site Architecture — Health {health_score}/100", expanded=(health_score < 50)):
+            st.markdown(
+                f"<div style='background:#0d0d15; border-left:4px solid {score_color}; padding:0.8rem; border-radius:0 6px 6px 0; margin-bottom:1rem;'>"
+                f"<div style='font-size:0.85rem; color:#c8b4ff;'>{summary}</div></div>",
+                unsafe_allow_html=True,
+            )
+            if critical_issues:
+                st.markdown("**Critical site-level issues:**")
+                for issue in critical_issues[:5]:
+                    st.markdown(f"- {issue}")
+            if priority_actions:
+                st.markdown("**Site-wide priority actions:**")
+                for pa in priority_actions[:5]:
+                    if isinstance(pa, dict):
+                        st.markdown(f"- **[{pa.get('impact', '?').upper()}]** {pa.get('action', '')} ({pa.get('pages_affected', 0)} pages affected)")
+                    else:
+                        st.markdown(f"- {pa}")
+            st.info("These site-wide issues should be addressed BEFORE or ALONGSIDE per-page work. Per-page recommendations below are informed by this context.")
+
     audit_results = st.session_state["audit_results"]
     pages = _get_top_pages(audit_results, top_n=20)
 
