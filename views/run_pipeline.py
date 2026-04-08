@@ -358,6 +358,103 @@ Output JSON: {{"keyword_assignments":[{{"keyword":"kw","ideal_page":"/url","acti
         _save_ai_key("_ideal_structure", combined)
 
 
+def _run_plan_validation():
+    """AI reviews all generated implementation plans against site issues.
+    Checks coverage, conflicts, priority order, missing actions."""
+    if not has_anthropic_key():
+        raise ValueError("Anthropic API key missing")
+    if "_site_validation" not in st.session_state:
+        raise ValueError("Run site validation first (step 9)")
+
+    import json
+    from utils.ai_generator import get_client, _parse_ai_json
+
+    # Collect all generated implementation plans
+    plans_data = {}
+    for key, val in st.session_state.items():
+        if key.startswith("_ai_plan_") and isinstance(val, dict) and not val.get("error"):
+            url = val.get("url") or key
+            plans_data[url] = val
+
+    if len(plans_data) == 0:
+        raise ValueError("No implementation plans generated yet. Generate plans in Quick Wins first.")
+
+    client = get_client(get_anthropic_key())
+    site_issues = st.session_state.get("_site_validation", {})
+    ideal = st.session_state.get("_ideal_structure", {})
+
+    # Summarize all plans
+    plan_summaries = []
+    for url, plan in list(plans_data.items())[:20]:
+        steps_summary = []
+        for s in plan.get("steps", []):
+            steps_summary.append(f"- [{s.get('type','')}] {s.get('action','')}")
+        new_content = [nc.get("suggested_title", "") for nc in plan.get("new_content_suggestions", []) or []]
+        rewrites = [rw.get("section", "") for rw in plan.get("text_rewrites", []) or []]
+        plan_summaries.append({
+            "url": url,
+            "primary_keyword": plan.get("primary_keyword", ""),
+            "steps": steps_summary[:6],
+            "new_content": new_content,
+            "rewrites": rewrites,
+            "meta_changed": plan.get("meta_changed", False),
+        })
+
+    prompt = f"""You are a senior SEO strategist doing a final review.
+
+## SITE ISSUES FOUND
+Health score: {site_issues.get('overall_health_score', '?')}/100
+Critical issues: {json.dumps(site_issues.get('critical_issues', []))}
+Structural problems: {json.dumps(site_issues.get('structural_problems', []))}
+Priority actions recommended: {json.dumps([a.get('action','') if isinstance(a, dict) else str(a) for a in site_issues.get('priority_actions', [])])}
+
+## IDEAL STRUCTURE (if available)
+Pages to merge: {len(ideal.get('merge', [])) if isinstance(ideal, dict) else 0}
+Pages to delete: {len(ideal.get('delete', [])) if isinstance(ideal, dict) else 0}
+Pages to create: {len(ideal.get('create', [])) if isinstance(ideal, dict) else 0}
+
+## IMPLEMENTATION PLANS GENERATED ({len(plan_summaries)} pages)
+{json.dumps(plan_summaries, ensure_ascii=False, indent=1)}
+
+## YOUR TASK
+Cross-check the implementation plans against site issues AND ideal structure. Answer:
+
+1. **Coverage**: Do the plans address ALL critical site issues? Which are NOT covered?
+2. **Conflicts**: Do any plans conflict with each other?
+3. **Priority**: Is the order correct?
+4. **Missing**: What actions are needed that NO plan includes?
+5. **Risks**: Will any recommended change potentially hurt rankings?
+6. **Sequence**: What is the correct order to implement these changes?
+7. **Ideal structure conflicts**: Do any plans try to improve pages scheduled for merge/delete?
+
+## OUTPUT (JSON):
+{{
+    "plans_cover_issues": true,
+    "coverage_score": 0,
+    "uncovered_issues": ["critical issue not addressed by any plan"],
+    "conflicts": [{{"plan_a": "url", "plan_b": "url", "conflict": "description"}}],
+    "priority_corrections": ["plan X should be done before plan Y because..."],
+    "missing_actions": ["action needed but not in any plan"],
+    "risks": ["potential risk from recommended changes"],
+    "recommended_sequence": [
+        {{"order": 1, "action": "what to do first", "urls": ["url1"], "reason": "why first"}}
+    ],
+    "overall_verdict": "2-3 sentences: are these plans correct and complete?",
+    "confidence": 0
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    result = _parse_ai_json(message)
+    st.session_state["_plan_validation"] = result
+    from utils.persistence import _save_ai_key, _volume_available
+    if _volume_available():
+        _save_ai_key("_plan_validation", result)
+
+
 def _run_gap_analysis():
     """Generate migration plan from current to ideal structure."""
     if not has_anthropic_key():
@@ -704,6 +801,73 @@ def render():
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
+    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
+
+    # ── Step 12: Plan Validation ─────────────────────────────
+    icon12, status12, color12 = _step_status("_plan_validation")
+    pv_data = st.session_state.get("_plan_validation", {})
+    if isinstance(pv_data, dict) and pv_data.get("overall_verdict"):
+        cov = pv_data.get("coverage_score", "?")
+        conf = pv_data.get("confidence", "?")
+        status12 = f"Done (coverage {cov}/100, confidence {conf}/100)"
+        color12 = "#33dd88"
+        icon12 = "✓"
+    # Count plans available
+    plans_count = sum(1 for k, v in st.session_state.items()
+                      if k.startswith("_ai_plan_") and isinstance(v, dict) and not v.get("error"))
+    col1, col2, col3 = st.columns([1, 6, 2])
+    with col1:
+        st.markdown(f"<div style='font-size:1.5rem; color:{color12}; text-align:center; padding-top:0.5rem;'>{icon12}</div>", unsafe_allow_html=True)
+    with col2:
+        st.markdown(
+            f"<div style='font-weight:600; color:#e8e8f0;'>12. Plan Validation (Final Cross-Check)</div>"
+            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI reviews ALL generated page plans against site issues — checks coverage, conflicts, priority, missing actions ({plans_count} plans found)</div>"
+            f"<div style='font-size:0.7rem; color:{color12}; margin-top:0.2rem;'>{status12}</div>",
+            unsafe_allow_html=True,
+        )
+    with col3:
+        disabled = plans_count == 0
+        label = "Run" if not disabled else "No plans"
+        if st.button(label, key="rp_plan_val", use_container_width=True, disabled=disabled):
+            try:
+                with st.spinner("AI cross-checking all plans against site issues..."):
+                    _run_plan_validation()
+                st.success("Plan validation done")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+    # Show plan validation result inline if available
+    if isinstance(pv_data, dict) and pv_data.get("overall_verdict"):
+        with st.expander("View validation report", expanded=False):
+            st.markdown(f"**Verdict:** {pv_data.get('overall_verdict','')}")
+            uncovered = pv_data.get("uncovered_issues") or []
+            if uncovered:
+                st.markdown("**Uncovered issues:**")
+                for u in uncovered:
+                    st.markdown(f"- {u}")
+            missing = pv_data.get("missing_actions") or []
+            if missing:
+                st.markdown("**Missing actions:**")
+                for m in missing:
+                    st.markdown(f"- {m}")
+            conflicts = pv_data.get("conflicts") or []
+            if conflicts:
+                st.markdown("**Conflicts:**")
+                for c in conflicts:
+                    if isinstance(c, dict):
+                        st.markdown(f"- {c.get('plan_a','')} ↔ {c.get('plan_b','')}: {c.get('conflict','')}")
+            risks = pv_data.get("risks") or []
+            if risks:
+                st.markdown("**Risks:**")
+                for r in risks:
+                    st.markdown(f"- {r}")
+            seq = pv_data.get("recommended_sequence") or []
+            if seq:
+                st.markdown("**Recommended sequence:**")
+                for s in seq:
+                    if isinstance(s, dict):
+                        st.markdown(f"{s.get('order','?')}. **{s.get('action','')}** — {s.get('reason','')}")
     st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
 
     st.markdown("---")
