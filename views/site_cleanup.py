@@ -217,6 +217,159 @@ def _pages_to_noindex():
     return noindex_candidates
 
 
+def _generate_cannibal_subcategory_meta(query: str, pages: list, row, ai_key: str):
+    """
+    Generate differentiated meta titles + descriptions for each page in a
+    sub-category/brand-variant cannibalization conflict.
+    Uses the existing generate_meta_suggestions() AI function.
+    """
+    from config import get_anthropic_key, has_anthropic_key
+    if not has_anthropic_key():
+        raise ValueError("Anthropic API key missing")
+    from utils.ai_generator import get_client, generate_meta_suggestions
+    from utils.persistence import save
+
+    client = get_client(get_anthropic_key())
+    audit_results = st.session_state.get("audit_results", [])
+    audit_by_url = {normalize_url(r.get("url", "")): r for r in audit_results}
+
+    results = {}
+    for p in pages:
+        page_url = p.get("page", "")
+        page_norm = normalize_url(page_url)
+        audit = audit_by_url.get(page_norm, {})
+        if not audit:
+            # Minimal fallback if no audit data
+            audit = {"url": page_url, "title": "", "h1": "", "h2s": [],
+                     "word_count": 0, "page_type": "category"}
+
+        # Extract path segments to suggest variant-specific keywords
+        from urllib.parse import urlparse
+        path = urlparse(page_url).path.rstrip("/")
+        last_segment = path.split("/")[-1] if path else ""
+        variant_kw = last_segment.replace("-", " ") if last_segment else ""
+
+        # Build target keywords: generic query + variant-specific
+        target_kws = [query]
+        if variant_kw and variant_kw != query:
+            target_kws.append(f"{variant_kw} {query}")
+            target_kws.append(f"{query} {variant_kw}")
+
+        try:
+            meta_result = generate_meta_suggestions(
+                client=client,
+                page_data=audit,
+                target_keywords=target_kws,
+                site_context=st.session_state.get("site_context", ""),
+                language=st.session_state.get("content_language", "Swedish"),
+                n_variants=2,
+            )
+            results[page_url] = meta_result
+        except Exception as e:
+            results[page_url] = {"error": str(e), "variants": []}
+
+    st.session_state[ai_key] = results
+    save(ai_key)
+
+
+def _validate_subcategory_quality(parent_url: str, child_pages: list):
+    """
+    For a sub-category split, check:
+    1. Does the parent page link to each child?
+    2. Are child titles differentiated from parent title?
+    3. Is child content a near-duplicate of parent?
+    Returns dict of issues.
+    """
+    audit_results = st.session_state.get("audit_results", [])
+    audit_by_url = {normalize_url(r.get("url", "")): r for r in audit_results}
+    sf_link_map = st.session_state.get("sf_link_map") or {}
+    links_to = sf_link_map.get("links_to") if isinstance(sf_link_map, dict) else {}
+
+    parent_norm = normalize_url(parent_url)
+    parent_audit = audit_by_url.get(parent_norm, {})
+    parent_title = (parent_audit.get("title") or "").lower().strip()
+    parent_h1 = (parent_audit.get("h1") or "").lower().strip()
+    parent_word_count = parent_audit.get("word_count", 0)
+
+    issues = []
+
+    # Check which child pages have an incoming link from the parent
+    parent_outbound = set()
+    if isinstance(links_to, dict):
+        # links_to maps a page -> set of pages that link TO it
+        # To get parent's outbound links, check each child's incoming set
+        pass
+
+    # Alternative: walk audit's internal_links for parent (if stored)
+    parent_internal_links = parent_audit.get("internal_links") or []
+    if isinstance(parent_internal_links, list):
+        parent_outbound = {normalize_url(l) if isinstance(l, str) else normalize_url(l.get("url", "")) for l in parent_internal_links}
+    parent_outbound.discard("")
+
+    for child in child_pages:
+        child_url = child.get("page", "") if isinstance(child, dict) else child
+        child_norm = normalize_url(child_url)
+        if child_norm == parent_norm:
+            continue  # skip self
+        child_audit = audit_by_url.get(child_norm, {})
+        child_title = (child_audit.get("title") or "").lower().strip()
+        child_h1 = (child_audit.get("h1") or "").lower().strip()
+        child_wc = child_audit.get("word_count", 0)
+
+        # Check 1: does parent link to child?
+        has_link = child_norm in parent_outbound
+        if not has_link:
+            issues.append({
+                "page": child_url,
+                "severity": "high",
+                "issue": f"Parent `{parent_url}` does NOT link to this sub-category",
+                "fix": f"Add internal link from parent category to this sub-category",
+            })
+
+        # Check 2: title differentiated?
+        if parent_title and child_title and parent_title == child_title:
+            issues.append({
+                "page": child_url,
+                "severity": "high",
+                "issue": "Title is IDENTICAL to parent category",
+                "fix": "Rewrite title to include the sub-category variant term",
+            })
+        elif parent_title and child_title:
+            # Same base: if child title only differs by 1-2 words it's near-dupe
+            parent_words = set(parent_title.split())
+            child_words = set(child_title.split())
+            overlap = len(parent_words & child_words)
+            if overlap >= len(parent_words) - 1 and overlap >= len(child_words) - 1:
+                issues.append({
+                    "page": child_url,
+                    "severity": "medium",
+                    "issue": "Title is nearly identical to parent — no variant differentiation",
+                    "fix": "Rewrite to emphasize the sub-category variant",
+                })
+
+        # Check 3: content near-duplicate by word count similarity
+        if parent_word_count > 100 and child_wc > 100:
+            ratio = min(parent_word_count, child_wc) / max(parent_word_count, child_wc)
+            if ratio > 0.9 and parent_h1 == child_h1:
+                issues.append({
+                    "page": child_url,
+                    "severity": "medium",
+                    "issue": f"Content size ({child_wc}w) near identical to parent ({parent_word_count}w) AND same H1 — suspected duplicate",
+                    "fix": "Rewrite body to focus specifically on the variant",
+                })
+
+        # Check 4: child has very thin content
+        if child_wc < 100:
+            issues.append({
+                "page": child_url,
+                "severity": "high",
+                "issue": f"Sub-category has thin content ({child_wc} words)",
+                "fix": "Add editorial text specific to this variant (aim 300+ words)",
+            })
+
+    return issues
+
+
 def _classify_orphans():
     """
     Cross-reference orphan list with traffic + backlinks + clusters.
@@ -437,28 +590,178 @@ def render():
         "🧩 Topic Gaps",
     ])
 
-    # ── TAB 1: MERGE ─────────────────────────────────────────
+    # ── TAB 1: MERGE / CANNIBALIZATION ACTIONS ──────────────
     with tab1:
-        merges = _pages_to_merge()
-        st.markdown(f"### {len(merges)} page pairs to merge")
+        st.markdown("### Cannibalization — grouped by action type")
         st.markdown(
             "<p style='color:#9b9bb8; font-size:0.85rem;'>"
-            "These pages compete for the same keywords AND have similar intent. "
-            "Different-intent pairs are filtered out automatically.</p>",
+            "Cannibalization isn't always 'merge'. The system classifies each conflict into one of 5 action types "
+            "and gives concrete instructions + AI-generated text where relevant.</p>",
             unsafe_allow_html=True,
         )
-        if not merges:
-            st.success("No same-intent cannibalization detected")
-        for m in merges[:20]:
-            with st.expander(f"{shorten_url(m['keep'])}  ←  {shorten_url(m['redirect'])}  |  '{m['query']}'  |  {m['lost_clicks']:,} lost clicks"):
-                st.markdown(f"**Keep:** `{m['keep']}`")
-                st.markdown(f"**Redirect FROM:** `{m['redirect']}`")
-                st.markdown(f"**Severity:** {m['severity'].upper()}")
-                st.markdown(f"**Steps:**")
-                st.markdown(f"1. Copy unique content from `{shorten_url(m['redirect'])}` to `{shorten_url(m['keep'])}`")
-                st.markdown(f"2. In Magento: set up 301 redirect from old URL to new")
-                st.markdown(f"3. Update internal links pointing to old URL")
-                st.markdown(f"4. Submit changes to Google Search Console")
+
+        cannibal_df = st.session_state.get("cannibalization")
+        if cannibal_df is None or cannibal_df.empty:
+            st.info("No cannibalization data — run Step 5 in Run Pipeline.")
+        else:
+            # Filter out different-intent / homepage cases (already handled by old logic)
+            work = cannibal_df[cannibal_df["severity"].isin(["severe", "moderate"])].copy()
+            work = work[~work["merge_action"].str.contains("DIFFERENT INTENTS|Homepage involved", na=False)]
+
+            # Group by cannibal_type
+            grouped = {}
+            for _, row in work.iterrows():
+                t = row.get("cannibal_type", "unknown")
+                grouped.setdefault(t, []).append(row)
+
+            type_labels = {
+                "true_duplicate": ("🔀 True duplicates", "Safe to merge — pick winner, 301 losers, copy unique content.", "#ff4455"),
+                "subcategory_split": ("🌳 Sub-category splits", "DO NOT merge. Keep all pages, differentiate sub-category meta titles + descriptions. AI generates new meta below.", "#33dd88"),
+                "missing_parent": ("🏗 Missing parent category", "CREATE a new category page that targets the generic query; assign products to it.", "#ffaa33"),
+                "brand_variant": ("🎯 Brand/variant competition", "Differentiate each page's meta title to target its unique variant. AI generates new meta below.", "#5533ff"),
+                "different_depth": ("📐 Different-depth competition", "Architecture issue — investigate why pages at different levels compete.", "#9b9bb8"),
+                "unknown": ("❓ Unclassified", "Manual review needed.", "#6b6b8a"),
+            }
+
+            # Show counts
+            cols = st.columns(len(type_labels))
+            for i, (tk, (label, _, color)) in enumerate(type_labels.items()):
+                count = len(grouped.get(tk, []))
+                cols[i].metric(label.split(" ", 1)[1] if " " in label else label, count)
+            st.markdown("---")
+
+            for tk, rows in grouped.items():
+                if not rows:
+                    continue
+                label, desc, color = type_labels.get(tk, ("Unknown", "", "#6b6b8a"))
+                st.markdown(
+                    f"<div style='border-left:3px solid {color}; padding-left:0.6rem; margin:1rem 0;'>"
+                    f"<div style='font-weight:600; color:#e8e8f0; font-size:1rem;'>{label} ({len(rows)})</div>"
+                    f"<div style='color:#9b9bb8; font-size:0.8rem;'>{desc}</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+                # For subcategory_split and brand_variant: offer AI meta generation
+                show_ai_btn = tk in ("subcategory_split", "brand_variant")
+
+                for row in rows[:10]:
+                    query = row["query"]
+                    winner = row["recommended_winner"]
+                    pages = row["pages_detail"]
+                    lost = row.get("lost_clicks_estimate", 0)
+                    parent = row.get("cannibal_parent_url")
+
+                    with st.expander(f"'{query}' — {len(pages)} pages · {lost:,} lost clicks"):
+                        st.markdown(f"**Query:** `{query}`")
+                        if parent:
+                            st.markdown(f"**Common parent:** `{parent}`")
+                        st.markdown(f"**Recommended winner:** `{winner}` (pos {row.get('winner_position', '?')})")
+
+                        st.markdown("**Pages involved:**")
+                        for p in pages:
+                            page_url = p.get("page", "")
+                            is_winner = normalize_url(page_url) == normalize_url(winner)
+                            marker = "🏆 WINNER" if is_winner else ""
+                            st.markdown(
+                                f"- `{page_url}` · pos {p.get('position','?')} · "
+                                f"{p.get('clicks',0)} clicks · {p.get('impressions',0):,} impr "
+                                f"{marker}"
+                            )
+
+                        # Type-specific action
+                        if tk == "true_duplicate":
+                            losers = [p["page"] for p in pages if normalize_url(p["page"]) != normalize_url(winner)]
+                            st.markdown("**Actions (Magento):**")
+                            st.markdown(f"1. Copy unique content from loser → `{winner}`")
+                            st.markdown(f"2. URL Rewrite Management → add 301 redirects:")
+                            for l in losers:
+                                st.code(f"{l}  →  {winner}", language="text")
+
+                        elif tk == "subcategory_split":
+                            st.markdown("**Sub-category strategy:**")
+                            st.markdown(f"- Parent `{parent or winner}` targets generic `{query}`")
+                            st.markdown(f"- Each sub-category targets specific variant keyword")
+                            st.markdown(f"- Make sure parent page has visible links to all sub-categories")
+
+                            # Automated quality check: links + text differentiation
+                            validation_issues = _validate_subcategory_quality(parent or winner, pages)
+                            if validation_issues:
+                                st.markdown("**🚨 Detected issues:**")
+                                high = [i for i in validation_issues if i["severity"] == "high"]
+                                med = [i for i in validation_issues if i["severity"] == "medium"]
+                                for iss in high:
+                                    st.error(f"**HIGH** · `{iss['page']}` — {iss['issue']}")
+                                    st.caption(f"→ Fix: {iss['fix']}")
+                                for iss in med:
+                                    st.warning(f"**MED** · `{iss['page']}` — {iss['issue']}")
+                                    st.caption(f"→ Fix: {iss['fix']}")
+                            else:
+                                st.success("✓ Links and titles are already differentiated")
+
+                            ai_key = f"_cannibal_meta_{stable_hash(query)}"
+                            if st.button(f"🤖 Generate meta titles + descriptions for all sub-categories", key=f"btn_{ai_key}"):
+                                with st.spinner("Generating differentiated meta for each sub-category..."):
+                                    try:
+                                        _generate_cannibal_subcategory_meta(query, pages, row, ai_key)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error: {e}")
+
+                            if ai_key in st.session_state:
+                                meta_results = st.session_state[ai_key]
+                                st.markdown("**🎯 Generated meta per page:**")
+                                for page_url, meta in meta_results.items():
+                                    st.markdown(f"**`{page_url}`**")
+                                    variants = meta.get("variants", [])
+                                    if variants:
+                                        best = variants[0]
+                                        st.code(
+                                            f"Title: {best.get('title','')}\n"
+                                            f"Description: {best.get('description','')}",
+                                            language="text",
+                                        )
+                                        st.caption(f"Strategy: {best.get('strategy','')}")
+
+                        elif tk == "missing_parent":
+                            suggested = row.get("cannibal_suggested_parent") or f"/{query.replace(' ', '-')}"
+                            st.markdown(f"**Action: Create new category page**")
+                            st.markdown(f"- Suggested URL: `{suggested}`")
+                            st.markdown(f"- Target keyword: **{query}**")
+                            st.markdown(f"- In Magento: create category, assign all listed products, write intro + bottom text")
+                            st.info("Use Quick Wins or manually create the category in Magento, then run Quick Wins on it to generate text.")
+
+                        elif tk == "brand_variant":
+                            st.markdown("**Variant differentiation strategy:**")
+                            st.markdown(f"- Each variant gets unique meta title targeting its specific feature")
+                            st.markdown(f"- Do NOT 301 redirect — each variant is a real product")
+
+                            ai_key = f"_cannibal_meta_{stable_hash(query)}"
+                            if st.button(f"🤖 Generate differentiated meta for all variants", key=f"btn_{ai_key}"):
+                                with st.spinner("Generating variant-specific meta..."):
+                                    try:
+                                        _generate_cannibal_subcategory_meta(query, pages, row, ai_key)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error: {e}")
+
+                            if ai_key in st.session_state:
+                                meta_results = st.session_state[ai_key]
+                                st.markdown("**🎯 Generated meta per variant:**")
+                                for page_url, meta in meta_results.items():
+                                    st.markdown(f"**`{page_url}`**")
+                                    variants = meta.get("variants", [])
+                                    if variants:
+                                        best = variants[0]
+                                        st.code(
+                                            f"Title: {best.get('title','')}\n"
+                                            f"Description: {best.get('description','')}",
+                                            language="text",
+                                        )
+
+                        elif tk == "different_depth":
+                            st.warning("Pages at different depth levels compete. This is usually a sign of missing pillar architecture. Investigate manually.")
+                        else:
+                            st.info("Manual review needed — no clear pattern.")
 
     # ── TAB 2: CREATE ─────────────────────────────────────────
     with tab2:

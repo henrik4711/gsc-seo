@@ -7,6 +7,101 @@ import pandas as pd
 import numpy as np
 
 
+def _classify_cannibal_type(winner: str, losers: list, pages_detail: list, audit_lookup=None) -> dict:
+    """
+    Classify WHAT kind of cannibalization this is so downstream code can
+    suggest the RIGHT action instead of defaulting to "merge everything".
+
+    Returns dict with:
+      type: 'true_duplicate' | 'subcategory_split' | 'missing_parent'
+          | 'brand_variant' | 'different_depth' | 'unknown'
+      action: short string for UI
+      parent_url: for subcategory_split, the parent category URL
+      suggested_parent_path: for missing_parent, what to create
+    """
+    from urllib.parse import urlparse
+
+    def _path_of(u):
+        return urlparse(str(u)).path.rstrip("/") or "/"
+
+    all_paths = [_path_of(winner)] + [_path_of(x) for x in losers]
+    segments_list = [[s for s in p.split("/") if s] for p in all_paths]
+    depths = [len(s) for s in segments_list]
+
+    # CASE 1: Sub-category split
+    # One URL is a prefix of others: /sexdockor is parent, /sexdockor/torso is child.
+    paths_sorted = sorted(all_paths, key=len)
+    shortest = paths_sorted[0]
+    if len(shortest) > 1:
+        all_under_shortest = all(p == shortest or p.startswith(shortest + "/") for p in all_paths)
+        if all_under_shortest and len(all_paths) >= 2:
+            return {
+                "type": "subcategory_split",
+                "action": "Keep all pages. Differentiate sub-category meta titles + descriptions. Parent targets generic query; children target specific variants.",
+                "parent_url": shortest,
+                "suggested_parent_path": None,
+            }
+
+    # CASE 2: Different depths but NOT prefix-related (e.g. brand page + product page)
+    if max(depths) - min(depths) >= 2:
+        return {
+            "type": "different_depth",
+            "action": "Pages at very different depth competing. Likely missing a pillar category at the right depth. Investigate site architecture.",
+            "parent_url": None,
+            "suggested_parent_path": None,
+        }
+
+    # CASE 3: All at SAME depth with NO common parent → 3+ separate products
+    # that need a category page above them (missing_parent)
+    if len(set(depths)) == 1 and depths[0] >= 2 and len(all_paths) >= 3:
+        # They're siblings at same depth, likely products under missing category
+        # Extract common parent path
+        common_parts = []
+        first_segs = segments_list[0]
+        for i, seg in enumerate(first_segs):
+            if all(len(s) > i and s[i] == seg for s in segments_list):
+                common_parts.append(seg)
+            else:
+                break
+        if len(common_parts) < depths[0] - 1:
+            # No shared parent beyond root → truly missing category
+            return {
+                "type": "missing_parent",
+                "action": "Multiple products competing for same query with no category page. CREATE a category/pillar page that targets the generic query; assign all products to it.",
+                "parent_url": None,
+                "suggested_parent_path": "/" + "-".join(common_parts) if common_parts else None,
+            }
+
+    # CASE 4: Same depth, shared immediate parent → brand/product variants
+    if len(set(depths)) == 1 and depths[0] >= 1:
+        parents = set()
+        for segs in segments_list:
+            parents.add("/".join(segs[:-1]) if len(segs) > 1 else "")
+        if len(parents) == 1:
+            return {
+                "type": "brand_variant",
+                "action": "Products/pages under same parent competing for same query. Differentiate each page's meta title to target unique variant (color, brand, size, feature).",
+                "parent_url": next(iter(parents)) if parents else None,
+                "suggested_parent_path": None,
+            }
+
+    # CASE 5: True duplicates fallback — same depth, 2 pages, similar
+    if len(all_paths) == 2 and len(set(depths)) == 1:
+        return {
+            "type": "true_duplicate",
+            "action": "Two same-depth pages competing for identical query. Likely true duplicates — pick winner, 301 redirect loser, merge unique content.",
+            "parent_url": None,
+            "suggested_parent_path": None,
+        }
+
+    return {
+        "type": "unknown",
+        "action": "Manual review needed — no clear pattern detected.",
+        "parent_url": None,
+        "suggested_parent_path": None,
+    }
+
+
 def _get_brand_keywords(df: pd.DataFrame) -> set:
     """
     Detect brand/navigational keywords that should be excluded from cannibalization.
@@ -164,6 +259,10 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         page_intents = {p["page"]: _page_intent(p["page"]) for p in pages_detail}
         unique_intents = set(page_intents.values())
 
+        # ── Cannibalization type classification ───────────
+        # Determines WHAT action to take, not just whether there's a problem.
+        cannibal_type = _classify_cannibal_type(winner_page, loser_pages, pages_detail, audit_lookup=None)
+
         # Different intents → don't merge, differentiate
         if len(unique_intents) > 1:
             intent_desc = ", ".join(f"{url.split('/')[-2] or url}: {intent}" for url, intent in page_intents.items())
@@ -222,6 +321,10 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
             "merge_action": merge_action,
             "lost_clicks_estimate": lost_clicks,
             "pages_detail": pages_detail,
+            "cannibal_type": cannibal_type.get("type", "unknown"),
+            "cannibal_action": cannibal_type.get("action", ""),
+            "cannibal_parent_url": cannibal_type.get("parent_url"),
+            "cannibal_suggested_parent": cannibal_type.get("suggested_parent_path"),
         })
 
     result = pd.DataFrame(records)
