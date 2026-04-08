@@ -203,6 +203,28 @@ def _run_topic_clusters():
     st.session_state["topic_clusters"] = fallback
     save_key("topic_clusters")
 
+    # Also generate content_gaps and content_roadmap
+    from utils.topic_clusters import identify_content_gaps, generate_content_roadmap
+    auth = st.session_state.get("page_authority")
+    try:
+        gaps = identify_content_gaps(fallback.get("clusters", []), auth)
+        st.session_state["content_gaps"] = gaps
+        save_key("content_gaps")
+    except Exception as e:
+        print(f"[pipeline] content_gaps failed: {e}")
+
+    try:
+        roadmap = generate_content_roadmap(
+            fallback.get("clusters", []),
+            df,
+            auth,
+            language=language,
+        )
+        st.session_state["content_roadmap"] = roadmap
+        save_key("content_roadmap")
+    except Exception as e:
+        print(f"[pipeline] content_roadmap failed: {e}")
+
 
 def _run_bulk_audit():
     """Trigger the bulk audit. This is the slowest step."""

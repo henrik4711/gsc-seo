@@ -328,8 +328,28 @@ def _build_total_plan(page, plan_data, text_data, intro_data):
             "type": "links_remove",
         })
 
-    # Priority 7: New articles to write
-    new_articles = plan_data.get("new_content_suggestions", [])
+    # Priority 7: New articles to write — combined from plan + content_roadmap + content_gaps
+    new_articles = list(plan_data.get("new_content_suggestions", []) or [])
+
+    # Add from content_roadmap if this URL is the link_from source
+    roadmap = st.session_state.get("content_roadmap", {})
+    if isinstance(roadmap, dict):
+        for a in roadmap.get("new_articles", []) or []:
+            if isinstance(a, dict):
+                link_from = a.get("supporting_page") or a.get("link_from", "")
+                if normalize_url(link_from) == normalize_url(url):
+                    new_articles.append(a)
+
+    # Deduplicate by title
+    seen_titles = set()
+    unique_articles = []
+    for a in new_articles:
+        if isinstance(a, dict):
+            title = a.get("suggested_title", "")
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                unique_articles.append(a)
+    new_articles = unique_articles
     if new_articles:
         actions.append({
             "priority": 7,

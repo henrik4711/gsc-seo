@@ -8,13 +8,41 @@ from utils.ui_helpers import normalize_url, stable_hash, shorten_url
 
 
 def _pages_to_merge():
-    """From cannibalization data — pages competing for same keywords."""
-    cannibal_df = st.session_state.get("cannibalization")
-    if cannibal_df is None or cannibal_df.empty:
-        return []
-
+    """Combined from cannibalization + ideal structure + gap analysis."""
     merges = []
     seen_pairs = set()
+
+    # Source 1: Ideal structure (AI-generated merges)
+    ideal = st.session_state.get("_ideal_structure") or {}
+    if isinstance(ideal, dict):
+        for m in ideal.get("merge", []) or []:
+            if not isinstance(m, dict):
+                continue
+            from_urls = m.get("from", [])
+            to_url = m.get("to", "")
+            why = m.get("why", "")
+            if not to_url or not from_urls:
+                continue
+            for from_url in from_urls:
+                pair = tuple(sorted([normalize_url(to_url), normalize_url(from_url)]))
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                merges.append({
+                    "keep": to_url,
+                    "redirect": from_url,
+                    "query": "(ideal structure recommendation)",
+                    "lost_clicks": 0,
+                    "severity": "ai-recommended",
+                    "reason": why,
+                    "source": "ideal_structure",
+                })
+
+    # Source 2: Cannibalization data
+    cannibal_df = st.session_state.get("cannibalization")
+    if cannibal_df is None or cannibal_df.empty:
+        return merges
+
     for _, row in cannibal_df.iterrows():
         if row.get("severity") not in ("severe", "moderate"):
             continue
@@ -44,7 +72,89 @@ def _pages_to_merge():
                 "lost_clicks": row["lost_clicks_estimate"],
                 "severity": row["severity"],
             })
-    return merges[:30]
+    return merges[:50]
+
+
+def _pages_to_create():
+    """NEW pages to create — from ideal structure + content roadmap + page-level plans."""
+    creates = []
+    seen = set()
+
+    # Source 1: Ideal structure
+    ideal = st.session_state.get("_ideal_structure") or {}
+    if isinstance(ideal, dict):
+        for c in ideal.get("create", []) or []:
+            if not isinstance(c, dict):
+                continue
+            url = c.get("url", "")
+            if url in seen:
+                continue
+            seen.add(url)
+            creates.append({
+                "url": url,
+                "type": c.get("type", "page"),
+                "keyword": c.get("kw", ""),
+                "why": c.get("why", ""),
+                "source": "ideal_structure",
+            })
+
+    # Source 2: Content roadmap (from topic_clusters)
+    roadmap = st.session_state.get("content_roadmap", {})
+    if isinstance(roadmap, dict):
+        for a in roadmap.get("new_articles", []) or []:
+            if not isinstance(a, dict):
+                continue
+            title = a.get("suggested_title", "")
+            if title in seen:
+                continue
+            seen.add(title)
+            creates.append({
+                "url": f"(new article: {title})",
+                "type": a.get("type", "blog"),
+                "keyword": ", ".join(a.get("target_keywords", [])[:3]),
+                "why": a.get("why", ""),
+                "source": "content_roadmap",
+                "priority": a.get("priority", ""),
+            })
+
+    # Source 3: Per-page plans (collected from all AI plans)
+    for key, val in st.session_state.items():
+        if not key.startswith("_ai_plan_") or not isinstance(val, dict):
+            continue
+        for nc in val.get("new_content_suggestions", []) or []:
+            if not isinstance(nc, dict):
+                continue
+            title = nc.get("suggested_title", "")
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            creates.append({
+                "url": f"(new article: {title})",
+                "type": nc.get("type", "blog"),
+                "keyword": ", ".join(nc.get("target_keywords", [])[:3]),
+                "why": nc.get("why", ""),
+                "source": "page_plan",
+                "link_from": nc.get("link_from", ""),
+            })
+
+    return creates[:100]
+
+
+def _pages_to_delete_ideal():
+    """Pages to delete from ideal structure."""
+    ideal = st.session_state.get("_ideal_structure") or {}
+    if not isinstance(ideal, dict):
+        return []
+    deletes = []
+    for d in ideal.get("delete", []) or []:
+        if not isinstance(d, dict):
+            continue
+        deletes.append({
+            "url": d.get("url", ""),
+            "why": d.get("why", ""),
+            "source": "ideal_structure",
+        })
+    return deletes
 
 
 def _pages_to_redirect():
@@ -183,12 +293,42 @@ def render():
         st.warning("Run **⚡ Run Pipeline** first to get analysis data.")
         return
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🔀 Merge (cannibalization)",
-        "↗ Redirect (broken)",
-        "🚫 Noindex (waste)",
-        "🗑 Delete (no value)",
-        "📝 Blogs to review",
+    # Site validation summary
+    site_val = st.session_state.get("_site_validation")
+    if isinstance(site_val, dict) and site_val.get("overall_health_score") is not None:
+        health = site_val.get("overall_health_score", 0)
+        score_color = "#33dd88" if health >= 70 else "#ffaa33" if health >= 40 else "#ff4455"
+        st.markdown(
+            f"<div style='background:#0d0d15; border-left:4px solid {score_color}; padding:0.8rem; border-radius:0 6px 6px 0; margin-bottom:1rem;'>"
+            f"<div style='font-size:0.9rem; color:#e8e8f0;'><strong>Site Health: {health}/100</strong></div>"
+            f"<div style='font-size:0.8rem; color:#c8b4ff;'>{site_val.get('summary', '')}</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    # Ideal structure summary (if run)
+    ideal = st.session_state.get("_ideal_structure")
+    if isinstance(ideal, dict):
+        n_clusters = len(ideal.get("clusters", []))
+        n_merges = len(ideal.get("merge", []))
+        n_deletes = len(ideal.get("delete", []))
+        n_creates = len(ideal.get("create", []))
+        st.markdown(
+            f"<div style='background:#0d0d15; border:1px solid #5533ff; padding:0.6rem; border-radius:6px; margin-bottom:1rem;'>"
+            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#5533ff; margin-bottom:0.3rem;'>AI IDEAL STRUCTURE</div>"
+            f"<div style='font-size:0.8rem; color:#c8b4ff;'>"
+            f"{n_clusters} ideal clusters · {n_merges} pages to merge · {n_deletes} to delete · {n_creates} to create</div></div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("💡 Run **Generate Ideal Structure** in Site Map to get AI-recommended merges, deletes, and new pages.")
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🔀 Merge",
+        "➕ Create",
+        "↗ Redirect",
+        "🚫 Noindex",
+        "🗑 Delete",
+        "📝 Blogs review",
     ])
 
     # ── TAB 1: MERGE ─────────────────────────────────────────
@@ -214,8 +354,40 @@ def render():
                 st.markdown(f"3. Update internal links pointing to old URL")
                 st.markdown(f"4. Submit changes to Google Search Console")
 
-    # ── TAB 2: REDIRECT ──────────────────────────────────────
+    # ── TAB 2: CREATE ─────────────────────────────────────────
     with tab2:
+        creates = _pages_to_create()
+        st.markdown(f"### {len(creates)} new pages/articles to create")
+        st.markdown(
+            "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+            "Combined from: AI ideal structure + content roadmap + per-page plans.</p>",
+            unsafe_allow_html=True,
+        )
+        if not creates:
+            st.success("No new pages recommended")
+        # Group by source
+        by_source = {}
+        for c in creates:
+            by_source.setdefault(c.get("source", "other"), []).append(c)
+        for source, items in by_source.items():
+            source_labels = {
+                "ideal_structure": "🏗 AI Ideal Structure",
+                "content_roadmap": "📊 Content Roadmap (from topic clusters)",
+                "page_plan": "📄 Per-page Implementation Plans",
+            }
+            st.markdown(f"#### {source_labels.get(source, source)} ({len(items)} items)")
+            for c in items[:20]:
+                label = c.get("url", "") if c.get("url", "").startswith("(") else f"`{c.get('url', '')}`"
+                st.markdown(f"- {label}")
+                if c.get("keyword"):
+                    st.markdown(f"  <div style='color:#c8b4ff; font-size:0.75rem; margin-left:1rem;'>Keywords: {c.get('keyword', '')}</div>", unsafe_allow_html=True)
+                if c.get("why"):
+                    st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{c.get('why', '')[:200]}</div>", unsafe_allow_html=True)
+                if c.get("link_from"):
+                    st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>Link from: {c.get('link_from', '')}</div>", unsafe_allow_html=True)
+
+    # ── TAB 3: REDIRECT ──────────────────────────────────────
+    with tab3:
         redirects = _pages_to_redirect()
         st.markdown(f"### {len(redirects)} broken pages to redirect")
         st.markdown(
@@ -230,8 +402,8 @@ def render():
             st.markdown(f"- {priority} `{r['url']}` ({r['status']}) · {r['referring_domains']} backlinks")
             st.markdown(f"  <div style='color:#9b9bb8; font-size:0.8rem; margin-left:1rem;'>{r['action']}</div>", unsafe_allow_html=True)
 
-    # ── TAB 3: NOINDEX ───────────────────────────────────────
-    with tab3:
+    # ── TAB 4: NOINDEX ───────────────────────────────────────
+    with tab4:
         noindex = _pages_to_noindex()
         st.markdown(f"### {len(noindex)} pages to noindex / block in robots.txt")
         st.markdown(
@@ -255,23 +427,35 @@ def render():
                 for item in items[:30]:
                     st.markdown(f"- `{item['url']}` — {item['reason']}")
 
-    # ── TAB 4: DELETE ────────────────────────────────────────
-    with tab4:
+    # ── TAB 5: DELETE ────────────────────────────────────────
+    with tab5:
         deletes = _pages_to_delete()
-        st.markdown(f"### {len(deletes)} pages to consider deleting")
+        ideal_deletes = _pages_to_delete_ideal()
+        st.markdown(f"### {len(deletes) + len(ideal_deletes)} pages to consider deleting")
+
+        if ideal_deletes:
+            st.markdown("#### 🏗 AI Ideal Structure recommendations")
+            st.markdown(
+                "<p style='color:#9b9bb8; font-size:0.85rem;'>Pages the AI recommends deleting based on site architecture review.</p>",
+                unsafe_allow_html=True,
+            )
+            for d in ideal_deletes[:30]:
+                st.markdown(f"- `{d.get('url', '')}` — {d.get('why', '')}")
+            st.markdown("---")
+
+        st.markdown("#### 📊 Data-driven candidates (no traffic, no backlinks, thin content)")
         st.markdown(
             "<p style='color:#9b9bb8; font-size:0.85rem;'>"
-            "Pages with: 0 clicks, <10 impressions, 0 backlinks, <200 words. "
-            "These provide no value and clutter the site.</p>",
+            "Pages with: 0 clicks, <10 impressions, 0 backlinks, <200 words.</p>",
             unsafe_allow_html=True,
         )
         if not deletes:
-            st.success("No clearly deletable pages")
+            st.success("No clearly deletable pages from data analysis")
         for d in deletes[:30]:
             st.markdown(f"- `{d['url']}` ({d['page_type']}) · {d['word_count']} words · {d['impressions']} impressions")
 
-    # ── TAB 5: BLOGS TO REVIEW ───────────────────────────────
-    with tab5:
+    # ── TAB 6: BLOGS TO REVIEW ───────────────────────────────
+    with tab6:
         blogs = _blogs_to_review()
         st.markdown(f"### {len(blogs)} blog/guide pages needing review")
         st.markdown(
