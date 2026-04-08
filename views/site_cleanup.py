@@ -217,6 +217,100 @@ def _pages_to_noindex():
     return noindex_candidates
 
 
+def _classify_orphans():
+    """
+    Cross-reference orphan list with traffic + backlinks + clusters.
+    Returns dict with 4 buckets: delete, reconnect, redirect, investigate.
+
+    - DELETE: orphan AND 0 traffic AND 0 backlinks AND not in any cluster
+    - RECONNECT: orphan BUT has traffic OR is part of a topic cluster
+    - REDIRECT: orphan AND 0 traffic BUT has backlinks (preserve link equity)
+    - INVESTIGATE: anything that doesn't fit cleanly
+    """
+    sf_issues = st.session_state.get("sf_crawl_issues") or {}
+    orphan_list = sf_issues.get("orphan_pages") or []
+    if not orphan_list:
+        return {"delete": [], "reconnect": [], "redirect": [], "investigate": []}
+
+    audit_results = st.session_state.get("audit_results", [])
+    audit_by_url = {normalize_url(r.get("url", "")): r for r in audit_results}
+
+    page_authority = st.session_state.get("page_authority")
+    auth_lookup = {}
+    if page_authority is not None and not page_authority.empty:
+        for _, row in page_authority.iterrows():
+            auth_lookup[normalize_url(str(row.get("page", "")))] = int(row.get("referring_domains", 0))
+
+    topic_clusters = st.session_state.get("topic_clusters", {})
+    clustered_urls = set()
+    if isinstance(topic_clusters, dict):
+        for k in (topic_clusters.get("page_topics") or {}).keys():
+            clustered_urls.add(normalize_url(k))
+
+    gsc_data = st.session_state.get("gsc_data")
+    gsc_pages = {}
+    if gsc_data is not None and hasattr(gsc_data, "groupby") and not gsc_data.empty:
+        for page, grp in gsc_data.groupby("page"):
+            gsc_pages[normalize_url(str(page))] = {
+                "impressions": int(grp["impressions"].sum()),
+                "clicks": int(grp["clicks"].sum()),
+            }
+
+    buckets = {"delete": [], "reconnect": [], "redirect": [], "investigate": []}
+
+    for o in orphan_list:
+        url = o.get("url") if isinstance(o, dict) else o
+        if not url:
+            continue
+        norm = normalize_url(url)
+        audit = audit_by_url.get(norm) or {}
+        rd = auth_lookup.get(norm, 0)
+        gsc = gsc_pages.get(norm, {"impressions": 0, "clicks": 0})
+        in_cluster = norm in clustered_urls
+        word_count = audit.get("word_count", 0)
+        page_type = audit.get("page_type", "unknown")
+
+        signals = {
+            "url": url,
+            "impressions": gsc["impressions"],
+            "clicks": gsc["clicks"],
+            "referring_domains": rd,
+            "in_cluster": in_cluster,
+            "word_count": word_count,
+            "page_type": page_type,
+        }
+
+        has_traffic = gsc["impressions"] >= 10 or gsc["clicks"] > 0
+        has_backlinks = rd > 0
+        has_content = word_count >= 200
+
+        if not has_traffic and not has_backlinks and not in_cluster and not has_content:
+            signals["reason"] = f"No traffic ({gsc['impressions']} impr), no backlinks, no cluster, thin ({word_count}w)"
+            buckets["delete"].append(signals)
+        elif has_backlinks and not has_traffic:
+            signals["reason"] = f"Has {rd} backlinks but no traffic — 301 to closest live page to preserve equity"
+            buckets["redirect"].append(signals)
+        elif has_traffic or in_cluster:
+            reasons = []
+            if has_traffic:
+                reasons.append(f"{gsc['impressions']} impr / {gsc['clicks']} clicks")
+            if in_cluster:
+                reasons.append("in topic cluster")
+            if has_backlinks:
+                reasons.append(f"{rd} backlinks")
+            signals["reason"] = "Misclassified orphan: " + ", ".join(reasons) + " — needs internal link from category/related page"
+            buckets["reconnect"].append(signals)
+        else:
+            signals["reason"] = f"Edge case: {gsc['impressions']} impr, {rd} bl, cluster={in_cluster}, {word_count}w"
+            buckets["investigate"].append(signals)
+
+    # Sort each bucket by impact (most impressions/backlinks first)
+    buckets["reconnect"].sort(key=lambda x: -(x["impressions"] + x["referring_domains"] * 100))
+    buckets["redirect"].sort(key=lambda x: -x["referring_domains"])
+    buckets["delete"].sort(key=lambda x: x["url"])
+    return buckets
+
+
 def _pages_to_delete():
     """Pages with no traffic, no backlinks, thin content."""
     audit_results = st.session_state.get("audit_results", [])
@@ -430,6 +524,48 @@ def render():
 
     # ── TAB 5: DELETE ────────────────────────────────────────
     with tab5:
+        # Smart orphan classification — distinguish real orphans from misclassified
+        orphan_buckets = _classify_orphans()
+        n_orphan_total = sum(len(v) for v in orphan_buckets.values())
+
+        if n_orphan_total > 0:
+            st.markdown(f"### 🧭 Smart orphan classification ({n_orphan_total} total)")
+            st.markdown(
+                "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+                "Cross-references SF orphan list with GSC traffic, Ahrefs backlinks, "
+                "and topic clusters. NOT all orphans should be deleted — many just lost their internal link.</p>",
+                unsafe_allow_html=True,
+            )
+            cols = st.columns(4)
+            cols[0].metric("🗑 Delete (true orphan)", len(orphan_buckets["delete"]))
+            cols[1].metric("🔗 Reconnect (misclassified)", len(orphan_buckets["reconnect"]))
+            cols[2].metric("↗ Redirect (has backlinks)", len(orphan_buckets["redirect"]))
+            cols[3].metric("❓ Investigate", len(orphan_buckets["investigate"]))
+
+            with st.expander(f"🔗 Reconnect ({len(orphan_buckets['reconnect'])}) — DO NOT delete", expanded=False):
+                st.info("These pages have traffic, backlinks, or are in topic clusters. They lost their internal link but should be RECONNECTED via category navigation, not deleted.")
+                for o in orphan_buckets["reconnect"][:50]:
+                    st.markdown(f"- `{o['url']}` ({o['page_type']}, {o['word_count']}w)")
+                    st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{o['reason']}</div>", unsafe_allow_html=True)
+
+            with st.expander(f"↗ Redirect ({len(orphan_buckets['redirect'])}) — preserve link equity", expanded=False):
+                st.info("These pages have backlinks but zero traffic. 301-redirect them to the closest live, related page to preserve link equity. Do NOT just delete — you'd lose the backlinks.")
+                for o in orphan_buckets["redirect"][:50]:
+                    st.markdown(f"- `{o['url']}` ({o['referring_domains']} backlinks)")
+                    st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{o['reason']}</div>", unsafe_allow_html=True)
+
+            with st.expander(f"🗑 True orphans to delete ({len(orphan_buckets['delete'])})", expanded=False):
+                st.warning("These have NO traffic, NO backlinks, NO cluster, and thin content. Safe to delete.")
+                for o in orphan_buckets["delete"][:50]:
+                    st.markdown(f"- `{o['url']}` ({o['page_type']}, {o['word_count']}w)")
+
+            if orphan_buckets["investigate"]:
+                with st.expander(f"❓ Investigate ({len(orphan_buckets['investigate'])})", expanded=False):
+                    st.markdown("Edge cases — manual review needed.")
+                    for o in orphan_buckets["investigate"][:50]:
+                        st.markdown(f"- `{o['url']}` — {o['reason']}")
+            st.markdown("---")
+
         deletes = _pages_to_delete()
         ideal_deletes = _pages_to_delete_ideal()
         st.markdown(f"### {len(deletes) + len(ideal_deletes)} pages to consider deleting")

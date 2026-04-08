@@ -214,12 +214,26 @@ def fetch_page_level_summary(
     return df
 
 
-def identify_ctr_gaps(df: pd.DataFrame, gap_threshold: float = -20.0) -> pd.DataFrame:
+def identify_ctr_gaps(df: pd.DataFrame, gap_threshold: float = -20.0,
+                      exclude_brand: bool = True) -> pd.DataFrame:
     """
-    Filter to pages/queries where CTR is significantly below benchmark
+    Filter to pages/queries where CTR is significantly below benchmark.
     gap_threshold: percentage below expected (e.g., -20 = 20% below expected)
+    exclude_brand: skip brand/navigational queries (default True). Brand queries
+                   like 'mshop' generate misleading 'lost clicks' because Google
+                   splits brand search across sitelinks rather than single CTRs.
     """
-    gaps = df[df["ctr_gap_pct"] <= gap_threshold].copy()
+    work = df
+    if exclude_brand:
+        try:
+            from utils.cannibalization import _get_brand_keywords
+            brand_kws = _get_brand_keywords(work)
+            if brand_kws:
+                work = work[~work["query"].isin(brand_kws)].copy()
+                work.attrs["brand_excluded"] = len(brand_kws)
+        except Exception as e:
+            print(f"[ctr_gaps] brand filter failed: {e}")
+    gaps = work[work["ctr_gap_pct"] <= gap_threshold].copy()
     gaps = gaps.sort_values("lost_clicks_estimate", ascending=False)
     return gaps
 

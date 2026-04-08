@@ -57,13 +57,20 @@ def build_topic_clusters(df: pd.DataFrame, min_cluster_size: int = 2) -> dict:
             avg_position=("position", "mean"),
         ).reset_index().sort_values("total_clicks", ascending=False)
 
+        # Robust click sum: try multiple sources, take the maximum
+        # (defensive against dtype issues, missing values, etc.)
+        click_from_queries = int(pd.to_numeric(cluster_queries["clicks"], errors="coerce").fillna(0).sum())
+        click_from_pages = int(pages["total_clicks"].sum()) if "total_clicks" in pages.columns else 0
+        impr_from_queries = int(pd.to_numeric(cluster_queries["impressions"], errors="coerce").fillna(0).sum())
+        impr_from_pages = int(pages["total_impressions"].sum()) if "total_impressions" in pages.columns else 0
+
         enriched_clusters.append({
             "topic": cluster["label"],
             "core_terms": cluster["core_terms"],
-            "query_count": len(cluster["query_indices"]),
-            "queries": cluster_queries["query"].tolist(),
-            "total_clicks": int(cluster_queries["clicks"].sum()),
-            "total_impressions": int(cluster_queries["impressions"].sum()),
+            "query_count": cluster_queries["query"].nunique(),
+            "queries": cluster_queries["query"].unique().tolist(),
+            "total_clicks": max(click_from_queries, click_from_pages),
+            "total_impressions": max(impr_from_queries, impr_from_pages),
             "pages": pages.to_dict("records"),
             "page_count": len(pages),
             "is_split": len(pages) > 1,  # topic served by multiple pages
