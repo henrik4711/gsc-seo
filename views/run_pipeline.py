@@ -8,6 +8,29 @@ from utils.persistence import save_key
 from config import get_anthropic_key, has_anthropic_key
 
 
+def _data_age_str(state_key):
+    """Return age suffix like ' · 3d old' if file exists on disk, else ''."""
+    try:
+        import os, time
+        from utils.persistence import _file_path, PERSIST_KEYS, AI_CACHE_DIR
+        if state_key in PERSIST_KEYS:
+            path = _file_path(state_key, PERSIST_KEYS[state_key])
+        else:
+            path = os.path.join(AI_CACHE_DIR, f"{state_key}.json")
+        if not os.path.exists(path):
+            return "", False
+        age_sec = time.time() - os.path.getmtime(path)
+        age_days = age_sec / 86400
+        stale = age_days > 7
+        if age_days < 1:
+            label = f" · {int(age_sec/3600)}h old"
+        else:
+            label = f" · {int(age_days)}d old"
+        return label, stale
+    except Exception:
+        return "", False
+
+
 def _step_status(state_key):
     """Returns status icon + label with smart count display."""
     if state_key in st.session_state and st.session_state[state_key] is not None:
@@ -55,6 +78,12 @@ def _step_status(state_key):
 def _run_step_card(num, title, description, state_key, run_fn, button_key):
     """Render one step card with status + Run button."""
     icon, status_label, color = _step_status(state_key)
+    age_str, stale = _data_age_str(state_key)
+    if age_str:
+        status_label = f"{status_label}{age_str}"
+        if stale and color == "#33dd88":
+            color = "#ffaa33"  # orange = data older than 7 days
+            status_label += " ⚠ stale"
 
     col1, col2, col3 = st.columns([1, 6, 2])
     with col1:
@@ -338,6 +367,7 @@ def _run_ideal_structure():
     msg1 = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=4000,
+        temperature=0,
         messages=[{"role": "user", "content": f"""Design 20-40 topic clusters for this e-commerce site.
 Site: {site_ctx}
 Problems: {issues_text}
@@ -354,6 +384,7 @@ Output JSON: {{"clusters":[{{"name":"...","intent":"...","hub":"/url","hub_kw":"
     msg2 = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2000,
+        temperature=0,
         messages=[{"role": "user", "content": f"""Given these topic clusters for {site_ctx}:
 {chr(10).join(f'- {n}' for n in cluster_names)}
 The site has {len(audit_results)} pages. Problems: {issues_text}
@@ -369,6 +400,7 @@ Output JSON: {{"merge":[{{"from":["/url1","/url2"],"to":"/url","why":"reason"}}]
     msg3 = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2000,
+        temperature=0,
         messages=[{"role": "user", "content": f"""Site: {site_ctx}
 Current score: {site_issues.get('overall_health_score', '?')}/100
 Proposed: {len(clusters_result.get('clusters', []))} clusters, {len(changes_result.get('merge', []))} merges, {len(changes_result.get('delete', []))} deletes, {len(changes_result.get('create', []))} new pages.
@@ -481,6 +513,7 @@ Cross-check the implementation plans against site issues AND ideal structure. An
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=3000,
+        temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
     result = _parse_ai_json(message)
@@ -543,6 +576,7 @@ Output JSON:
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=3000,
+        temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
     result = _parse_ai_json(message)
@@ -593,23 +627,51 @@ def _run_site_validation():
         ],
     }
 
+    # Compute deterministic sub-scores from the data BEFORE asking the AI.
+    # This prevents the model from inventing wildly different scores each run.
+    total = max(1, summary["total_pages"])
+    orphan_pct = orphans / total * 100
+    no_cluster_pct = no_cluster / total * 100
+    thin_pct = thin / total * 100
+
+    # Deterministic health score (0-100) — computed from data, not LLM guess
+    health = 100
+    health -= min(40, orphan_pct * 1.0)        # up to -40 for orphans
+    health -= min(30, no_cluster_pct * 0.6)    # up to -30 for unclustered
+    health -= min(20, thin_pct * 0.4)          # up to -20 for thin
+    if summary["total_clusters"] < 10:
+        health -= 10                            # penalty for too few clusters
+    deterministic_score = max(0, min(100, int(round(health))))
+
     client = get_client(get_anthropic_key())
     prompt = f"""You are a senior SEO architect. Review this site structure and identify SYSTEMIC issues.
 
 ## SITE SUMMARY
 {json.dumps(summary, ensure_ascii=False, indent=2)}
 
+## DERIVED METRICS
+- Orphan pages: {orphans} ({orphan_pct:.1f}% of site)
+- Pages without cluster: {no_cluster} ({no_cluster_pct:.1f}% of site)
+- Thin pages (<300 words): {thin} ({thin_pct:.1f}% of site)
+- Total clusters: {summary['total_clusters']}
+
+## DETERMINISTIC HEALTH SCORE
+The site's structural health score is **{deterministic_score}/100**.
+This is computed deterministically from the metrics above using a fixed
+rubric (penalties for orphan %, unclustered %, thin %, cluster count).
+You MUST use this exact number in your output. Do NOT invent your own.
+
 ## YOUR ANALYSIS
-Evaluate the OVERALL site health. Focus on:
-1. Cluster completeness
-2. Orphan pages ({orphans} found)
-3. Pages without clusters ({no_cluster})
-4. Content gaps
-5. Cannibalization patterns
+Identify:
+1. Cluster completeness issues
+2. Orphan / unclustered page patterns
+3. Content gaps relative to cluster topics
+4. Structural problems
+5. Concrete priority actions
 
 ## OUTPUT (JSON):
 {{
-  "overall_health_score": 0,
+  "overall_health_score": {deterministic_score},
   "summary": "3-4 sentences about site SEO health",
   "critical_issues": ["issue 1", "issue 2"],
   "structural_problems": ["problem 1"],
@@ -623,9 +685,19 @@ Evaluate the OVERALL site health. Focus on:
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=3000,
+        temperature=0,  # Deterministic output
         messages=[{"role": "user", "content": prompt}],
     )
     result = _parse_ai_json(message)
+    # Force deterministic score regardless of what the model returned
+    if isinstance(result, dict):
+        result["overall_health_score"] = deterministic_score
+        result["_score_components"] = {
+            "orphan_pct": round(orphan_pct, 1),
+            "no_cluster_pct": round(no_cluster_pct, 1),
+            "thin_pct": round(thin_pct, 1),
+            "cluster_count": summary["total_clusters"],
+        }
     st.session_state["_site_validation"] = result
     from utils.persistence import _save_ai_key, _volume_available
     if _volume_available():
@@ -646,6 +718,25 @@ def render():
     if "gsc_data" not in st.session_state:
         st.warning("**First time?** Go to **1. Setup & Connect** in the menu and connect GSC. Then come back here.")
         return
+
+    # ── Freshness banner: warn if gsc_data is old ───────────────
+    age_str, stale = _data_age_str("gsc_data")
+    if age_str:
+        if stale:
+            col_a, col_b = st.columns([4, 1])
+            with col_a:
+                st.warning(f"⚠ GSC data is{age_str.replace(' · ','')} — re-fetch recommended (run Step 1 again).")
+            with col_b:
+                if st.button("Re-fetch GSC", key="rp_refetch_gsc", use_container_width=True, type="primary"):
+                    try:
+                        with st.spinner("Re-fetching fresh GSC data..."):
+                            _run_fetch_gsc()
+                        st.success("GSC data refreshed")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+        else:
+            st.caption(f"📅 GSC data{age_str}")
 
     st.markdown("---")
 
