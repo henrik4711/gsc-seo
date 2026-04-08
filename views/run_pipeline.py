@@ -87,17 +87,47 @@ def _run_step_card(num, title, description, state_key, run_fn, button_key):
 # ── Run functions for each step ─────────────────────────────────
 
 def _run_fetch_gsc():
-    from utils.gsc_client import fetch_gsc_data, build_gsc_service
+    from utils.gsc_client import fetch_gsc_data, build_gsc_service, list_properties
     creds = st.session_state.get("gsc_credentials")
     site = st.session_state.get("gsc_site_url") or st.session_state.get("gsc_site")
     if not creds or not site:
         raise ValueError("GSC credentials or site URL missing — go to 1. Setup & Connect first")
-    if "gsc_service" not in st.session_state:
-        st.session_state["gsc_service"] = build_gsc_service(creds)
-    df = fetch_gsc_data(st.session_state["gsc_service"], site)
+
+    # Always rebuild service to avoid stale cached client
+    service = build_gsc_service(creds)
+    st.session_state["gsc_service"] = service
+
+    try:
+        df = fetch_gsc_data(service, site)
+    except Exception as e:
+        msg = str(e)
+        if "403" in msg or "sufficient permission" in msg.lower() or "forbidden" in msg.lower():
+            sa_email = creds.get("client_email", "(unknown)") if isinstance(creds, dict) else "(unknown)"
+            # Try to list visible properties to help diagnose
+            visible = []
+            try:
+                visible = list_properties(service)
+            except Exception:
+                pass
+            visible_str = "\n".join(f"  - {v}" for v in visible) if visible else "  (none — service account has no GSC access at all)"
+            raise RuntimeError(
+                f"GSC 403 — service account does not have access to '{site}'.\n\n"
+                f"Service account email: {sa_email}\n\n"
+                f"FIX:\n"
+                f"1. Go to https://search.google.com/search-console\n"
+                f"2. Select property '{site}'\n"
+                f"3. Settings → Users and permissions → Add user\n"
+                f"4. Paste: {sa_email}\n"
+                f"5. Role: Full or Restricted\n"
+                f"6. Save and re-run this step\n\n"
+                f"Properties this service account CAN see right now:\n{visible_str}"
+            ) from e
+        raise
+
     st.session_state["gsc_data"] = df
     st.session_state["gsc_site"] = site
     save_key("gsc_data")
+    save_key("gsc_site")
 
 
 def _run_build_authority():
