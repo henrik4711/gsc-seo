@@ -229,6 +229,274 @@ def _generate_all_fixes(page):
     save_ai_cache()
 
 
+def _build_total_plan(page, plan_data, text_data, intro_data):
+    """Build ordered action list with priorities and time estimates."""
+    url = page["url"]
+    audit = page["audit"]
+    url_hash = stable_hash(url)
+    actions = []
+
+    # Priority 1: Cannibalization resolution (if this page is a LOSER)
+    cannibal_df = st.session_state.get("cannibalization")
+    if cannibal_df is not None and not cannibal_df.empty:
+        for _, row in cannibal_df.iterrows():
+            if row.get("severity") not in ("severe", "moderate"):
+                continue
+            pages_detail = row.get("pages_detail", [])
+            if isinstance(pages_detail, list):
+                is_involved = any(normalize_url(p.get("page", "")) == normalize_url(url) for p in pages_detail)
+                if is_involved:
+                    is_winner = normalize_url(row.get("recommended_winner", "")) == normalize_url(url)
+                    merge_action = row.get("merge_action", "")
+                    if "DIFFERENT INTENTS" not in merge_action and "Homepage involved" not in merge_action:
+                        if is_winner:
+                            actions.append({
+                                "priority": 1,
+                                "title": f"CANNIBALIZATION: This page WINS for '{row['query']}'",
+                                "detail": f"{row['lost_clicks_estimate']:,} lost clicks. Redirect loser pages here.",
+                                "time": 15,
+                                "type": "cannibalization",
+                            })
+                        else:
+                            actions.append({
+                                "priority": 1,
+                                "title": f"CANNIBALIZATION: This page LOSES for '{row['query']}'",
+                                "detail": f"Redirect this page to: {row.get('recommended_winner', '')}",
+                                "time": 10,
+                                "type": "cannibalization",
+                            })
+                    break
+
+    # Priority 2: Meta title + description
+    if plan_data.get("meta_changed"):
+        new_title = plan_data.get("meta_title", "")
+        new_desc = plan_data.get("meta_description", "")
+        actions.append({
+            "priority": 2,
+            "title": "Update meta title and description",
+            "detail": f"Title: {new_title}\nDescription: {new_desc}",
+            "time": 5,
+            "type": "meta",
+        })
+
+    # Priority 3: Replace bottom text
+    if text_data and text_data.get("html"):
+        wc = text_data.get("word_count", 0)
+        actions.append({
+            "priority": 3,
+            "title": "Replace bottom text (below product grid)",
+            "detail": f"New text: {wc} words with FAQ, E-E-A-T, products. Download HTML and paste into Magento Description field.",
+            "time": 10,
+            "type": "bottom_text",
+        })
+
+    # Priority 4: Replace intro text
+    if intro_data and not intro_data.get("error"):
+        new_intro = intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
+        if new_intro:
+            intro_wc = len(new_intro.split())
+            actions.append({
+                "priority": 4,
+                "title": "Update intro text (above product grid)",
+                "detail": f"New intro: {intro_wc} words. Paste as first paragraph of Description.",
+                "time": 5,
+                "type": "intro",
+            })
+
+    # Priority 5: Add missing internal links
+    content_audit = audit.get("content_audit") or {}
+    linking = content_audit.get("linking") or {}
+    link_details = linking.get("details") or {}
+    missing_links = link_details.get("missing_crosslinks", [])
+    if missing_links:
+        actions.append({
+            "priority": 5,
+            "title": f"Add {len(missing_links)} missing internal links to cluster pages",
+            "detail": "See [INBOUND LINKS] section for specific URLs and anchor texts",
+            "time": len(missing_links) * 2,
+            "type": "links_add",
+        })
+
+    # Priority 6: Remove bad links
+    links_to_remove = link_details.get("links_to_remove", [])
+    if links_to_remove:
+        actions.append({
+            "priority": 6,
+            "title": f"Review {len(links_to_remove)} links pointing outside topic cluster",
+            "detail": "Remove only if they harm topical focus — be conservative",
+            "time": 5,
+            "type": "links_remove",
+        })
+
+    # Priority 7: New articles to write
+    new_articles = plan_data.get("new_content_suggestions", [])
+    if new_articles:
+        actions.append({
+            "priority": 7,
+            "title": f"Write {len(new_articles)} supporting blog articles",
+            "detail": f"Topics: {', '.join(a.get('suggested_title', '')[:40] for a in new_articles[:3])}",
+            "time": len(new_articles) * 60,
+            "type": "blogs",
+        })
+
+    # Priority 8: Technical fixes
+    tech_items = []
+    schema_types = audit.get("schema_types", []) or []
+    if not any("breadcrumb" in str(s).lower() for s in schema_types):
+        tech_items.append("BreadcrumbList schema")
+    if page["page_type"] == "category" and not any("itemlist" in str(s).lower() for s in schema_types):
+        tech_items.append("ItemList schema")
+    images_no_alt = audit.get("images_without_alt", 0)
+    if images_no_alt > 0:
+        tech_items.append(f"{images_no_alt} alt texts")
+    if tech_items:
+        actions.append({
+            "priority": 8,
+            "title": f"Technical fixes: {', '.join(tech_items)}",
+            "detail": "Add schema markup and fix alt texts",
+            "time": 15,
+            "type": "technical",
+        })
+
+    return actions
+
+
+def _export_page_as_markdown(page, plan_data, text_data, intro_data):
+    """Export everything for this page as markdown."""
+    url = page["url"]
+    audit = page["audit"]
+    md = []
+
+    md.append(f"# {url}")
+    md.append("")
+    md.append(f"## Metrics")
+    md.append(f"- **Impressions:** {page['impressions']:,}")
+    md.append(f"- **Lost clicks:** {page['lost_clicks']:,}")
+    md.append(f"- **Meta score:** {page['meta_score']}/100")
+    md.append(f"- **Content score:** {page['content_score']}/100")
+    md.append(f"- **Page type:** {page['page_type']}")
+    md.append(f"- **Word count:** {page['word_count']}")
+    md.append(f"- **Intent:** {audit.get('search_intent', 'unknown')}")
+    md.append(f"- **Referring domains:** {audit.get('referring_domains', 0)}")
+    md.append("")
+
+    # Total Plan
+    total_plan = _build_total_plan(page, plan_data, text_data, intro_data)
+    if total_plan:
+        total_time = sum(a["time"] for a in total_plan)
+        md.append(f"## TOTAL PLAN ({total_time} min total)")
+        md.append("")
+        for a in total_plan:
+            md.append(f"### {a['priority']}. {a['title']} ({a['time']} min)")
+            md.append(a["detail"])
+            md.append("")
+
+    # Meta
+    md.append("## META")
+    md.append(f"**Current title** ({len(page['title'] or '')} chars):")
+    md.append(f"`{page['title']}`")
+    md.append("")
+    md.append(f"**Current description** ({len(page['meta_description'] or '')} chars):")
+    md.append(f"`{page['meta_description']}`")
+    md.append("")
+    if plan_data.get("meta_changed"):
+        md.append(f"**New title** ({len(plan_data.get('meta_title', ''))} chars):")
+        md.append(f"`{plan_data.get('meta_title', '')}`")
+        md.append("")
+        md.append(f"**New description** ({len(plan_data.get('meta_description', ''))} chars):")
+        md.append(f"`{plan_data.get('meta_description', '')}`")
+        md.append("")
+
+    # Intro text
+    if intro_data and not intro_data.get("error"):
+        new_intro = intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
+        if new_intro:
+            md.append("## NEW INTRO TEXT (above product grid)")
+            md.append("")
+            md.append(new_intro)
+            md.append("")
+
+    # Bottom text
+    if text_data and text_data.get("html"):
+        md.append("## NEW BOTTOM TEXT (below product grid)")
+        md.append(f"- Word count: {text_data.get('word_count', 0)}")
+        md.append(f"- Keywords: {', '.join(text_data.get('keywords_integrated', []))}")
+        md.append(f"- Internal links: {len(text_data.get('internal_links_added', []))}")
+        md.append(f"- Products: {len(text_data.get('products_featured', []))}")
+        md.append("")
+        md.append("```html")
+        md.append(text_data.get("html", ""))
+        md.append("```")
+        md.append("")
+
+    # Plan steps
+    plan_steps = plan_data.get("steps", [])
+    if plan_steps:
+        md.append("## IMPLEMENTATION STEPS")
+        md.append("")
+        for i, s in enumerate(plan_steps, 1):
+            md.append(f"### {i}. {s.get('action', '')} ({s.get('time_minutes', '?')} min)")
+            md.append(f"**Problem:** {s.get('detail', '')}")
+            md.append(f"**Action:** {s.get('instruction', '')}")
+            md.append("")
+
+    # New articles
+    new_articles = plan_data.get("new_content_suggestions", [])
+    if new_articles:
+        md.append("## NEW ARTICLES TO WRITE")
+        md.append("")
+        for a in new_articles:
+            md.append(f"### {a.get('suggested_title', '')}")
+            md.append(f"**Why:** {a.get('why', '')}")
+            md.append(f"**Keywords:** {', '.join(a.get('target_keywords', []))}")
+            md.append(f"**Link from:** {a.get('link_from', '')}")
+            md.append("")
+
+    # Links
+    content_audit = audit.get("content_audit") or {}
+    linking = content_audit.get("linking") or {}
+    link_details = linking.get("details") or {}
+
+    missing_links = link_details.get("missing_crosslinks", [])
+    if missing_links:
+        md.append("## INTERNAL LINKS TO ADD")
+        md.append("")
+        for l in missing_links[:10]:
+            md.append(f"- Link to `{l.get('url', '')}` (shared topics: {', '.join(l.get('shared_topics', [])[:2])})")
+        md.append("")
+
+    links_to_remove = link_details.get("links_to_remove", [])
+    if links_to_remove:
+        md.append("## LINKS TO REVIEW (possibly remove)")
+        md.append("")
+        for l in links_to_remove[:10]:
+            md.append(f"- `{l.get('url', '')}` — anchor: '{l.get('anchor', '')}'")
+        md.append("")
+
+    # Cannibalization
+    cannibal_df = st.session_state.get("cannibalization")
+    if cannibal_df is not None and not cannibal_df.empty:
+        cannibal_rows = []
+        for _, row in cannibal_df.iterrows():
+            pages_detail = row.get("pages_detail", [])
+            if isinstance(pages_detail, list):
+                if any(normalize_url(p.get("page", "")) == normalize_url(url) for p in pages_detail):
+                    cannibal_rows.append(row)
+        if cannibal_rows:
+            md.append("## CANNIBALIZATION CONFLICTS")
+            md.append("")
+            for row in cannibal_rows[:5]:
+                is_winner = normalize_url(row.get("recommended_winner", "")) == normalize_url(url)
+                winner_text = "This page WINS" if is_winner else f"Winner: {row.get('recommended_winner', '')}"
+                md.append(f"- **'{row['query']}'** [{row['severity'].upper()}]")
+                md.append(f"  - {winner_text}")
+                md.append(f"  - Lost clicks: {row['lost_clicks_estimate']:,}")
+                md.append(f"  - Action: {row.get('merge_action', '')[:200]}")
+            md.append("")
+
+    return "\n".join(md)
+
+
 def _approval_button(label, key):
     """Approve/Reject toggle stored in session state."""
     state_key = f"_qw_approved_{key}"
@@ -340,11 +608,65 @@ def render():
 
     st.markdown("---")
 
-    # ── Generate / Show fixes ────────────────────────────────
+    # ── TOTAL PLAN (ordered action list) ────────────────────
     plan_key = f"_ai_plan_{url_hash}"
     text_key = f"_bottom_text_{url_hash}"
-    has_plan = plan_key in st.session_state and not st.session_state[plan_key].get("error")
-    has_text = text_key in st.session_state and not st.session_state[text_key].get("error")
+    intro_key = f"_intro_text_{url_hash}"
+
+    plan_data = st.session_state.get(plan_key, {})
+    text_data = st.session_state.get(text_key, {})
+    intro_data = st.session_state.get(intro_key, {})
+
+    if plan_data and not plan_data.get("error"):
+        total_plan = _build_total_plan(page, plan_data, text_data, intro_data)
+        if total_plan:
+            total_time = sum(a["time"] for a in total_plan)
+
+            st.markdown(f"### 📋 TOTAL PLAN — {len(total_plan)} actions · ~{total_time} min")
+            st.markdown(
+                "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+                "Ordered by priority. Start from #1 and work down.</p>",
+                unsafe_allow_html=True,
+            )
+
+            for a in total_plan:
+                priority_colors = {
+                    1: "#ff4455",  # Cannibalization
+                    2: "#ff6644",  # Meta
+                    3: "#ffaa33",  # Bottom text
+                    4: "#ffaa33",  # Intro
+                    5: "#c8b4ff",  # Links add
+                    6: "#c8b4ff",  # Links remove
+                    7: "#5bb4d4",  # Blogs
+                    8: "#6b6b8a",  # Technical
+                }
+                color = priority_colors.get(a["priority"], "#6b6b8a")
+                st.markdown(
+                    f"<div style='background:#0d0d15; border-left:3px solid {color}; padding:0.6rem 0.8rem; margin-bottom:0.4rem; border-radius:0 4px 4px 0;'>"
+                    f"<div style='font-size:0.85rem; color:#e8e8f0;'><strong>{a['priority']}. {a['title']}</strong> "
+                    f"<span style='color:{color}; font-size:0.7rem;'>· {a['time']} min</span></div>"
+                    f"<div style='color:#9b9bb8; font-size:0.75rem; margin-top:0.2rem;'>{a['detail']}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+            # Export button
+            col_exp1, col_exp2 = st.columns([3, 1])
+            with col_exp2:
+                markdown_export = _export_page_as_markdown(page, plan_data, text_data, intro_data)
+                st.download_button(
+                    "📄 Export all to Markdown",
+                    data=markdown_export,
+                    file_name=f"seo_plan_{shorten_url(url).replace('/', '_').strip('_')}.md",
+                    mime="text/markdown",
+                    key=f"export_{url_hash}",
+                    use_container_width=True,
+                )
+            st.markdown("---")
+
+    # ── Generate / Show fixes ────────────────────────────────
+    has_plan = bool(plan_data and not plan_data.get("error"))
+    has_text = bool(text_data and not text_data.get("error"))
 
     if not has_plan or (page["page_type"] == "category" and not has_text):
         st.markdown("### AI fixes — not generated yet")
