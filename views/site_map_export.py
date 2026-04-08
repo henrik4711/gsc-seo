@@ -780,6 +780,7 @@ Evaluate the OVERALL site health. Focus on:
                     message = client.messages.create(
                         model="claude-sonnet-4-20250514",
                         max_tokens=3000,
+                        temperature=0,
                         messages=[{"role": "user", "content": prompt}],
                     )
                     result = _parse_ai_json(message)
@@ -885,6 +886,7 @@ Evaluate the OVERALL site health. Focus on:
                     msg1 = client.messages.create(
                         model="claude-sonnet-4-20250514",
                         max_tokens=4000,
+                        temperature=0,
                         messages=[{"role": "user", "content": f"""Design 20-40 topic clusters for this e-commerce site.
 
 Site: {site_ctx}
@@ -905,6 +907,7 @@ Output JSON: {{"clusters":[{{"name":"...","intent":"...","hub":"/url","hub_kw":"
                     msg2 = client.messages.create(
                         model="claude-sonnet-4-20250514",
                         max_tokens=2000,
+                        temperature=0,
                         messages=[{"role": "user", "content": f"""Given these topic clusters for {site_ctx}:
 {chr(10).join(f'- {n}' for n in cluster_names)}
 
@@ -924,6 +927,7 @@ Output JSON: {{"merge":[{{"from":["/url1","/url2"],"to":"/url","why":"reason"}}]
                     msg3 = client.messages.create(
                         model="claude-sonnet-4-20250514",
                         max_tokens=2000,
+                        temperature=0,
                         messages=[{"role": "user", "content": f"""Site: {site_ctx}
 Current score: {site_issues.get('overall_health_score', '?')}/100
 Proposed: {len(clusters_result.get('clusters', []))} clusters, {len(changes_result.get('merge', []))} merges, {len(changes_result.get('delete', []))} deletes, {len(changes_result.get('create', []))} new pages.
@@ -1102,6 +1106,7 @@ What can be done without risk, what needs careful handling.
                     message = client.messages.create(
                         model="claude-sonnet-4-20250514",
                         max_tokens=3000,
+                        temperature=0,
                         messages=[{"role": "user", "content": prompt}],
                     )
                     result = _parse_ai_json(message)
@@ -1255,6 +1260,7 @@ Cross-check the implementation plans against the site issues. Answer:
                     message = client.messages.create(
                         model="claude-sonnet-4-20250514",
                         max_tokens=3000,
+                        temperature=0,
                         messages=[{"role": "user", "content": prompt}],
                     )
                     result = _parse_ai_json(message)

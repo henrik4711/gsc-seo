@@ -366,24 +366,40 @@ def _run_ideal_structure():
     # Call 1: Cluster design
     msg1 = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=4000,
+        max_tokens=8000,
         temperature=0,
-        messages=[{"role": "user", "content": f"""Design 20-40 topic clusters for this e-commerce site.
+        messages=[{"role": "user", "content": f"""Design 15-25 topic clusters for this e-commerce site.
 Site: {site_ctx}
 Problems: {issues_text}
 Top keywords:
 {kw_text}
 Current clusters: {current_clusters_text}
-For each cluster: name, intent (commercial/informational), hub URL, hub keyword, 2-5 spoke URLs.
-Output JSON: {{"clusters":[{{"name":"...","intent":"...","hub":"/url","hub_kw":"...","spokes":["/url1","/url2"]}}]}}"""}],
+
+For each cluster: name, intent (commercial/informational), hub URL, hub keyword, 2-4 spoke URLs.
+Keep names short (<40 chars). Keep "why" empty if not essential.
+
+Output ONLY valid JSON, no markdown, no commentary:
+{{"clusters":[{{"name":"...","intent":"...","hub":"/url","hub_kw":"...","spokes":["/url1","/url2"]}}]}}"""}],
     )
-    clusters_result = _parse_ai_json(msg1)
+    try:
+        clusters_result = _parse_ai_json(msg1)
+    except Exception as e:
+        # Provide actionable error if JSON truncated
+        raw = msg1.content[0].text if msg1.content else ""
+        stop_reason = getattr(msg1, 'stop_reason', 'unknown')
+        raise ValueError(
+            f"Cluster design call failed to return valid JSON. "
+            f"Stop reason: {stop_reason}. "
+            f"Response length: {len(raw)} chars. "
+            f"{'TRUNCATED — increase max_tokens or reduce cluster count.' if stop_reason == 'max_tokens' else ''} "
+            f"First 300 chars: {raw[:300]}"
+        ) from e
 
     # Call 2: Merge/delete/create
     cluster_names = [c.get("name", "") for c in clusters_result.get("clusters", [])]
     msg2 = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=2000,
+        max_tokens=6000,
         temperature=0,
         messages=[{"role": "user", "content": f"""Given these topic clusters for {site_ctx}:
 {chr(10).join(f'- {n}' for n in cluster_names)}
@@ -392,23 +408,45 @@ What pages should be:
 1. MERGED (multiple pages competing for same keyword)
 2. DELETED (no SEO value)
 3. CREATED (missing content)
-Output JSON: {{"merge":[{{"from":["/url1","/url2"],"to":"/url","why":"reason"}}],"delete":[{{"url":"/url","why":"reason"}}],"create":[{{"url":"/url","type":"blog","kw":"keyword","why":"reason"}}]}}"""}],
+
+Keep "why" short (<60 chars). Output ONLY valid JSON, no commentary:
+{{"merge":[{{"from":["/url1","/url2"],"to":"/url","why":"reason"}}],"delete":[{{"url":"/url","why":"reason"}}],"create":[{{"url":"/url","type":"blog","kw":"keyword","why":"reason"}}]}}"""}],
     )
-    changes_result = _parse_ai_json(msg2)
+    try:
+        changes_result = _parse_ai_json(msg2)
+    except Exception as e:
+        raw = msg2.content[0].text if msg2.content else ""
+        stop_reason = getattr(msg2, 'stop_reason', 'unknown')
+        raise ValueError(
+            f"Merge/delete/create call failed to return valid JSON. "
+            f"Stop reason: {stop_reason}. Length: {len(raw)} chars. "
+            f"{'TRUNCATED — bump max_tokens.' if stop_reason == 'max_tokens' else ''} "
+            f"First 300 chars: {raw[:300]}"
+        ) from e
 
     # Call 3: Summary
     msg3 = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=2000,
+        max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": f"""Site: {site_ctx}
 Current score: {site_issues.get('overall_health_score', '?')}/100
 Proposed: {len(clusters_result.get('clusters', []))} clusters, {len(changes_result.get('merge', []))} merges, {len(changes_result.get('delete', []))} deletes, {len(changes_result.get('create', []))} new pages.
 Top 10 keywords and where they should live:
 {chr(10).join(kw_lines[:10])}
-Output JSON: {{"keyword_assignments":[{{"keyword":"kw","ideal_page":"/url","action":"keep|move|create"}}],"estimated_new_score":0,"summary":"3 sentences about ideal vs current"}}"""}],
+
+Output ONLY valid JSON, no commentary:
+{{"keyword_assignments":[{{"keyword":"kw","ideal_page":"/url","action":"keep|move|create"}}],"estimated_new_score":0,"summary":"3 sentences about ideal vs current"}}"""}],
     )
-    summary_result = _parse_ai_json(msg3)
+    try:
+        summary_result = _parse_ai_json(msg3)
+    except Exception as e:
+        raw = msg3.content[0].text if msg3.content else ""
+        stop_reason = getattr(msg3, 'stop_reason', 'unknown')
+        # Non-fatal — fill defaults so the other 2 results aren't lost
+        print(f"[ideal_structure] Call 3 summary failed ({stop_reason}): {e}")
+        summary_result = {"keyword_assignments": [], "estimated_new_score": 0,
+                          "summary": f"(Summary call failed: {stop_reason})"}
 
     combined = {
         "clusters": clusters_result.get("clusters", []),
