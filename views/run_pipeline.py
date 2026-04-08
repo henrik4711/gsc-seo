@@ -89,7 +89,11 @@ def _run_step_card(num, title, description, state_key, run_fn, button_key):
 def _run_fetch_gsc():
     from utils.gsc_client import fetch_gsc_data, build_gsc_service, list_properties
     creds = st.session_state.get("gsc_credentials")
-    site = st.session_state.get("gsc_site_url") or st.session_state.get("gsc_site")
+    # Prefer the disk-saved gsc_site (verified by user via Setup picker) over
+    # the env-var gsc_site_url. Env var is only fallback for first-time setup.
+    # Without this, every deploy = session reset = env var overrides the
+    # working value, causing 403 if env var format differs from GSC's stored property.
+    site = st.session_state.get("gsc_site") or st.session_state.get("gsc_site_url")
     if not creds or not site:
         raise ValueError("GSC credentials or site URL missing — go to 1. Setup & Connect first")
 
