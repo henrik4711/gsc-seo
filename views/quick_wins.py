@@ -361,6 +361,130 @@ def _build_total_plan(page, plan_data, text_data, intro_data):
     return actions
 
 
+def _validate_generated_content(page, text_data, plan_data):
+    """
+    Post-generation validation layer.
+    Verifies AI-generated content actually uses correct URLs, products, images.
+    Returns dict with passed/failed checks.
+    """
+    import re
+
+    results = {
+        "checks": [],
+        "passed": 0,
+        "failed": 0,
+        "warnings": 0,
+    }
+
+    def _check(passed, message, severity="error"):
+        results["checks"].append({"passed": passed, "message": message, "severity": severity})
+        if passed:
+            results["passed"] += 1
+        elif severity == "warning":
+            results["warnings"] += 1
+        else:
+            results["failed"] += 1
+
+    audit = page["audit"]
+    html = text_data.get("html", "") if text_data else ""
+
+    # ── 1. Check all URLs in generated HTML exist on the site ──
+    all_site_urls = set()
+    audit_results = st.session_state.get("audit_results", [])
+    for r in audit_results:
+        if r.get("url"):
+            all_site_urls.add(normalize_url(r["url"]))
+    gsc = st.session_state.get("gsc_data")
+    if gsc is not None and hasattr(gsc, "page"):
+        for p in gsc["page"].unique():
+            all_site_urls.add(normalize_url(str(p)))
+
+    if html:
+        urls_in_html = re.findall(r'href=["\']([^"\']+)["\']', html)
+        site_urls_used = [u for u in urls_in_html if "mshop.se" in u or u.startswith("/")]
+
+        invented = []
+        for u in site_urls_used:
+            norm = normalize_url(u)
+            if norm not in all_site_urls:
+                invented.append(u)
+
+        if invented:
+            _check(False, f"{len(invented)} invented URLs in generated text (not on site): {', '.join(invented[:3])}", "error")
+        else:
+            _check(True, f"All {len(site_urls_used)} internal URLs exist on the site", "info")
+
+        # ── 2. Check URLs don't point to broken pages ──
+        crawl_issues = st.session_state.get("sf_crawl_issues", {})
+        broken_urls = set(normalize_url(b.get("url", "")) for b in crawl_issues.get("broken_links", []))
+        redirected_urls = set(normalize_url(r.get("url", "")) for r in crawl_issues.get("redirect_chains", []))
+        noindex_urls = set(normalize_url(n.get("url", "")) for n in crawl_issues.get("non_indexable", []))
+
+        broken_in_text = [u for u in site_urls_used if normalize_url(u) in broken_urls]
+        redirect_in_text = [u for u in site_urls_used if normalize_url(u) in redirected_urls]
+        noindex_in_text = [u for u in site_urls_used if normalize_url(u) in noindex_urls]
+
+        if broken_in_text:
+            _check(False, f"{len(broken_in_text)} links point to BROKEN pages: {', '.join(broken_in_text[:3])}", "error")
+        else:
+            _check(True, "No links to broken pages", "info")
+
+        if redirect_in_text:
+            _check(False, f"{len(redirect_in_text)} links point to REDIRECT pages: {', '.join(redirect_in_text[:3])}", "warning")
+
+        if noindex_in_text:
+            _check(False, f"{len(noindex_in_text)} links point to NON-INDEXABLE pages: {', '.join(noindex_in_text[:3])}", "warning")
+
+        # ── 3. Check product images are actually used ──
+        real_products = audit.get("products", []) or []
+        if real_products:
+            real_image_urls = set(p.get("image", "") for p in real_products if p.get("image"))
+            images_in_html = set(re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', html))
+
+            if real_image_urls:
+                used_real_images = real_image_urls & images_in_html
+                if used_real_images:
+                    _check(True, f"Uses {len(used_real_images)}/{len(real_image_urls)} real product images", "info")
+                else:
+                    _check(False, f"0/{len(real_image_urls)} real product images used — AI may have invented image paths", "warning")
+
+        # ── 4. Check product URLs are real ──
+        real_product_urls = set(normalize_url(p.get("url", "")) for p in real_products if p.get("url"))
+        product_link_urls = set(normalize_url(u) for u in site_urls_used
+                                if any(patt in u.lower() for patt in ["/produkt", "/product", "/p/"]))
+
+        if real_product_urls and product_link_urls:
+            invented_products = product_link_urls - real_product_urls - all_site_urls
+            if invented_products:
+                _check(False, f"{len(invented_products)} invented product URLs", "error")
+            else:
+                _check(True, "All product URLs are real", "info")
+
+        # ── 5. Check minimum link count ──
+        link_count = len(site_urls_used)
+        if link_count < 8:
+            _check(False, f"Only {link_count} internal links (target: 8-12)", "warning")
+        else:
+            _check(True, f"{link_count} internal links (good)", "info")
+
+        # ── 6. Check FAQ section present ──
+        if page["page_type"] == "category":
+            has_faq = "vanliga frågor" in html.lower() or "<h2" in html.lower() and "faq" in html.lower()
+            _check(has_faq, "FAQ section present" if has_faq else "FAQ section missing", "warning" if not has_faq else "info")
+
+        # ── 7. Check target keywords are present ──
+        target_keywords = audit.get("target_keywords", [])[:5]
+        if target_keywords:
+            html_lower = html.lower()
+            missing_kws = [kw for kw in target_keywords if kw.lower() not in html_lower]
+            if missing_kws:
+                _check(False, f"{len(missing_kws)}/{len(target_keywords)} target keywords missing: {', '.join(missing_kws[:3])}", "warning")
+            else:
+                _check(True, f"All {len(target_keywords)} target keywords present", "info")
+
+    return results
+
+
 def _export_page_as_markdown(page, plan_data, text_data, intro_data):
     """Export everything for this page as markdown."""
     url = page["url"]
@@ -750,6 +874,42 @@ def render():
                 unsafe_allow_html=True,
             )
             _approval_button("Bottom Text", f"{url_hash}_text")
+
+            # ── QUALITY VALIDATION of generated content ──
+            st.markdown("##### Quality validation")
+            val_results = _validate_generated_content(page, text_data, plan)
+            total_checks = len(val_results["checks"])
+            passed = val_results["passed"]
+            failed = val_results["failed"]
+            warnings = val_results["warnings"]
+
+            # Status badge
+            if failed == 0 and warnings == 0:
+                badge_color = "#33dd88"
+                badge_text = f"✓ All {total_checks} validations passed"
+            elif failed == 0:
+                badge_color = "#ffaa33"
+                badge_text = f"⚠ {passed}/{total_checks} passed, {warnings} warnings"
+            else:
+                badge_color = "#ff4455"
+                badge_text = f"✗ {failed} FAILED, {warnings} warnings, {passed} passed"
+
+            st.markdown(
+                f"<div style='background:#0d0d15; border:2px solid {badge_color}; border-radius:6px; padding:0.6rem; margin:0.5rem 0;'>"
+                f"<div style='font-size:0.85rem; color:{badge_color}; font-weight:600;'>{badge_text}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+            # Show individual check results
+            with st.expander("View all validation checks", expanded=(failed > 0)):
+                for check in val_results["checks"]:
+                    icon = "✓" if check["passed"] else ("✗" if check["severity"] == "error" else "⚠")
+                    color = "#33dd88" if check["passed"] else ("#ff4455" if check["severity"] == "error" else "#ffaa33")
+                    st.markdown(
+                        f"<div style='font-size:0.8rem; color:{color}; margin:0.2rem 0;'>"
+                        f"{icon} {check['message']}</div>",
+                        unsafe_allow_html=True,
+                    )
             st.markdown("---")
 
         # ── Meta title + description (always show with assessment) ──
