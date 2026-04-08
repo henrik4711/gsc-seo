@@ -247,6 +247,7 @@ def _run_quality_check():
     if not candidates:
         return
     client = get_client(get_anthropic_key())
+    from utils.persistence import save
     # Process in batches of 5
     for i in range(0, min(len(candidates), 50), 5):  # Max 50 pages per click
         batch = candidates[i:i+5]
@@ -258,9 +259,9 @@ def _run_quality_check():
         )
         for r in results:
             url = r.get("url", "")
-            st.session_state[f"_quality_{stable_hash(url)}"] = r
-    from utils.persistence import save_ai_cache
-    save_ai_cache()
+            key = f"_quality_{stable_hash(url)}"
+            st.session_state[key] = r
+            save(key)  # Persist immediately per-item
 
 
 def _run_ideal_structure():
@@ -898,6 +899,50 @@ def render():
                         changed += 1
                 save_key("audit_results")
                 st.success(f"Re-classified {changed}/{len(results)} pages")
+                st.rerun()
+
+    # ── Cache Status ────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 💾 Cache Status")
+    from utils.persistence import get_storage_info, _volume_available, AI_CACHE_DIR
+    import os
+    if not _volume_available():
+        st.warning("⚠ No persistent volume mounted (/data missing). Running locally — nothing is cached to disk.")
+    else:
+        info = get_storage_info()
+        ai_info = info.get("files", {}).get("ai_cache", {})
+        total_mb = info.get("total_mb", 0)
+
+        # Count AI cache files by prefix
+        prefix_counts = {}
+        if os.path.isdir(AI_CACHE_DIR):
+            for fname in os.listdir(AI_CACHE_DIR):
+                if not fname.endswith(".json"):
+                    continue
+                key = fname[:-5]
+                prefix = "other"
+                for p in ("_cluster_health_", "_quality_", "_ai_plan_", "_bottom_text_",
+                          "_intro_text_", "_site_validation", "_ideal_structure",
+                          "_gap_analysis", "_plan_validation", "_kw_filter_"):
+                    if key.startswith(p):
+                        prefix = p.rstrip("_")
+                        break
+                prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            lines = [f"**Total on disk:** {total_mb} MB · **AI cache files:** {ai_info.get('count', 0)}"]
+            if prefix_counts:
+                lines.append("")
+                lines.append("**AI cache breakdown:**")
+                for p, c in sorted(prefix_counts.items(), key=lambda x: -x[1]):
+                    lines.append(f"- `{p}` — {c} file(s)")
+            st.markdown("\n".join(lines))
+        with col2:
+            if st.button("Force save all", key="rp_force_save", use_container_width=True):
+                from utils.persistence import save_all
+                save_all()
+                st.success("All in-memory state saved to disk")
                 st.rerun()
 
     st.markdown("---")
