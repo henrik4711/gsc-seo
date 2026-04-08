@@ -346,6 +346,7 @@ def _blogs_to_review():
     audit_results = st.session_state.get("audit_results", [])
     blogs = []
     for r in audit_results:
+        # Only real blogs/faq — NOT info/corporate pages like /hjalp/, /jobb, /kontakt
         if r.get("page_type") not in ("blog", "faq"):
             continue
         url = r.get("url", "")

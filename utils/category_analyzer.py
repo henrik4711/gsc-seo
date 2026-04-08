@@ -62,7 +62,23 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
     product_patterns = ["/products/", "/produkt/", "/product/", "/p/"]
     category_patterns = ["/kategori/", "/category/", "/collections/", "/c/", "/alla/", "/sexleksaker/", "/bondage", "/apotek", "/sexiga-underklader"]
     blog_patterns = ["/blog/", "/blogg/", "/artikel/", "/guide/", "/tips/", "/magazin/", "/topplistan/"]
-    faq_patterns = ["/faq/", "/fragor/", "/hjalp/", "/help/", "/support/"]
+    faq_patterns = ["/faq/", "/fragor/", "/faqs/", "/vanliga-fragor/"]
+    # "info" = static utility/corporate pages: help desk, contact, jobs, terms,
+    # shipping, privacy, about us, returns, customer service. These should
+    # NOT be treated as blog or category content — they have no SEO value.
+    info_patterns = [
+        "/hjalp/", "/help/", "/support/", "/kundservice", "/customer-service",
+        "/kontakt", "/contact", "/jobb", "/jobs", "/karriar", "/career",
+        "/om-oss", "/about", "/about-us",
+        "/villkor", "/terms", "/kopvillkor",
+        "/integritet", "/privacy", "/personuppgift",
+        "/leverans", "/shipping", "/delivery", "/frakt",
+        "/retur", "/returns", "/angerratt",
+        "/betalning", "/payment",
+        "/cookie", "/cookies",
+        "/nyhetsbrev", "/newsletter",
+        "/gift-card", "/presentkort",
+    ]
 
     # Magento flat URL category patterns (segment-based, no prefix)
     # e.g. /sexleksaker-for-man, /vuxenleksaker-for-par, /goteborg
@@ -70,12 +86,15 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
                               "glidmedel", "kondomer", "apotek", "rea", "ullared", "goteborg",
                               "stockholm", "malmo", "vara-butiker", "private-collection"]
 
-    if any(p in url_lower for p in product_patterns):
+    if any(p in url_lower for p in info_patterns):
+        result["page_type"] = "info"
+        result["signals"].append("URL is static info/corporate page")
+    elif any(p in url_lower for p in product_patterns):
         result["page_type"] = "product"
         result["signals"].append("URL contains product path")
     elif any(p in url_lower for p in faq_patterns):
         result["page_type"] = "faq"
-        result["signals"].append("URL contains FAQ/help path")
+        result["signals"].append("URL contains FAQ path")
     elif any(p in url_lower for p in blog_patterns):
         result["page_type"] = "blog"
         result["signals"].append("URL contains blog/guide path")
@@ -156,6 +175,13 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
         if any(p in url_lower for p in ["/blog/", "/blogg/", "/artikel/", "/guide/"]):
             result["page_type"] = "blog"
             result["signals"].append("URL contains blog/guide path — forced to blog")
+
+        # INFO OVERRIDE (must be last): static corporate pages always stay info
+        # even if they have long text + headings + no products. Prevents
+        # /hjalp/kontakt, /jobb, /om-oss etc. from being mistaken as blogs.
+        if any(p in url_lower for p in info_patterns):
+            result["page_type"] = "info"
+            result["signals"].append("URL is static info page — forced to info")
 
         # Local pages (store locator, individual locations) → category
         local_patterns = ["/butik", "/vara-butiker", "/store-locator", "/butikker"]

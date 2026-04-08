@@ -363,6 +363,30 @@ def _run_ideal_structure():
     )
     issues_text = chr(10).join(site_issues.get("critical_issues", [])[:5])
 
+    # Build REAL URL list from audit (the ONLY URLs the AI is allowed to reference)
+    from utils.ui_helpers import normalize_url as _nu
+    real_urls = sorted({_nu(r.get("url", "")) for r in audit_results if r.get("url")})
+    # Strip origin for brevity (keep only paths)
+    site_origin = (st.session_state.get("gsc_site") or "").rstrip("/")
+    real_paths = []
+    for u in real_urls:
+        p = u
+        if site_origin and p.startswith(site_origin):
+            p = p[len(site_origin):] or "/"
+        real_paths.append(p)
+    # Pre-filter by top categories/blogs to keep prompt size manageable (top 300)
+    url_list_for_prompt = chr(10).join(real_paths[:300])
+
+    anti_hallucination = """
+CRITICAL RULE — ZERO HALLUCINATION ON URLs:
+Every URL in your output (hub, spokes, from, to, url, ideal_page) MUST be
+copied EXACTLY from the REAL URL list provided below. Do NOT invent URLs
+like '/old-product-123' or '/vibrator-tips'. Do NOT add '-2024' suffixes.
+If a good URL doesn't exist, leave that action out rather than inventing one.
+For 'create' actions you may propose NEW paths BUT mark type='new' and make
+the path realistic for the site's URL structure (observe patterns in the list).
+"""
+
     # Call 1: Cluster design
     msg1 = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -375,8 +399,13 @@ Top keywords:
 {kw_text}
 Current clusters: {current_clusters_text}
 
-For each cluster: name, intent (commercial/informational), hub URL, hub keyword, 2-4 spoke URLs.
-Keep names short (<40 chars). Keep "why" empty if not essential.
+{anti_hallucination}
+
+REAL URLs that exist on this site (USE ONLY THESE for hub/spokes):
+{url_list_for_prompt}
+
+For each cluster: name, intent (commercial/informational), hub URL (from list),
+hub keyword, 2-4 spoke URLs (from list). Keep names short (<40 chars).
 
 Output ONLY valid JSON, no markdown, no commentary:
 {{"clusters":[{{"name":"...","intent":"...","hub":"/url","hub_kw":"...","spokes":["/url1","/url2"]}}]}}"""}],
@@ -404,10 +433,16 @@ Output ONLY valid JSON, no markdown, no commentary:
         messages=[{"role": "user", "content": f"""Given these topic clusters for {site_ctx}:
 {chr(10).join(f'- {n}' for n in cluster_names)}
 The site has {len(audit_results)} pages. Problems: {issues_text}
+
+{anti_hallucination}
+
+REAL URLs that exist (USE ONLY THESE for merge/delete — creates may be new):
+{url_list_for_prompt}
+
 What pages should be:
-1. MERGED (multiple pages competing for same keyword)
-2. DELETED (no SEO value)
-3. CREATED (missing content)
+1. MERGED (multiple pages competing for same keyword) — ALL URLs from real list
+2. DELETED (no SEO value) — URL from real list
+3. CREATED (missing content) — may be new path, mark type accordingly
 
 Keep "why" short (<60 chars). Output ONLY valid JSON, no commentary:
 {{"merge":[{{"from":["/url1","/url2"],"to":"/url","why":"reason"}}],"delete":[{{"url":"/url","why":"reason"}}],"create":[{{"url":"/url","type":"blog","kw":"keyword","why":"reason"}}]}}"""}],
@@ -448,15 +483,88 @@ Output ONLY valid JSON, no commentary:
         summary_result = {"keyword_assignments": [], "estimated_new_score": 0,
                           "summary": f"(Summary call failed: {stop_reason})"}
 
+    # ── Post-validation: strip hallucinated URLs ─────────────────
+    real_path_set = set(real_paths)
+
+    def _is_real(url: str) -> bool:
+        if not url:
+            return False
+        u = str(url).strip()
+        # Strip origin if full URL
+        if site_origin and u.startswith(site_origin):
+            u = u[len(site_origin):] or "/"
+        return u in real_path_set
+
+    hallucinated = {"clusters_hub": 0, "clusters_spokes": 0,
+                    "merge_from": 0, "merge_to": 0, "delete": 0}
+
+    clean_clusters = []
+    for c in clusters_result.get("clusters", []):
+        if not isinstance(c, dict):
+            continue
+        hub = c.get("hub", "")
+        if hub and not _is_real(hub):
+            hallucinated["clusters_hub"] += 1
+            continue  # skip cluster with fake hub
+        clean_spokes = []
+        for s in c.get("spokes", []) or []:
+            if _is_real(s):
+                clean_spokes.append(s)
+            else:
+                hallucinated["clusters_spokes"] += 1
+        c["spokes"] = clean_spokes
+        clean_clusters.append(c)
+
+    clean_merges = []
+    for m in changes_result.get("merge", []):
+        if not isinstance(m, dict):
+            continue
+        to_url = m.get("to", "")
+        from_urls = m.get("from", []) or []
+        if not _is_real(to_url):
+            hallucinated["merge_to"] += 1
+            continue
+        real_from = [u for u in from_urls if _is_real(u)]
+        if not real_from:
+            hallucinated["merge_from"] += len(from_urls)
+            continue
+        if len(real_from) != len(from_urls):
+            hallucinated["merge_from"] += len(from_urls) - len(real_from)
+        # Also skip "merge page with itself" (same from and to)
+        real_from = [u for u in real_from if _nu(u) != _nu(to_url)]
+        if not real_from:
+            continue
+        m["from"] = real_from
+        clean_merges.append(m)
+
+    clean_deletes = []
+    for d in changes_result.get("delete", []):
+        if not isinstance(d, dict):
+            continue
+        if _is_real(d.get("url", "")):
+            clean_deletes.append(d)
+        else:
+            hallucinated["delete"] += 1
+
+    # creates can legitimately be new URLs — keep as-is but mark type
+    clean_creates = []
+    for c in changes_result.get("create", []):
+        if not isinstance(c, dict):
+            continue
+        c["type"] = c.get("type", "new")
+        clean_creates.append(c)
+
     combined = {
-        "clusters": clusters_result.get("clusters", []),
-        "merge": changes_result.get("merge", []),
-        "delete": changes_result.get("delete", []),
-        "create": changes_result.get("create", []),
+        "clusters": clean_clusters,
+        "merge": clean_merges,
+        "delete": clean_deletes,
+        "create": clean_creates,
         "keyword_assignments": summary_result.get("keyword_assignments", []),
         "estimated_new_score": summary_result.get("estimated_new_score", 0),
         "summary": summary_result.get("summary", ""),
+        "_hallucination_report": hallucinated,
     }
+    print(f"[ideal_structure] Hallucination filter: {hallucinated}")
     st.session_state["_ideal_structure"] = combined
     from utils.persistence import _save_ai_key, _volume_available
     if _volume_available():
@@ -646,7 +754,16 @@ def _run_site_validation():
     if df_structure.empty:
         raise ValueError("No site structure data")
 
-    orphans = len(df_structure[df_structure["Links In"] == 0]) if "Links In" in df_structure.columns else 0
+    # Prefer SF's actual orphan_pages list (ground truth from real crawl)
+    # over df_structure's Links-In == 0 calculation (which over-counts because
+    # the inlink map is based on a limited crawl sample).
+    sf_issues = st.session_state.get("sf_crawl_issues") or {}
+    sf_orphans = sf_issues.get("orphan_pages") or []
+    if isinstance(sf_orphans, list) and len(sf_orphans) > 0:
+        orphans = len(sf_orphans)
+    else:
+        # Fallback to df_structure calculation only if SF data unavailable
+        orphans = len(df_structure[df_structure["Links In"] == 0]) if "Links In" in df_structure.columns else 0
     no_cluster = len(df_structure[df_structure["Cluster(s)"] == ""]) if "Cluster(s)" in df_structure.columns else 0
     thin = len(df_structure[df_structure.get("Word Count", 0) < 300]) if "Word Count" in df_structure.columns else 0
 
