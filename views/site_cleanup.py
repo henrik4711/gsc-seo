@@ -256,7 +256,7 @@ def _classify_orphans():
                 "clicks": int(grp["clicks"].sum()),
             }
 
-    buckets = {"delete": [], "reconnect": [], "redirect": [], "investigate": []}
+    buckets = {"delete": [], "reconnect": [], "redirect": [], "investigate": [], "needs_content": []}
 
     for o in orphan_list:
         url = o.get("url") if isinstance(o, dict) else o
@@ -283,8 +283,17 @@ def _classify_orphans():
         has_traffic = gsc["impressions"] >= 10 or gsc["clicks"] > 0
         has_backlinks = rd > 0
         has_content = word_count >= 200
+        is_product = page_type == "product"
 
-        if not has_traffic and not has_backlinks and not in_cluster and not has_content:
+        # PRODUCTS ARE NEVER AUTO-DELETED — they can be sold, so the right
+        # action for thin products is to add content + reconnect, not delete.
+        if is_product and not has_content:
+            signals["reason"] = (
+                f"Product with thin content ({word_count}w) — add description in "
+                f"Magento and assign to category. DO NOT DELETE."
+            )
+            buckets["needs_content"].append(signals)
+        elif not has_traffic and not has_backlinks and not in_cluster and not has_content and not is_product:
             signals["reason"] = f"No traffic ({gsc['impressions']} impr), no backlinks, no cluster, thin ({word_count}w)"
             buckets["delete"].append(signals)
         elif has_backlinks and not has_traffic:
@@ -308,6 +317,7 @@ def _classify_orphans():
     buckets["reconnect"].sort(key=lambda x: -(x["impressions"] + x["referring_domains"] * 100))
     buckets["redirect"].sort(key=lambda x: -x["referring_domains"])
     buckets["delete"].sort(key=lambda x: x["url"])
+    buckets["needs_content"].sort(key=lambda x: x["url"])
     return buckets
 
 
@@ -537,11 +547,19 @@ def render():
                 "and topic clusters. NOT all orphans should be deleted — many just lost their internal link.</p>",
                 unsafe_allow_html=True,
             )
-            cols = st.columns(4)
+            cols = st.columns(5)
             cols[0].metric("🗑 Delete (true orphan)", len(orphan_buckets["delete"]))
             cols[1].metric("🔗 Reconnect (misclassified)", len(orphan_buckets["reconnect"]))
             cols[2].metric("↗ Redirect (has backlinks)", len(orphan_buckets["redirect"]))
-            cols[3].metric("❓ Investigate", len(orphan_buckets["investigate"]))
+            cols[3].metric("📝 Needs content (products)", len(orphan_buckets["needs_content"]))
+            cols[4].metric("❓ Investigate", len(orphan_buckets["investigate"]))
+
+            if orphan_buckets["needs_content"]:
+                with st.expander(f"📝 Products needing content ({len(orphan_buckets['needs_content'])}) — DO NOT delete", expanded=False):
+                    st.info("These are PRODUCT pages with thin/missing content. They can still be sold — add descriptions in Magento and assign to the right category. Never auto-delete products.")
+                    for o in orphan_buckets["needs_content"][:50]:
+                        st.markdown(f"- `{o['url']}` ({o['word_count']}w)")
+                        st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{o['reason']}</div>", unsafe_allow_html=True)
 
             with st.expander(f"🔗 Reconnect ({len(orphan_buckets['reconnect'])}) — DO NOT delete", expanded=False):
                 st.info("These pages have traffic, backlinks, or are in topic clusters. They lost their internal link but should be RECONNECTED via category navigation, not deleted.")
