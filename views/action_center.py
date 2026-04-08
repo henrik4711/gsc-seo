@@ -131,7 +131,8 @@ def _action_card(page, idx):
             html = bt.get("html", "")
             if html:
                 st.markdown("**Generated text preview:**")
-                with st.expander("View HTML", expanded=False):
+                # Can't nest expander inside an expander — use a toggle instead
+                if st.toggle("Show HTML source", key=f"toggle_html_{url_hash}", value=False):
                     st.code(html[:2000] + ("..." if len(html) > 2000 else ""), language="html")
                 st.download_button(
                     "Download HTML",
