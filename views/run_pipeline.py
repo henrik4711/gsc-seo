@@ -1064,6 +1064,169 @@ def render():
                 st.success(f"Re-classified {changed}/{len(results)} pages")
                 st.rerun()
 
+    # ── Export pipeline state ────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 Export pipeline state")
+    st.markdown(
+        "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+        "Compact text dump of all pipeline results for sharing or AI review.</p>",
+        unsafe_allow_html=True,
+    )
+    if st.button("Generate export", key="rp_export_state", use_container_width=False):
+        import json as _json
+        lines = ["# Pipeline State Export", ""]
+
+        # GSC + crawl basics
+        gsc = st.session_state.get("gsc_data")
+        if gsc is not None and hasattr(gsc, "shape"):
+            lines.append(f"**GSC:** {len(gsc):,} query/page rows · {gsc['page'].nunique() if 'page' in gsc.columns else '?'} unique pages")
+        auth = st.session_state.get("page_authority")
+        if auth is not None and hasattr(auth, "shape"):
+            lines.append(f"**Authority:** {len(auth):,} pages with backlink data")
+        sf = st.session_state.get("sf_crawl_issues") or {}
+        if isinstance(sf, dict):
+            lines.append(f"**Crawl issues:** " + ", ".join(f"{k}={len(v) if hasattr(v,'__len__') else v}" for k, v in sf.items()))
+        ctr = st.session_state.get("ctr_gaps")
+        if ctr is not None and hasattr(ctr, "shape") and not ctr.empty:
+            lines.append(f"**CTR gaps:** {len(ctr):,} rows")
+            top_ctr = ctr.sort_values("lost_clicks_estimate", ascending=False).head(10)
+            lines.append("\n**Top 10 CTR gap pages (most lost clicks):**")
+            for _, r in top_ctr.iterrows():
+                lines.append(f"- `{r.get('page','')}` · q='{r.get('query','')}' · pos {r.get('position',0):.1f} · lost {int(r.get('lost_clicks_estimate',0))}")
+        cann = st.session_state.get("cannibalization")
+        if cann is not None and hasattr(cann, "shape") and not cann.empty:
+            severe = len(cann[cann["severity"] == "severe"]) if "severity" in cann.columns else 0
+            moderate = len(cann[cann["severity"] == "moderate"]) if "severity" in cann.columns else 0
+            lines.append(f"\n**Cannibalization:** {severe} severe, {moderate} moderate")
+        else:
+            lines.append("\n**Cannibalization:** NOT RUN")
+
+        # Topic clusters
+        tc = st.session_state.get("topic_clusters", {})
+        if isinstance(tc, dict):
+            lines.append(f"\n**Topic clusters:** {len(tc.get('clusters', []))}")
+            top_clusters = sorted(tc.get("clusters", []), key=lambda c: -c.get("total_impressions", 0))[:10]
+            lines.append("\n**Top 10 clusters by impressions:**")
+            for c in top_clusters:
+                lines.append(f"- {c.get('topic','?')}: {c.get('query_count',0)} queries · {c.get('total_impressions',0):,} impr · {c.get('total_clicks',0):,} cl · {c.get('page_count',0)} pages")
+
+        # Content gaps
+        gaps = st.session_state.get("content_gaps", []) or []
+        if gaps:
+            lines.append(f"\n**Content gaps:** {len(gaps)}")
+            high = [g for g in gaps if g.get("priority") == "high"]
+            lines.append(f"  - High: {len(high)}")
+            for g in high[:5]:
+                lines.append(f"    - {g.get('topic','?')}: " + " | ".join(g.get('issues', [])))
+
+        # Site validation
+        sv = st.session_state.get("_site_validation", {})
+        if isinstance(sv, dict) and sv:
+            lines.append(f"\n## Site Validation (score {sv.get('overall_health_score','?')}/100)")
+            comp = sv.get("_score_components", {})
+            if comp:
+                lines.append(f"_Score components: {_json.dumps(comp)}_")
+            lines.append(f"Summary: {sv.get('summary','')}")
+            lines.append(f"\n**Critical issues:**")
+            for x in sv.get("critical_issues", []):
+                lines.append(f"- {x}")
+            lines.append(f"\n**Structural problems:**")
+            for x in sv.get("structural_problems", []):
+                lines.append(f"- {x}")
+            lines.append(f"\n**Cluster issues:**")
+            for x in sv.get("cluster_issues", []):
+                lines.append(f"- {x}")
+            lines.append(f"\n**Opportunities:**")
+            for x in sv.get("opportunities", []):
+                lines.append(f"- {x}")
+            lines.append(f"\n**Priority actions:**")
+            for a in sv.get("priority_actions", []):
+                if isinstance(a, dict):
+                    lines.append(f"- [{a.get('impact','?')}] {a.get('action','')} ({a.get('pages_affected','?')} pages)")
+                else:
+                    lines.append(f"- {a}")
+
+        # Ideal structure
+        ideal = st.session_state.get("_ideal_structure", {})
+        if isinstance(ideal, dict) and ideal:
+            lines.append(f"\n## Ideal Structure")
+            lines.append(f"{len(ideal.get('clusters', []))} clusters · {len(ideal.get('merge', []))} merges · {len(ideal.get('delete', []))} deletes · {len(ideal.get('create', []))} creates")
+            lines.append(f"Estimated new score: {ideal.get('estimated_new_score','?')}/100")
+            lines.append(f"Summary: {ideal.get('summary','')}")
+            if ideal.get("merge"):
+                lines.append(f"\n**Merges:**")
+                for m in ideal.get("merge", [])[:10]:
+                    lines.append(f"- {m.get('from',[])} → {m.get('to','')} ({m.get('why','')[:80]})")
+            if ideal.get("delete"):
+                lines.append(f"\n**Deletes:**")
+                for d in ideal.get("delete", [])[:10]:
+                    lines.append(f"- {d.get('url','')}: {d.get('why','')[:80]}")
+            if ideal.get("create"):
+                lines.append(f"\n**Creates:**")
+                for c in ideal.get("create", [])[:10]:
+                    lines.append(f"- {c.get('url','')} ({c.get('type','')}, kw={c.get('kw','')}): {c.get('why','')[:80]}")
+
+        # Gap analysis
+        ga = st.session_state.get("_gap_analysis", {})
+        if isinstance(ga, dict) and ga.get("phases"):
+            lines.append(f"\n## Gap Analysis ({ga.get('total_weeks','?')} weeks total)")
+            for ph in ga.get("phases", []):
+                lines.append(f"\n**Phase {ph.get('phase','?')}: {ph.get('name','')}** ({ph.get('duration_weeks','?')}w, risk {ph.get('risk','?')})")
+                for a in ph.get("actions", []):
+                    lines.append(f"- {a}")
+            if ga.get("risks"):
+                lines.append(f"\n**Risks:**")
+                for r in ga.get("risks", []):
+                    lines.append(f"- {r}")
+            if ga.get("success_metrics"):
+                lines.append(f"\n**Success metrics:**")
+                for m in ga.get("success_metrics", []):
+                    lines.append(f"- {m}")
+
+        # Plan validation
+        pv = st.session_state.get("_plan_validation", {})
+        if isinstance(pv, dict) and pv:
+            lines.append(f"\n## Plan Validation (coverage {pv.get('coverage_score','?')}/100, confidence {pv.get('confidence','?')}/100)")
+            lines.append(f"Verdict: {pv.get('overall_verdict','')}")
+            if pv.get("uncovered_issues"):
+                lines.append(f"\n**Uncovered issues:**")
+                for x in pv.get("uncovered_issues", []):
+                    lines.append(f"- {x}")
+            if pv.get("missing_actions"):
+                lines.append(f"\n**Missing actions:**")
+                for x in pv.get("missing_actions", []):
+                    lines.append(f"- {x}")
+            if pv.get("conflicts"):
+                lines.append(f"\n**Conflicts:**")
+                for c in pv.get("conflicts", []):
+                    if isinstance(c, dict):
+                        lines.append(f"- {c.get('plan_a','')} ↔ {c.get('plan_b','')}: {c.get('conflict','')}")
+            if pv.get("risks"):
+                lines.append(f"\n**Risks:**")
+                for r in pv.get("risks", []):
+                    lines.append(f"- {r}")
+
+        # Page type breakdown from audit
+        ar = st.session_state.get("audit_results", [])
+        if ar:
+            from collections import Counter
+            types = Counter(r.get("page_type", "unknown") for r in ar)
+            lines.append(f"\n## Audit ({len(ar)} pages)")
+            lines.append("Page types: " + ", ".join(f"{k}={v}" for k, v in types.most_common()))
+            wcs = [r.get("word_count", 0) for r in ar]
+            if wcs:
+                thin_count = sum(1 for w in wcs if w < 300)
+                lines.append(f"Thin pages (<300 words): {thin_count}")
+
+        export_text = "\n".join(lines)
+        st.code(export_text, language="markdown")
+        st.download_button(
+            "Download as .md",
+            export_text,
+            file_name="pipeline_state.md",
+            mime="text/markdown",
+        )
+
     # ── Cache Status ────────────────────────────────────────
     st.markdown("---")
     st.markdown("### 💾 Cache Status")
