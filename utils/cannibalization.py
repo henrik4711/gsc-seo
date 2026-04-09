@@ -45,24 +45,42 @@ def _classify_cannibal_type(winner: str, losers: list, pages_detail: list, audit
     page_types_in_conflict = [_types.get(_nu(u), "unknown") for u in all_urls]
     category_count = sum(1 for t in page_types_in_conflict if t == "category")
 
+    # Only flag as duplicate_categories when 2+ categories compete AND they
+    # are NOT in a parent-child URL relationship. Parent/child categories
+    # (e.g. /sexdockor + /sexdockor/torso) are NORMAL = category_vs_children.
     if category_count >= 2:
         cat_urls = [u for u, t in zip(all_urls, page_types_in_conflict) if t == "category"]
-        non_cat = [u for u in all_urls if u not in cat_urls]
-        return {
-            "type": "duplicate_categories",
-            "action": (
-                f"**{category_count} category pages** compete for the same query — "
-                f"this is true cannibalization.\n\n"
-                f"**What to do in Magento:**\n"
-                f"1. Pick ONE category to own this query (🏆 winner)\n"
-                f"2. 301 redirect the other category to the winner\n"
-                f"3. Move all products from the loser category to the winner\n"
-                f"4. Update the winner's meta to target BOTH keyword variants\n"
-                f"5. Click 'Generate meta' below for optimized title + description"
-            ),
-            "parent_url": None,
-            "suggested_parent_path": None,
-        }
+        cat_paths = [_path_of(u) for u in cat_urls]
+
+        # Check if any category is a URL-prefix parent of another
+        has_parent_child = False
+        for i, p1 in enumerate(cat_paths):
+            for j, p2 in enumerate(cat_paths):
+                if i != j and (p2.startswith(p1 + "/") or p1.startswith(p2 + "/")):
+                    has_parent_child = True
+                    break
+            if has_parent_child:
+                break
+
+        # Only true duplicate if NO parent-child AND categories are at same depth
+        if not has_parent_child:
+            cat_depths = [len([s for s in p.split("/") if s]) for p in cat_paths]
+            if max(cat_depths) - min(cat_depths) <= 1:
+                return {
+                    "type": "duplicate_categories",
+                    "action": (
+                        f"**{category_count} category pages** at the same level compete — "
+                        f"this is true cannibalization.\n\n"
+                        f"**What to do in Magento:**\n"
+                        f"1. Pick ONE category to own this query (🏆 winner)\n"
+                        f"2. 301 redirect the other category to the winner\n"
+                        f"3. Move all products from the loser category to the winner\n"
+                        f"4. Update the winner's meta to target BOTH keyword variants\n"
+                        f"5. Click 'Generate meta' below for optimized title + description"
+                    ),
+                    "parent_url": None,
+                    "suggested_parent_path": None,
+                }
 
     # ── Find parent-child relationships ──────────────────────
     # Check if ANY path is a prefix of other paths (majority, not all).
