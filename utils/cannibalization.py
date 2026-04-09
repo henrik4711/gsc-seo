@@ -7,221 +7,84 @@ import pandas as pd
 import numpy as np
 
 
-def _classify_cannibal_type(winner: str, losers: list, pages_detail: list, audit_lookup=None) -> dict:
-    """
-    Classify WHAT kind of cannibalization this is, with a concrete
-    Magento-specific action description per type.
 
-    Types:
-      category_vs_children  — A category + its sub-categories/products compete.
-                              This is NORMAL on e-commerce sites. Fix = differentiate meta.
-      products_same_parent  — Multiple products under the same category compete.
-                              Fix = differentiate product meta per variant.
-      products_no_parent    — Multiple products from different areas compete for a
-                              generic term. Fix = create a category that targets it.
-      true_duplicate        — Two very similar pages at same depth. Fix = 301 redirect.
-      unrelated             — Pages with no structural relationship. Fix = per-page meta.
-    """
+def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
+    """Classify cannibalization using REAL page_type from audit_results."""
     from urllib.parse import urlparse
+    import streamlit as _st
+    from utils.ui_helpers import normalize_url as _nu
 
     def _path_of(u):
         return urlparse(str(u)).path.rstrip("/") or "/"
 
-    all_urls = [winner] + list(losers)
-    all_paths = [_path_of(u) for u in all_urls]
-    segments_list = [[s for s in p.split("/") if s] for p in all_paths]
-    depths = [len(s) for s in segments_list]
-
-    # ── CASE 0: Duplicate categories ─────────────────────────
-    # Two CATEGORY pages competing = true merge candidate.
-    # E.g. /kukring and /penisringar both target "penisring".
-    import streamlit as _st
     audit_results = _st.session_state.get("audit_results", [])
-    _types = {}
+    type_lookup = {}
     for ar in audit_results:
-        from utils.ui_helpers import normalize_url as _nu
-        _types[_nu(ar.get("url", ""))] = ar.get("page_type", "unknown")
+        type_lookup[_nu(ar.get("url", ""))] = ar.get("page_type", "unknown")
 
-    page_types_in_conflict = [_types.get(_nu(u), "unknown") for u in all_urls]
-    category_count = sum(1 for t in page_types_in_conflict if t == "category")
+    all_urls = [winner] + list(losers)
+    page_types = {u: type_lookup.get(_nu(u), "unknown") for u in all_urls}
+    categories = [u for u in all_urls if page_types[u] == "category"]
+    products = [u for u in all_urls if page_types[u] == "product"]
+    n_cat, n_prod = len(categories), len(products)
 
-    # Only flag as duplicate_categories when 2+ categories compete AND they
-    # are NOT in a parent-child URL relationship. Parent/child categories
-    # (e.g. /sexdockor + /sexdockor/torso) are NORMAL = category_vs_children.
-    if category_count >= 2:
-        cat_urls = [u for u, t in zip(all_urls, page_types_in_conflict) if t == "category"]
-        cat_paths = [_path_of(u) for u in cat_urls]
-
-        # Check if any category is a URL-prefix parent of another
-        has_parent_child = False
-        for i, p1 in enumerate(cat_paths):
-            for j, p2 in enumerate(cat_paths):
+    def _has_prefix(urls):
+        paths = [_path_of(u) for u in urls]
+        for i, p1 in enumerate(paths):
+            for j, p2 in enumerate(paths):
                 if i != j and (p2.startswith(p1 + "/") or p1.startswith(p2 + "/")):
-                    has_parent_child = True
-                    break
-            if has_parent_child:
-                break
+                    return True
+        return False
 
-        # Only true duplicate if NO parent-child AND categories are at same depth
-        if not has_parent_child:
-            cat_depths = [len([s for s in p.split("/") if s]) for p in cat_paths]
-            if max(cat_depths) - min(cat_depths) <= 1:
-                return {
-                    "type": "duplicate_categories",
-                    "action": (
-                        f"**{category_count} category pages** at the same level compete — "
-                        f"this is true cannibalization.\n\n"
-                        f"**What to do in Magento:**\n"
-                        f"1. Pick ONE category to own this query (🏆 winner)\n"
-                        f"2. 301 redirect the other category to the winner\n"
-                        f"3. Move all products from the loser category to the winner\n"
-                        f"4. Update the winner's meta to target BOTH keyword variants\n"
-                        f"5. Click 'Generate meta' below for optimized title + description"
-                    ),
-                    "parent_url": None,
-                    "suggested_parent_path": None,
-                }
+    if n_cat >= 2 and not _has_prefix(categories):
+        return {"type": "duplicate_categories",
+            "action": f"**{n_cat} category pages** target the same query \u2014 true cannibalization.\n\n**What to do in Magento:**\n1. Pick ONE category to own this query (\U0001f3c6 winner)\n2. 301 redirect the loser category to the winner\n3. Move all products from loser to winner category\n4. Update winner meta to target BOTH keyword variants\n5. Click 'Generate meta' below",
+            "parent_url": None, "suggested_parent_path": None}
 
-    # ── Find parent-child relationships ──────────────────────
-    # Check if ANY path is a prefix of other paths (majority, not all).
-    # This catches /sexdockor being parent of /sexdockor/torso even when
-    # /intimate-collection (unrelated) is also in the mix.
-    parent_path = None
-    parent_children = []
-    outliers = []
-
-    paths_by_depth = sorted(zip(all_paths, all_urls), key=lambda x: len(x[0]))
-    for candidate_path, candidate_url in paths_by_depth:
-        if len(candidate_path) <= 1:
-            continue
-        children = []
-        others = []
-        for p, u in zip(all_paths, all_urls):
-            if p == candidate_path:
-                continue
-            if p.startswith(candidate_path + "/"):
-                children.append(u)
-            else:
-                others.append(u)
-        # If this path is parent of at least 2 others → category_vs_children
-        if len(children) >= 2:
-            parent_path = candidate_path
-            parent_children = children
-            outliers = others
-            break
-
-    if parent_path:
-        outlier_note = ""
+    if n_cat >= 2 and _has_prefix(categories):
+        cat_sorted = sorted(categories, key=lambda u: len(_path_of(u)))
+        parent_url = cat_sorted[0]
+        outliers = [u for u in all_urls if u != parent_url and not _path_of(u).startswith(_path_of(parent_url) + "/")]
+        note = ""
         if outliers:
-            outlier_note = (
-                f" Also competing: {', '.join(_path_of(o) for o in outliers)} "
-                f"(unrelated — check why they rank for this query)."
-            )
-        parent_url_full = [u for p, u in zip(all_paths, all_urls) if p == parent_path]
-        return {
-            "type": "category_vs_children",
-            "action": (
-                f"This is a CATEGORY + its sub-pages competing. This is NORMAL on "
-                f"e-commerce sites — not a bug to fix with redirects.\n\n"
-                f"**What to do in Magento:**\n"
-                f"1. Parent category targets the GENERIC query in meta title\n"
-                f"2. Each sub-category/product gets a SPECIFIC variant in its meta title\n"
-                f"3. Ensure parent page links visibly to all sub-pages\n"
-                f"4. Click 'Generate meta' below to get ready-to-paste titles{outlier_note}"
-            ),
-            "parent_url": parent_url_full[0] if parent_url_full else None,
-            "suggested_parent_path": None,
-        }
+            note = "\n\nAlso competing: " + ", ".join(_path_of(o) for o in outliers) + " \u2014 unrelated, check why they rank."
+        return {"type": "category_vs_children",
+            "action": f"**Parent category + sub-categories** compete. NORMAL on e-commerce.\n\n**What to do in Magento:**\n1. Parent `{_path_of(parent_url)}` targets the GENERIC query\n2. Each sub-category gets a SPECIFIC variant in meta title\n3. Ensure parent links to all sub-categories\n4. Click 'Generate meta' below{note}",
+            "parent_url": parent_url, "suggested_parent_path": None}
 
-    # ── Same parent directory → products/variants under one category ──
-    parent_dirs = set()
-    for segs in segments_list:
-        parent_dirs.add("/" + "/".join(segs[:-1]) if len(segs) > 1 else "/")
-    if len(parent_dirs) == 1 and len(all_paths) >= 2:
-        shared_parent = next(iter(parent_dirs))
-        return {
-            "type": "products_same_parent",
-            "action": (
-                f"Multiple pages under `{shared_parent}` compete for the same query.\n\n"
-                f"**What to do in Magento:**\n"
-                f"1. Each page gets a UNIQUE meta title with its specific variant "
-                f"(brand name, color, size, feature)\n"
-                f"2. The parent category `{shared_parent}` should target the generic query\n"
-                f"3. Click 'Generate meta' below to get differentiated titles"
-            ),
-            "parent_url": shared_parent,
-            "suggested_parent_path": None,
-        }
+    if n_cat == 1 and n_prod >= 1:
+        cat_url = categories[0]
+        return {"type": "category_vs_products",
+            "action": f"**1 category + {n_prod} product(s)** compete. Category should own the generic query.\n\n**What to do in Magento:**\n1. Optimize `{_path_of(cat_url)}` meta for the generic query\n2. Each product targets its SPECIFIC name/brand\n3. Ensure products are assigned to this category\n4. Click 'Generate meta' below",
+            "parent_url": cat_url, "suggested_parent_path": None}
 
-    # ── Two pages only, same depth → likely true duplicates ──
-    if len(all_paths) == 2 and abs(depths[0] - depths[1]) <= 1:
-        return {
-            "type": "true_duplicate",
-            "action": (
-                f"Two pages at similar depth compete for the same query.\n\n"
-                f"**What to do in Magento:**\n"
-                f"1. Keep the 🏆 WINNER page\n"
-                f"2. Copy any unique content from the loser to the winner\n"
-                f"3. Set up 301 redirect: loser → winner (URL Rewrite Management)\n"
-                f"4. Update any internal links pointing to the loser"
-            ),
-            "parent_url": None,
-            "suggested_parent_path": None,
-        }
+    if n_prod >= 2 and n_cat == 0:
+        parent_dirs = set()
+        for u in products:
+            segs = [s for s in _path_of(u).split("/") if s]
+            parent_dirs.add("/" + "/".join(segs[:-1]) if len(segs) > 1 else "/")
+        if len(parent_dirs) == 1:
+            shared = next(iter(parent_dirs))
+            return {"type": "products_same_parent",
+                "action": f"**{n_prod} products** under `{shared}` compete.\n\n**What to do in Magento:**\n1. Each product gets UNIQUE meta with its brand/variant\n2. Ensure `{shared}` category targets the generic query\n3. Click 'Generate meta' below",
+                "parent_url": shared, "suggested_parent_path": None}
+        return {"type": "products_no_category",
+            "action": f"**{n_prod} products** from different areas compete, NO category targets this query.\n\n**What to do in Magento:**\n1. CREATE a new category page targeting this query\n2. Assign all competing products\n3. Write intro + meta for the generic query",
+            "parent_url": None, "suggested_parent_path": None}
 
-    # ── Multiple products from different areas, no shared structure ──
-    # This usually means a generic query (e.g. "dildo") has no proper
-    # category page, so random products compete for it.
-    if len(all_paths) >= 3:
-        # Check if the winner looks like a category (shorter path, more generic)
-        winner_path = _path_of(winner)
-        winner_depth = len([s for s in winner_path.split("/") if s])
-        min_depth = min(depths)
-        if winner_depth == min_depth:
-            return {
-                "type": "category_vs_children",
-                "action": (
-                    f"A category page competes with product pages for a generic query.\n\n"
-                    f"**What to do in Magento:**\n"
-                    f"1. Strengthen the WINNER (category page) meta title for the generic query\n"
-                    f"2. Each product page targets its SPECIFIC product name in meta\n"
-                    f"3. Ensure products are assigned to the winning category\n"
-                    f"4. Click 'Generate meta' below"
-                ),
-                "parent_url": winner,
-                "suggested_parent_path": None,
-            }
-        else:
-            return {
-                "type": "products_no_parent",
-                "action": (
-                    f"Multiple products compete for a generic query but there's no "
-                    f"category page targeting it.\n\n"
-                    f"**What to do in Magento:**\n"
-                    f"1. CREATE a new category page targeting this query\n"
-                    f"2. Assign all competing products to the new category\n"
-                    f"3. Write intro text + meta title targeting the generic query\n"
-                    f"4. Each product keeps its specific product-name meta"
-                ),
-                "parent_url": None,
-                "suggested_parent_path": "/" + all_paths[0].split("/")[1] if segments_list[0] else None,
-            }
+    if len(all_urls) == 2:
+        t = page_types.get(all_urls[0], "page")
+        return {"type": "true_duplicate",
+            "action": f"Two {t} pages compete.\n\n**What to do in Magento:**\n1. Keep the \U0001f3c6 WINNER\n2. Copy unique content from loser to winner\n3. 301 redirect loser \u2192 winner\n4. Update internal links",
+            "parent_url": None, "suggested_parent_path": None}
 
-    # ── Fallback: 2 pages, different depths ──
-    return {
-        "type": "unrelated",
-        "action": (
-            f"Two structurally unrelated pages compete for the same query.\n\n"
-            f"**What to do in Magento:**\n"
-            f"1. Decide which page should own this query\n"
-            f"2. Optimize that page's meta title for the query\n"
-            f"3. Change the other page's meta to target a DIFFERENT keyword\n"
-            f"4. Click 'Generate meta' below"
-        ),
-        "parent_url": None,
-        "suggested_parent_path": None,
-    }
-
+    tc = {}
+    for t in page_types.values():
+        tc[t] = tc.get(t, 0) + 1
+    ts = ", ".join(f"{t}: {c}" for t, c in tc.items())
+    return {"type": "mixed",
+        "action": f"**Mixed types** ({ts}) compete.\n\n**What to do:**\n1. Category owns generic query\n2. Products target specific names\n3. Click 'Generate meta' below",
+        "parent_url": None, "suggested_parent_path": None}
 
 def _get_brand_keywords(df: pd.DataFrame) -> set:
     """

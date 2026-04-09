@@ -615,21 +615,24 @@ def render():
 
             type_ui = {
                 "duplicate_categories": ("⚠ Duplicate categories — MERGE", "#ff6644",
-                    "Two category pages target the same query. This is true cannibalization. "
-                    "**Fix:** pick ONE winner, 301 redirect the loser, move products, update meta to cover both keywords."),
-                "category_vs_children": ("🌳 Category + sub-pages", "#33dd88",
-                    "NORMAL for e-commerce. Parent category and its sub-pages/products both rank for a generic query. "
-                    "**Fix:** differentiate meta titles. Parent = generic, children = specific variant."),
+                    "Two category pages target the same query. True cannibalization. "
+                    "**Fix:** pick ONE winner, 301 redirect the loser, move products, update meta."),
+                "category_vs_children": ("🌳 Category + sub-categories", "#33dd88",
+                    "NORMAL. Parent category and its sub-categories both rank. "
+                    "**Fix:** differentiate meta. Parent = generic, children = specific variant."),
+                "category_vs_products": ("📦 Category + products", "#44bb88",
+                    "NORMAL. A category and its products both rank for a generic query. "
+                    "**Fix:** category meta targets generic, product meta targets product name."),
                 "products_same_parent": ("🎯 Products under same category", "#5533ff",
-                    "Multiple products in the same category compete for one query. "
-                    "**Fix:** give each product a UNIQUE meta title with its brand/variant."),
-                "true_duplicate": ("🔀 True duplicates — merge", "#ff4455",
-                    "Two nearly identical pages. **Fix:** 301 redirect the loser to the winner."),
-                "products_no_parent": ("🏗 Missing category page", "#ffaa33",
-                    "Products compete for a generic query but no category page targets it. "
+                    "Products in the same category compete. "
+                    "**Fix:** each product gets UNIQUE meta with its brand/variant."),
+                "products_no_category": ("🏗 Missing category page", "#ffaa33",
+                    "Products compete for a generic query but no category targets it. "
                     "**Fix:** CREATE a new category in Magento and assign the products."),
-                "unrelated": ("🔗 Unrelated pages", "#9b9bb8",
-                    "Structurally unrelated pages compete. **Fix:** pick which page owns the query, differentiate the other."),
+                "true_duplicate": ("🔀 True duplicates — merge", "#ff4455",
+                    "Two similar pages compete. **Fix:** 301 redirect the loser to the winner."),
+                "mixed": ("🔗 Mixed types", "#9b9bb8",
+                    "Different page types compete. **Fix:** category owns generic query, products/blogs target specific variants."),
             }
 
             # Counts
