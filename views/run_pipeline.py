@@ -1207,6 +1207,59 @@ def render():
                 st.success(f"Re-classified {changed}/{len(results)} pages")
                 st.rerun()
 
+        # Re-scrape + re-classify category pages (picks up new HTML signals)
+        col1, col2 = st.columns([3, 1])
+        category_pages = [r for r in st.session_state.get("audit_results", []) if r.get("page_type") == "category"]
+        with col1:
+            st.markdown(
+                f"<div style='font-size:0.85rem; color:#9b9bb8;'>"
+                f"<strong>Re-scrape all category pages ({len(category_pages)})</strong><br>"
+                f"Re-downloads HTML for all pages currently classified as 'category', then "
+                f"re-classifies them using the latest detection rules (accordion tabs, schema, etc.). "
+                f"Products misclassified as categories will be corrected.</div>",
+                unsafe_allow_html=True,
+            )
+        with col2:
+            if st.button(f"Re-scrape {len(category_pages)}", key="rp_rescrape_cats", use_container_width=True):
+                from utils.page_scraper import scrape_page
+                from utils.category_analyzer import classify_page_type
+                from utils.persistence import save
+                results = st.session_state["audit_results"]
+                progress = st.progress(0)
+                changed = 0
+                errors = 0
+                status_text = st.empty()
+                for i, r in enumerate(results):
+                    if r.get("page_type") != "category":
+                        continue
+                    url = r.get("url", "")
+                    status_text.text(f"[{i+1}/{len(results)}] Re-scraping {url[-60:]}...")
+                    try:
+                        page_data = scrape_page(url, timeout=12)
+                        if page_data.get("success") or page_data.get("title"):
+                            # Update stored data with new scrape
+                            for key in ("template_type", "has_accordion_product",
+                                        "has_breadcrumb_schema", "body_classes",
+                                        "schema_types", "product_count"):
+                                if key in page_data:
+                                    r[key] = page_data[key]
+                            # Re-classify with new signals
+                            new_class = classify_page_type(url, {**r, **page_data})
+                            new_type = new_class.get("page_type", "unknown")
+                            if new_type != "category":
+                                old_type = r["page_type"]
+                                r["page_type"] = new_type
+                                r["_reclassified_from"] = old_type
+                                r["_reclassified_signals"] = new_class.get("signals", [])
+                                changed += 1
+                    except Exception as e:
+                        errors += 1
+                    progress.progress(min(1.0, (i + 1) / max(1, len(results))))
+                save_key("audit_results")
+                status_text.empty()
+                st.success(f"Re-scraped {len(category_pages)} categories → {changed} reclassified (e.g. category→product). {errors} errors.")
+                st.rerun()
+
     # ── Export pipeline state ────────────────────────────────
     st.markdown("---")
     st.markdown("### 📋 Export pipeline state")
