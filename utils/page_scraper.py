@@ -263,7 +263,46 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         elif soup.find("div", class_=re.compile(r"post-content|blog-post-view|article-body", re.I)):
             template_type = "blog"
 
+    # ── Mshop/XMX-specific product accordion detection ──────
+    # If page has accordion-highlights + accordion-description +
+    # accordion-specifications → definitive PRODUCT page signal.
+    has_accordion_product = False
+    accordion_inputs = soup.find_all("input", attrs={"name": re.compile(r"accordion-", re.I)})
+    accordion_names = {inp.get("name", "").lower() for inp in accordion_inputs}
+    if {"accordion-highlights", "accordion-specifications"} & accordion_names:
+        has_accordion_product = True
+    # Also check for accordion labels (alternative detection)
+    if not has_accordion_product:
+        accordion_labels = soup.find_all("label", class_=re.compile(r"xmx-accordion-button", re.I))
+        if len(accordion_labels) >= 2:
+            has_accordion_product = True
+
+    if has_accordion_product:
+        template_type = "product"
+
+    # ── ld+json BreadcrumbList = strong category signal ──────
+    # Category pages typically have BreadcrumbList + ItemList schema.
+    # Pure BreadcrumbList (without Product schema) = category.
+    has_breadcrumb_schema = False
+    has_product_schema = False
+    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        try:
+            ld_text = tag.string or ""
+            if '"BreadcrumbList"' in ld_text:
+                has_breadcrumb_schema = True
+            if '"Product"' in ld_text and '"ItemList"' not in ld_text:
+                has_product_schema = True
+        except Exception:
+            pass
+
+    # BreadcrumbList + NO Product schema + NO accordion = category
+    if has_breadcrumb_schema and not has_product_schema and not has_accordion_product:
+        if not template_type or template_type == "cms":
+            template_type = "category"
+
     result["template_type"] = template_type
+    result["has_accordion_product"] = has_accordion_product
+    result["has_breadcrumb_schema"] = has_breadcrumb_schema
     result["body_classes"] = body_classes[:200]  # Store for debugging
 
     # ── Body text: extract from content area ──────────────────

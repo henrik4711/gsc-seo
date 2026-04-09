@@ -120,6 +120,20 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             result["page_type"] = template_type
             result["signals"].append(f"CMS template detected: {template_type}")
 
+        # ── 0b. ACCORDION PRODUCT DETECTION (XMX/Mshop pattern) ──
+        # accordion-highlights + accordion-specifications = definitive product
+        if page_data.get("has_accordion_product"):
+            result["page_type"] = "product"
+            result["signals"].append("Product accordion tabs detected (highlights/specifications)")
+
+        # ── 0c. BREADCRUMB + NO PRODUCT SCHEMA = category ──
+        if page_data.get("has_breadcrumb_schema") and not page_data.get("has_accordion_product"):
+            schema_types_lower = [str(s).lower() for s in page_data.get("schema_types", [])]
+            if "product" not in " ".join(schema_types_lower):
+                if result["page_type"] not in ("product", "blog", "info"):
+                    result["page_type"] = "category"
+                    result["signals"].append("BreadcrumbList schema + no Product schema = category")
+
         # ── 2. HTML signals OVERRIDE URL patterns ─────────────
         # Order matters: Schema → Category signals → Product signals → Blog → FAQ
         # FAQ is LAST because category pages often have FAQ sections in bottom text
