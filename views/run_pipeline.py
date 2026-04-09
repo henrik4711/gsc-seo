@@ -1082,6 +1082,32 @@ def render():
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
+
+    # Show gap analysis result inline if available
+    if isinstance(gap_data, dict) and gap_data.get("phases"):
+        with st.expander("View migration plan", expanded=False):
+            for phase in gap_data.get("phases", []):
+                risk_color = {"low": "#33dd88", "medium": "#ffaa33", "high": "#ff4455"}.get(
+                    str(phase.get("risk", "")).lower(), "#9b9bb8")
+                st.markdown(
+                    f"**Phase {phase.get('phase', '?')}: {phase.get('name', '')}** "
+                    f"({phase.get('duration_weeks', '?')} weeks, "
+                    f"<span style='color:{risk_color};'>{phase.get('risk', '?')} risk</span>)",
+                    unsafe_allow_html=True,
+                )
+                for action in phase.get("actions", []):
+                    st.markdown(f"- {action}")
+            risks = gap_data.get("risks", [])
+            if risks:
+                st.markdown("**Risks:**")
+                for r in risks:
+                    st.markdown(f"- {r}")
+            metrics = gap_data.get("success_metrics", [])
+            if metrics:
+                st.markdown("**Success metrics:**")
+                for m in metrics:
+                    st.markdown(f"- {m}")
+
     st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
 
     # ── Step 12: Plan Validation ─────────────────────────────

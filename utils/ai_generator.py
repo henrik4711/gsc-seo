@@ -1457,6 +1457,7 @@ def generate_page_implementation_plan(
     all_site_urls: list = None,
     language: str = "Swedish",
     topic_clusters: dict = None,
+    ctr_gaps_for_page: list = None,
 ) -> dict:
     """
     Generate a complete, verified implementation plan for a single page.
@@ -1515,6 +1516,22 @@ def generate_page_implementation_plan(
                         f"{inbound_anchors.get('generic', 0)} generic, "
                         f"{inbound_anchors.get('empty', 0)} empty anchors")
 
+    # Add actual inbound anchor texts from sf_link_map (if available)
+    sf_link_map = st.session_state.get("sf_link_map")
+    if sf_link_map and isinstance(sf_link_map, dict):
+        from utils.ui_helpers import normalize_url as _nu_lm
+        links_to_page = sf_link_map.get("links_to", {}).get(_nu_lm(url), [])
+        if links_to_page:
+            anchor_counts = {}
+            for lt in links_to_page[:100]:
+                a = (lt.get("anchor", "") if isinstance(lt, dict) else "").strip()
+                if a:
+                    anchor_counts[a] = anchor_counts.get(a, 0) + 1
+            if anchor_counts:
+                top_anchors = sorted(anchor_counts.items(), key=lambda x: -x[1])[:10]
+                anchor_list = ", ".join(f'"{a}" ({c}x)' for a, c in top_anchors)
+                inbound_info += f"\nTop inbound anchor texts: {anchor_list}"
+
     # Category-specific data
     intro_words = page_data.get("intro_word_count", 0)
     bottom_words = page_data.get("bottom_word_count", 0)
@@ -1542,6 +1559,20 @@ def generate_page_implementation_plan(
     quality_info = ""
     if quality:
         quality_info = f"\nAI content quality verdict: {quality.get('verdict', '?')} ({quality.get('score', '?')}/10) — {quality.get('summary', '')}"
+
+    # CTR gap opportunities for this page
+    ctr_gap_info = ""
+    if ctr_gaps_for_page:
+        top_gaps = sorted(ctr_gaps_for_page, key=lambda g: -g.get("lost_clicks_estimate", 0))[:5]
+        gap_lines = []
+        for g in top_gaps:
+            gap_lines.append(
+                f"- \"{g.get('query', '')}\" pos {g.get('position', '?'):.1f}, "
+                f"CTR gap {g.get('ctr_gap_pct', 0):.0f}%, "
+                f"~{g.get('lost_clicks_estimate', 0)} lost clicks"
+            )
+        if gap_lines:
+            ctr_gap_info = "\nCTR gap analysis shows these keyword opportunities:\n" + "\n".join(gap_lines)
 
     # Site-level validation context (informs per-page recommendations)
     site_validation = st.session_state.get("_site_validation")
@@ -1611,7 +1642,7 @@ Schema types present: {', '.join(schema_types) if schema_types else 'None'}
 {f"Products on page: {product_count}" if product_count else ""}
 {f"Has FAQ section: {'Yes' if has_faq else 'No'}" if page_type == "category" else ""}
 {f"Has buying guide: {'Yes' if has_buying_guide else 'No'}" if page_type == "category" else ""}
-{quality_info}{intent_info}
+{quality_info}{intent_info}{ctr_gap_info}
 
 ## EXISTING INTERNAL LINKS ON THIS PAGE (already present — do NOT suggest these again)
 {_format_existing_links(page_data)}

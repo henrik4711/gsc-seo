@@ -8,8 +8,17 @@ import streamlit as st
 import json
 import pandas as pd
 from config import get_anthropic_key, has_anthropic_key
-from utils.ui_helpers import shorten_url, stable_hash
+from utils.ui_helpers import shorten_url, stable_hash, normalize_url as _nu_ap
 from utils.ai_generator import _clean_body_text
+
+
+def _get_ctr_gaps_for_url(url):
+    """Return list of ctr_gaps records for a given page URL."""
+    ctr_df = st.session_state.get("ctr_gaps")
+    if ctr_df is None or ctr_df.empty:
+        return []
+    page_gaps = ctr_df[ctr_df["page"].apply(_nu_ap) == _nu_ap(url)]
+    return page_gaps.to_dict("records") if not page_gaps.empty else []
 
 
 def _get_ai_quality_badge(url):
@@ -204,6 +213,7 @@ def render():
                             page_r["target_keywords"] = pg.sort_values("impressions", ascending=False)["query"].head(15).tolist()
                     result = generate_page_implementation_plan(
                         client, page_r, site_context, all_site_urls, language, topic_clusters,
+                        ctr_gaps_for_page=_get_ctr_gaps_for_url(p["url"]),
                     )
                     st.session_state[plan_key] = result
                 except Exception as e:
@@ -300,6 +310,7 @@ def render():
                                     page_r["target_keywords"] = pg.sort_values("impressions", ascending=False)["query"].head(15).tolist()
                             result = generate_page_implementation_plan(
                                 client, page_r, site_context, all_site_urls, language, topic_clusters,
+                                ctr_gaps_for_page=_get_ctr_gaps_for_url(url),
                             )
                             st.session_state[plan_key] = result
                             from utils.persistence import save_ai_cache

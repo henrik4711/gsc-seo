@@ -9,7 +9,8 @@ import numpy as np
 
 
 def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
-    """Classify cannibalization using REAL page_type from audit_results."""
+    """Classify cannibalization using REAL page_type from audit_results,
+    topic cluster membership, and sf_link_map structural signals."""
     from urllib.parse import urlparse
     import streamlit as _st
     from utils.ui_helpers import normalize_url as _nu
@@ -21,6 +22,44 @@ def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
     type_lookup = {}
     for ar in audit_results:
         type_lookup[_nu(ar.get("url", ""))] = ar.get("page_type", "unknown")
+
+    # ── Additional signal: topic cluster membership ──────────
+    topic_clusters = _st.session_state.get("topic_clusters")
+    page_topics = topic_clusters.get("page_topics", {}) if isinstance(topic_clusters, dict) else {}
+    all_urls = [winner] + list(losers)
+
+    def _cluster_names(u):
+        """Return set of cluster/topic names this URL belongs to."""
+        topics = page_topics.get(u, [])
+        if not topics:
+            # Try normalized lookup
+            topics = page_topics.get(_nu(u), [])
+        return set(t.get("topic", "") for t in topics if t.get("topic"))
+
+    winner_clusters = _cluster_names(winner)
+    same_cluster = False
+    different_clusters = False
+    if winner_clusters:
+        for loser in losers:
+            loser_clusters = _cluster_names(loser)
+            if loser_clusters:
+                if winner_clusters & loser_clusters:
+                    same_cluster = True
+                else:
+                    different_clusters = True
+
+    # ── Additional signal: winner already links to losers (intentional) ──
+    sf_link_map = _st.session_state.get("sf_link_map")
+    winner_links_to_losers = False
+    if sf_link_map and isinstance(sf_link_map, dict):
+        links_from = sf_link_map.get("links_from", {})
+        winner_outlinks = links_from.get(_nu(winner), [])
+        loser_norms = set(_nu(l) for l in losers)
+        for link_item in winner_outlinks:
+            target = link_item.get("url", "") if isinstance(link_item, dict) else str(link_item)
+            if _nu(target) in loser_norms:
+                winner_links_to_losers = True
+                break
 
     all_urls = [winner] + list(losers)
     page_types = {u: type_lookup.get(_nu(u), "unknown") for u in all_urls}
@@ -36,9 +75,19 @@ def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
                     return True
         return False
 
+    # Build additional context notes from cluster + link signals
+    _extra_notes = []
+    if same_cluster:
+        _extra_notes.append("Pages are in the **same topic cluster** — consolidation is safe.")
+    if different_clusters:
+        _extra_notes.append("Pages are in **different topic clusters** — differentiate content rather than merge.")
+    if winner_links_to_losers:
+        _extra_notes.append("Winner already **links to losers** — this may be intentional structure (hub→spoke).")
+    _extra_suffix = "\n\n" + " ".join(_extra_notes) if _extra_notes else ""
+
     if n_cat >= 2 and not _has_prefix(categories):
         return {"type": "duplicate_categories",
-            "action": f"**{n_cat} category pages** target the same query \u2014 true cannibalization.\n\n**What to do in Magento:**\n1. Pick ONE category to own this query (\U0001f3c6 winner)\n2. 301 redirect the loser category to the winner\n3. Move all products from loser to winner category\n4. Update winner meta to target BOTH keyword variants\n5. Click 'Generate meta' below",
+            "action": f"**{n_cat} category pages** target the same query \u2014 true cannibalization.\n\n**What to do in Magento:**\n1. Pick ONE category to own this query (\U0001f3c6 winner)\n2. 301 redirect the loser category to the winner\n3. Move all products from loser to winner category\n4. Update winner meta to target BOTH keyword variants\n5. Click 'Generate meta' below{_extra_suffix}",
             "parent_url": None, "suggested_parent_path": None}
 
     if n_cat >= 2 and _has_prefix(categories):
@@ -49,13 +98,13 @@ def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
         if outliers:
             note = "\n\nAlso competing: " + ", ".join(_path_of(o) for o in outliers) + " \u2014 unrelated, check why they rank."
         return {"type": "category_vs_children",
-            "action": f"**Parent category + sub-categories** compete. NORMAL on e-commerce.\n\n**What to do in Magento:**\n1. Parent `{_path_of(parent_url)}` targets the GENERIC query\n2. Each sub-category gets a SPECIFIC variant in meta title\n3. Ensure parent links to all sub-categories\n4. Click 'Generate meta' below{note}",
+            "action": f"**Parent category + sub-categories** compete. NORMAL on e-commerce.\n\n**What to do in Magento:**\n1. Parent `{_path_of(parent_url)}` targets the GENERIC query\n2. Each sub-category gets a SPECIFIC variant in meta title\n3. Ensure parent links to all sub-categories\n4. Click 'Generate meta' below{note}{_extra_suffix}",
             "parent_url": parent_url, "suggested_parent_path": None}
 
     if n_cat == 1 and n_prod >= 1:
         cat_url = categories[0]
         return {"type": "category_vs_products",
-            "action": f"**1 category + {n_prod} product(s)** compete. Category should own the generic query.\n\n**What to do in Magento:**\n1. Optimize `{_path_of(cat_url)}` meta for the generic query\n2. Each product targets its SPECIFIC name/brand\n3. Ensure products are assigned to this category\n4. Click 'Generate meta' below",
+            "action": f"**1 category + {n_prod} product(s)** compete. Category should own the generic query.\n\n**What to do in Magento:**\n1. Optimize `{_path_of(cat_url)}` meta for the generic query\n2. Each product targets its SPECIFIC name/brand\n3. Ensure products are assigned to this category\n4. Click 'Generate meta' below{_extra_suffix}",
             "parent_url": cat_url, "suggested_parent_path": None}
 
     if n_prod >= 2 and n_cat == 0:
@@ -66,16 +115,16 @@ def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
         if len(parent_dirs) == 1:
             shared = next(iter(parent_dirs))
             return {"type": "products_same_parent",
-                "action": f"**{n_prod} products** under `{shared}` compete.\n\n**What to do in Magento:**\n1. Each product gets UNIQUE meta with its brand/variant\n2. Ensure `{shared}` category targets the generic query\n3. Click 'Generate meta' below",
+                "action": f"**{n_prod} products** under `{shared}` compete.\n\n**What to do in Magento:**\n1. Each product gets UNIQUE meta with its brand/variant\n2. Ensure `{shared}` category targets the generic query\n3. Click 'Generate meta' below{_extra_suffix}",
                 "parent_url": shared, "suggested_parent_path": None}
         return {"type": "products_no_category",
-            "action": f"**{n_prod} products** from different areas compete, NO category targets this query.\n\n**What to do in Magento:**\n1. CREATE a new category page targeting this query\n2. Assign all competing products\n3. Write intro + meta for the generic query",
+            "action": f"**{n_prod} products** from different areas compete, NO category targets this query.\n\n**What to do in Magento:**\n1. CREATE a new category page targeting this query\n2. Assign all competing products\n3. Write intro + meta for the generic query{_extra_suffix}",
             "parent_url": None, "suggested_parent_path": None}
 
     if len(all_urls) == 2:
         t = page_types.get(all_urls[0], "page")
         return {"type": "true_duplicate",
-            "action": f"Two {t} pages compete.\n\n**What to do in Magento:**\n1. Keep the \U0001f3c6 WINNER\n2. Copy unique content from loser to winner\n3. 301 redirect loser \u2192 winner\n4. Update internal links",
+            "action": f"Two {t} pages compete.\n\n**What to do in Magento:**\n1. Keep the \U0001f3c6 WINNER\n2. Copy unique content from loser to winner\n3. 301 redirect loser \u2192 winner\n4. Update internal links{_extra_suffix}",
             "parent_url": None, "suggested_parent_path": None}
 
     tc = {}
@@ -83,7 +132,7 @@ def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
         tc[t] = tc.get(t, 0) + 1
     ts = ", ".join(f"{t}: {c}" for t, c in tc.items())
     return {"type": "mixed",
-        "action": f"**Mixed types** ({ts}) compete.\n\n**What to do:**\n1. Category owns generic query\n2. Products target specific names\n3. Click 'Generate meta' below",
+        "action": f"**Mixed types** ({ts}) compete.\n\n**What to do:**\n1. Category owns generic query\n2. Products target specific names\n3. Click 'Generate meta' below{_extra_suffix}",
         "parent_url": None, "suggested_parent_path": None}
 
 def _get_brand_keywords(df: pd.DataFrame) -> set:

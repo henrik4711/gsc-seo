@@ -32,7 +32,16 @@ def _get_top_pages(audit_results, top_n=20):
             "bottom_text": r.get("bottom_text", ""),
             "audit": r,
         })
-    pages.sort(key=lambda p: -p["lost_clicks"])
+    # Sort by lost_clicks (primary) with quality verdict boost (secondary).
+    # REWRITE pages get priority boost, KEEP pages get deprioritized.
+    def _sort_key(p):
+        quality = st.session_state.get(f"_quality_{stable_hash(p['url'])}")
+        verdict = quality.get("verdict", "") if quality else ""
+        # Boost: REWRITE=2, IMPROVE=1, KEEP/unknown=0
+        verdict_boost = {"REWRITE": 2, "IMPROVE": 1}.get(verdict, 0)
+        # Combined: lost_clicks + verdict bonus (scaled to not overwhelm lost_clicks)
+        return -(p["lost_clicks"] + verdict_boost * max(p["lost_clicks"] * 0.3, 50))
+    pages.sort(key=_sort_key)
     return pages[:top_n]
 
 
@@ -134,6 +143,14 @@ def _generate_all_fixes(page):
         raw_urls.update(gsc["page"].unique().tolist())
     all_site_urls = sorted(raw_urls)
 
+    # ── Gather CTR gaps for this page ──
+    _ctr_gaps_for_page = []
+    _ctr_gaps_df = st.session_state.get("ctr_gaps")
+    if _ctr_gaps_df is not None and not _ctr_gaps_df.empty:
+        _page_gaps = _ctr_gaps_df[_ctr_gaps_df["page"].apply(normalize_url) == normalize_url(url)]
+        if not _page_gaps.empty:
+            _ctr_gaps_for_page = _page_gaps.to_dict("records")
+
     # ── Generate implementation plan (includes meta, steps, links, articles)
     plan_key = f"_ai_plan_{url_hash}"
     if plan_key not in st.session_state:
@@ -141,6 +158,7 @@ def _generate_all_fixes(page):
             try:
                 result = generate_page_implementation_plan(
                     client, audit, site_context, all_site_urls, language, topic_clusters,
+                    ctr_gaps_for_page=_ctr_gaps_for_page,
                 )
                 st.session_state[plan_key] = result
             except Exception as e:
