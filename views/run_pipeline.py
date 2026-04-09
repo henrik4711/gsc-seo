@@ -1228,37 +1228,87 @@ def render():
                 progress = st.progress(0)
                 changed = 0
                 errors = 0
+                scraped = 0
+                log_lines = []
                 status_text = st.empty()
-                for i, r in enumerate(results):
-                    if r.get("page_type") != "category":
-                        continue
+                cat_indices = [i for i, r in enumerate(results) if r.get("page_type") == "category"]
+                total_cats = len(cat_indices)
+                for idx_num, i in enumerate(cat_indices):
+                    r = results[i]
                     url = r.get("url", "")
-                    status_text.text(f"[{i+1}/{len(results)}] Re-scraping {url[-60:]}...")
+                    short = url.split("/")[-1][:40] if "/" in url else url[:40]
+                    status_text.text(f"[{idx_num+1}/{total_cats}] {short}...")
                     try:
                         page_data = scrape_page(url, timeout=12)
+                        scraped += 1
+                        # Extract key signals
+                        tmpl = page_data.get("template_type", "")
+                        accordion = page_data.get("has_accordion_product", False)
+                        breadcrumb = page_data.get("has_breadcrumb_schema", False)
+                        body_cls = page_data.get("body_classes", "")
+                        schemas = page_data.get("schema_types", [])
+                        scraper_used = page_data.get("_scraper", "?")
+
+                        # DIRECT Magento body class override (strongest signal, works without JS)
+                        is_product_by_body = "catalog-product-view" in body_cls or "product-view" in body_cls
+                        is_product_by_accordion = accordion
+                        is_product_by_schema = any("product" in str(s).lower() for s in schemas) and not any("itemlist" in str(s).lower() for s in schemas)
+
                         if page_data.get("success") or page_data.get("title"):
-                            # Update stored data with new scrape
                             for key in ("template_type", "has_accordion_product",
                                         "has_breadcrumb_schema", "body_classes",
                                         "schema_types", "product_count"):
                                 if key in page_data:
                                     r[key] = page_data[key]
-                            # Re-classify with new signals
-                            new_class = classify_page_type(url, {**r, **page_data})
-                            new_type = new_class.get("page_type", "unknown")
-                            if new_type != "category":
-                                old_type = r["page_type"]
-                                r["page_type"] = new_type
-                                r["_reclassified_from"] = old_type
-                                r["_reclassified_signals"] = new_class.get("signals", [])
-                                changed += 1
+
+                            # Force product if ANY definitive signal detected
+                            if is_product_by_body or is_product_by_accordion or is_product_by_schema:
+                                if r["page_type"] == "category":
+                                    reason = []
+                                    if is_product_by_body: reason.append("body class")
+                                    if is_product_by_accordion: reason.append("accordion")
+                                    if is_product_by_schema: reason.append("schema")
+                                    r["page_type"] = "product"
+                                    r["_reclassified_from"] = "category"
+                                    r["_reclassified_signals"] = reason
+                                    changed += 1
+                                    log_lines.append(f"✓ {short} → product ({', '.join(reason)})")
+                            else:
+                                # Run classifier for other possible reclassifications
+                                new_class = classify_page_type(url, {**r, **page_data})
+                                new_type = new_class.get("page_type", "unknown")
+                                if new_type != "category":
+                                    r["page_type"] = new_type
+                                    r["_reclassified_from"] = "category"
+                                    r["_reclassified_signals"] = new_class.get("signals", [])
+                                    changed += 1
+                                    log_lines.append(f"✓ {short} → {new_type}")
+
+                            # Log first 20 pages for diagnostics
+                            if idx_num < 20 and not any(short in l for l in log_lines):
+                                log_lines.append(
+                                    f"  {short}: tmpl={tmpl} accordion={accordion} "
+                                    f"breadcrumb={breadcrumb} body_cls={body_cls[:30]} "
+                                    f"schemas={schemas[:3]} scraper={scraper_used} → stays category"
+                                )
+                        else:
+                            errors += 1
+                            if idx_num < 10:
+                                log_lines.append(f"✗ {short}: scrape failed ({scraper_used})")
                     except Exception as e:
                         errors += 1
-                    progress.progress(min(1.0, (i + 1) / max(1, len(results))))
+                        if idx_num < 10:
+                            log_lines.append(f"✗ {short}: error {str(e)[:60]}")
+                    progress.progress(min(1.0, (idx_num + 1) / max(1, total_cats)))
                 save_key("audit_results")
                 status_text.empty()
-                st.success(f"Re-scraped {len(category_pages)} categories → {changed} reclassified (e.g. category→product). {errors} errors.")
-                st.rerun()
+                progress.empty()
+
+                # Show results WITHOUT st.rerun() so user can see diagnostics
+                st.success(f"Re-scraped {scraped}/{total_cats} category pages → **{changed} reclassified** to product. {errors} errors.")
+                if log_lines:
+                    with st.expander(f"Diagnostic log ({len(log_lines)} entries)", expanded=True):
+                        st.code("\n".join(log_lines[:50]), language="text")
 
     # ── Export pipeline state ────────────────────────────────
     st.markdown("---")
