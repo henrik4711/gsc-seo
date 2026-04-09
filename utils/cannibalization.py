@@ -9,94 +9,165 @@ import numpy as np
 
 def _classify_cannibal_type(winner: str, losers: list, pages_detail: list, audit_lookup=None) -> dict:
     """
-    Classify WHAT kind of cannibalization this is so downstream code can
-    suggest the RIGHT action instead of defaulting to "merge everything".
+    Classify WHAT kind of cannibalization this is, with a concrete
+    Magento-specific action description per type.
 
-    Returns dict with:
-      type: 'true_duplicate' | 'subcategory_split' | 'missing_parent'
-          | 'brand_variant' | 'different_depth' | 'unknown'
-      action: short string for UI
-      parent_url: for subcategory_split, the parent category URL
-      suggested_parent_path: for missing_parent, what to create
+    Types:
+      category_vs_children  — A category + its sub-categories/products compete.
+                              This is NORMAL on e-commerce sites. Fix = differentiate meta.
+      products_same_parent  — Multiple products under the same category compete.
+                              Fix = differentiate product meta per variant.
+      products_no_parent    — Multiple products from different areas compete for a
+                              generic term. Fix = create a category that targets it.
+      true_duplicate        — Two very similar pages at same depth. Fix = 301 redirect.
+      unrelated             — Pages with no structural relationship. Fix = per-page meta.
     """
     from urllib.parse import urlparse
 
     def _path_of(u):
         return urlparse(str(u)).path.rstrip("/") or "/"
 
-    all_paths = [_path_of(winner)] + [_path_of(x) for x in losers]
+    all_urls = [winner] + list(losers)
+    all_paths = [_path_of(u) for u in all_urls]
     segments_list = [[s for s in p.split("/") if s] for p in all_paths]
     depths = [len(s) for s in segments_list]
 
-    # CASE 1: Sub-category split
-    # One URL is a prefix of others: /sexdockor is parent, /sexdockor/torso is child.
-    paths_sorted = sorted(all_paths, key=len)
-    shortest = paths_sorted[0]
-    if len(shortest) > 1:
-        all_under_shortest = all(p == shortest or p.startswith(shortest + "/") for p in all_paths)
-        if all_under_shortest and len(all_paths) >= 2:
-            return {
-                "type": "subcategory_split",
-                "action": "Keep all pages. Differentiate sub-category meta titles + descriptions. Parent targets generic query; children target specific variants.",
-                "parent_url": shortest,
-                "suggested_parent_path": None,
-            }
+    # ── Find parent-child relationships ──────────────────────
+    # Check if ANY path is a prefix of other paths (majority, not all).
+    # This catches /sexdockor being parent of /sexdockor/torso even when
+    # /intimate-collection (unrelated) is also in the mix.
+    parent_path = None
+    parent_children = []
+    outliers = []
 
-    # CASE 2: Different depths but NOT prefix-related (e.g. brand page + product page)
-    if max(depths) - min(depths) >= 2:
+    paths_by_depth = sorted(zip(all_paths, all_urls), key=lambda x: len(x[0]))
+    for candidate_path, candidate_url in paths_by_depth:
+        if len(candidate_path) <= 1:
+            continue
+        children = []
+        others = []
+        for p, u in zip(all_paths, all_urls):
+            if p == candidate_path:
+                continue
+            if p.startswith(candidate_path + "/"):
+                children.append(u)
+            else:
+                others.append(u)
+        # If this path is parent of at least 2 others → category_vs_children
+        if len(children) >= 2:
+            parent_path = candidate_path
+            parent_children = children
+            outliers = others
+            break
+
+    if parent_path:
+        outlier_note = ""
+        if outliers:
+            outlier_note = (
+                f" Also competing: {', '.join(_path_of(o) for o in outliers)} "
+                f"(unrelated — check why they rank for this query)."
+            )
+        parent_url_full = [u for p, u in zip(all_paths, all_urls) if p == parent_path]
         return {
-            "type": "different_depth",
-            "action": "Pages at very different depth competing. Likely missing a pillar category at the right depth. Investigate site architecture.",
-            "parent_url": None,
+            "type": "category_vs_children",
+            "action": (
+                f"This is a CATEGORY + its sub-pages competing. This is NORMAL on "
+                f"e-commerce sites — not a bug to fix with redirects.\n\n"
+                f"**What to do in Magento:**\n"
+                f"1. Parent category targets the GENERIC query in meta title\n"
+                f"2. Each sub-category/product gets a SPECIFIC variant in its meta title\n"
+                f"3. Ensure parent page links visibly to all sub-pages\n"
+                f"4. Click 'Generate meta' below to get ready-to-paste titles{outlier_note}"
+            ),
+            "parent_url": parent_url_full[0] if parent_url_full else None,
             "suggested_parent_path": None,
         }
 
-    # CASE 3: All at SAME depth with NO common parent → 3+ separate products
-    # that need a category page above them (missing_parent)
-    if len(set(depths)) == 1 and depths[0] >= 2 and len(all_paths) >= 3:
-        # They're siblings at same depth, likely products under missing category
-        # Extract common parent path
-        common_parts = []
-        first_segs = segments_list[0]
-        for i, seg in enumerate(first_segs):
-            if all(len(s) > i and s[i] == seg for s in segments_list):
-                common_parts.append(seg)
-            else:
-                break
-        if len(common_parts) < depths[0] - 1:
-            # No shared parent beyond root → truly missing category
-            return {
-                "type": "missing_parent",
-                "action": "Multiple products competing for same query with no category page. CREATE a category/pillar page that targets the generic query; assign all products to it.",
-                "parent_url": None,
-                "suggested_parent_path": "/" + "-".join(common_parts) if common_parts else None,
-            }
+    # ── Same parent directory → products/variants under one category ──
+    parent_dirs = set()
+    for segs in segments_list:
+        parent_dirs.add("/" + "/".join(segs[:-1]) if len(segs) > 1 else "/")
+    if len(parent_dirs) == 1 and len(all_paths) >= 2:
+        shared_parent = next(iter(parent_dirs))
+        return {
+            "type": "products_same_parent",
+            "action": (
+                f"Multiple pages under `{shared_parent}` compete for the same query.\n\n"
+                f"**What to do in Magento:**\n"
+                f"1. Each page gets a UNIQUE meta title with its specific variant "
+                f"(brand name, color, size, feature)\n"
+                f"2. The parent category `{shared_parent}` should target the generic query\n"
+                f"3. Click 'Generate meta' below to get differentiated titles"
+            ),
+            "parent_url": shared_parent,
+            "suggested_parent_path": None,
+        }
 
-    # CASE 4: Same depth, shared immediate parent → brand/product variants
-    if len(set(depths)) == 1 and depths[0] >= 1:
-        parents = set()
-        for segs in segments_list:
-            parents.add("/".join(segs[:-1]) if len(segs) > 1 else "")
-        if len(parents) == 1:
-            return {
-                "type": "brand_variant",
-                "action": "Products/pages under same parent competing for same query. Differentiate each page's meta title to target unique variant (color, brand, size, feature).",
-                "parent_url": next(iter(parents)) if parents else None,
-                "suggested_parent_path": None,
-            }
-
-    # CASE 5: True duplicates fallback — same depth, 2 pages, similar
-    if len(all_paths) == 2 and len(set(depths)) == 1:
+    # ── Two pages only, same depth → likely true duplicates ──
+    if len(all_paths) == 2 and abs(depths[0] - depths[1]) <= 1:
         return {
             "type": "true_duplicate",
-            "action": "Two same-depth pages competing for identical query. Likely true duplicates — pick winner, 301 redirect loser, merge unique content.",
+            "action": (
+                f"Two pages at similar depth compete for the same query.\n\n"
+                f"**What to do in Magento:**\n"
+                f"1. Keep the 🏆 WINNER page\n"
+                f"2. Copy any unique content from the loser to the winner\n"
+                f"3. Set up 301 redirect: loser → winner (URL Rewrite Management)\n"
+                f"4. Update any internal links pointing to the loser"
+            ),
             "parent_url": None,
             "suggested_parent_path": None,
         }
 
+    # ── Multiple products from different areas, no shared structure ──
+    # This usually means a generic query (e.g. "dildo") has no proper
+    # category page, so random products compete for it.
+    if len(all_paths) >= 3:
+        # Check if the winner looks like a category (shorter path, more generic)
+        winner_path = _path_of(winner)
+        winner_depth = len([s for s in winner_path.split("/") if s])
+        min_depth = min(depths)
+        if winner_depth == min_depth:
+            return {
+                "type": "category_vs_children",
+                "action": (
+                    f"A category page competes with product pages for a generic query.\n\n"
+                    f"**What to do in Magento:**\n"
+                    f"1. Strengthen the WINNER (category page) meta title for the generic query\n"
+                    f"2. Each product page targets its SPECIFIC product name in meta\n"
+                    f"3. Ensure products are assigned to the winning category\n"
+                    f"4. Click 'Generate meta' below"
+                ),
+                "parent_url": winner,
+                "suggested_parent_path": None,
+            }
+        else:
+            return {
+                "type": "products_no_parent",
+                "action": (
+                    f"Multiple products compete for a generic query but there's no "
+                    f"category page targeting it.\n\n"
+                    f"**What to do in Magento:**\n"
+                    f"1. CREATE a new category page targeting this query\n"
+                    f"2. Assign all competing products to the new category\n"
+                    f"3. Write intro text + meta title targeting the generic query\n"
+                    f"4. Each product keeps its specific product-name meta"
+                ),
+                "parent_url": None,
+                "suggested_parent_path": "/" + all_paths[0].split("/")[1] if segments_list[0] else None,
+            }
+
+    # ── Fallback: 2 pages, different depths ──
     return {
-        "type": "unknown",
-        "action": "Manual review needed — no clear pattern detected.",
+        "type": "unrelated",
+        "action": (
+            f"Two structurally unrelated pages compete for the same query.\n\n"
+            f"**What to do in Magento:**\n"
+            f"1. Decide which page should own this query\n"
+            f"2. Optimize that page's meta title for the query\n"
+            f"3. Change the other page's meta to target a DIFFERENT keyword\n"
+            f"4. Click 'Generate meta' below"
+        ),
         "parent_url": None,
         "suggested_parent_path": None,
     }

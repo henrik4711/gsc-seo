@@ -590,13 +590,13 @@ def render():
         "🧩 Topic Gaps",
     ])
 
-    # ── TAB 1: MERGE / CANNIBALIZATION ACTIONS ──────────────
+    # ── TAB 1: CANNIBALIZATION ACTIONS ──────────────────────
     with tab1:
-        st.markdown("### Cannibalization — grouped by action type")
+        st.markdown("### Keyword conflicts — what to do")
         st.markdown(
             "<p style='color:#9b9bb8; font-size:0.85rem;'>"
-            "Cannibalization isn't always 'merge'. The system classifies each conflict into one of 5 action types "
-            "and gives concrete instructions + AI-generated text where relevant.</p>",
+            "Pages competing for the same query. Each conflict is classified automatically with "
+            "concrete Magento instructions. Click an item to see what to do + generate new meta titles.</p>",
             unsafe_allow_html=True,
         )
 
@@ -604,7 +604,6 @@ def render():
         if cannibal_df is None or cannibal_df.empty:
             st.info("No cannibalization data — run Step 5 in Run Pipeline.")
         else:
-            # Filter out different-intent / homepage cases (already handled by old logic)
             work = cannibal_df[cannibal_df["severity"].isin(["severe", "moderate"])].copy()
             work = work[~work["merge_action"].str.contains("DIFFERENT INTENTS|Homepage involved", na=False)]
 
@@ -614,154 +613,111 @@ def render():
                 t = row.get("cannibal_type", "unknown")
                 grouped.setdefault(t, []).append(row)
 
-            type_labels = {
-                "true_duplicate": ("🔀 True duplicates", "Safe to merge — pick winner, 301 losers, copy unique content.", "#ff4455"),
-                "subcategory_split": ("🌳 Sub-category splits", "DO NOT merge. Keep all pages, differentiate sub-category meta titles + descriptions. AI generates new meta below.", "#33dd88"),
-                "missing_parent": ("🏗 Missing parent category", "CREATE a new category page that targets the generic query; assign products to it.", "#ffaa33"),
-                "brand_variant": ("🎯 Brand/variant competition", "Differentiate each page's meta title to target its unique variant. AI generates new meta below.", "#5533ff"),
-                "different_depth": ("📐 Different-depth competition", "Architecture issue — investigate why pages at different levels compete.", "#9b9bb8"),
-                "unknown": ("❓ Unclassified", "Manual review needed.", "#6b6b8a"),
+            type_ui = {
+                "category_vs_children": ("🌳 Category + sub-pages", "#33dd88",
+                    "NORMAL for e-commerce. Parent category and its sub-pages/products both rank for a generic query. "
+                    "**Fix:** differentiate meta titles. Parent = generic, children = specific variant."),
+                "products_same_parent": ("🎯 Products under same category", "#5533ff",
+                    "Multiple products in the same category compete for one query. "
+                    "**Fix:** give each product a UNIQUE meta title with its brand/variant."),
+                "true_duplicate": ("🔀 True duplicates — merge", "#ff4455",
+                    "Two nearly identical pages. **Fix:** 301 redirect the loser to the winner."),
+                "products_no_parent": ("🏗 Missing category page", "#ffaa33",
+                    "Products compete for a generic query but no category page targets it. "
+                    "**Fix:** CREATE a new category in Magento and assign the products."),
+                "unrelated": ("🔗 Unrelated pages", "#9b9bb8",
+                    "Structurally unrelated pages compete. **Fix:** pick which page owns the query, differentiate the other."),
             }
 
-            # Show counts
-            cols = st.columns(len(type_labels))
-            for i, (tk, (label, _, color)) in enumerate(type_labels.items()):
+            # Counts
+            cols = st.columns(len(type_ui))
+            for i, (tk, (label, color, _)) in enumerate(type_ui.items()):
                 count = len(grouped.get(tk, []))
-                cols[i].metric(label.split(" ", 1)[1] if " " in label else label, count)
+                if count > 0:
+                    cols[i].metric(label.split(" ", 1)[0] + " " + label.split(" ", 1)[1][:20], count)
             st.markdown("---")
 
-            for tk, rows in grouped.items():
+            for tk in type_ui:
+                rows = grouped.get(tk, [])
                 if not rows:
                     continue
-                label, desc, color = type_labels.get(tk, ("Unknown", "", "#6b6b8a"))
+                label, color, explanation = type_ui[tk]
+
                 st.markdown(
-                    f"<div style='border-left:3px solid {color}; padding-left:0.6rem; margin:1rem 0;'>"
-                    f"<div style='font-weight:600; color:#e8e8f0; font-size:1rem;'>{label} ({len(rows)})</div>"
-                    f"<div style='color:#9b9bb8; font-size:0.8rem;'>{desc}</div></div>",
+                    f"<div style='border-left:4px solid {color}; padding:0.6rem 0.8rem; margin:1rem 0; background:#0d0d15; border-radius:0 4px 4px 0;'>"
+                    f"<div style='font-weight:700; color:#e8e8f0; font-size:1.05rem;'>{label} ({len(rows)})</div>"
+                    f"<div style='color:#c8b4ff; font-size:0.85rem; margin-top:0.3rem;'>{explanation}</div></div>",
                     unsafe_allow_html=True,
                 )
 
-                # For subcategory_split and brand_variant: offer AI meta generation
-                show_ai_btn = tk in ("subcategory_split", "brand_variant")
-
-                for row in rows[:10]:
+                for row in sorted(rows, key=lambda r: -r.get("lost_clicks_estimate", 0))[:15]:
                     query = row["query"]
                     winner = row["recommended_winner"]
                     pages = row["pages_detail"]
                     lost = row.get("lost_clicks_estimate", 0)
                     parent = row.get("cannibal_parent_url")
+                    action_text = row.get("cannibal_action", "")
 
                     with st.expander(f"'{query}' — {len(pages)} pages · {lost:,} lost clicks"):
-                        st.markdown(f"**Query:** `{query}`")
-                        if parent:
-                            st.markdown(f"**Common parent:** `{parent}`")
-                        st.markdown(f"**Recommended winner:** `{winner}` (pos {row.get('winner_position', '?')})")
-
-                        st.markdown("**Pages involved:**")
+                        # Pages table
+                        st.markdown("**Pages competing for this query:**")
                         for p in pages:
                             page_url = p.get("page", "")
                             is_winner = normalize_url(page_url) == normalize_url(winner)
-                            marker = "🏆 WINNER" if is_winner else ""
+                            marker = " 🏆" if is_winner else ""
                             st.markdown(
-                                f"- `{page_url}` · pos {p.get('position','?')} · "
-                                f"{p.get('clicks',0)} clicks · {p.get('impressions',0):,} impr "
-                                f"{marker}"
+                                f"- `{shorten_url(page_url)}` · pos {p.get('position','?')} · "
+                                f"{p.get('clicks',0)} cl · {p.get('impressions',0):,} impr{marker}"
                             )
 
-                        # Type-specific action
+                        # Action instructions (rendered as markdown)
+                        if action_text:
+                            st.markdown("---")
+                            st.markdown(action_text)
+
+                        # Quality validation for category_vs_children
+                        if tk == "category_vs_children" and parent:
+                            issues = _validate_subcategory_quality(parent, pages)
+                            if issues:
+                                st.markdown("**🚨 Detected issues:**")
+                                for iss in issues:
+                                    sev_icon = "🔴" if iss["severity"] == "high" else "🟡"
+                                    st.markdown(f"{sev_icon} `{shorten_url(iss['page'])}` — {iss['issue']}")
+                                    st.caption(f"Fix: {iss['fix']}")
+
+                        # AI meta generation button — available for ALL types
+                        ai_key = f"_cannibal_meta_{stable_hash(query)}"
+                        if ai_key in st.session_state:
+                            meta_results = st.session_state[ai_key]
+                            st.markdown("**✅ Generated meta (copy-paste into Magento):**")
+                            for page_url, meta in meta_results.items():
+                                variants = meta.get("variants", [])
+                                if variants:
+                                    best = variants[0]
+                                    st.markdown(f"**`{shorten_url(page_url)}`**")
+                                    st.code(
+                                        f"Title: {best.get('title','')}\n"
+                                        f"Description: {best.get('description','')}",
+                                        language="text",
+                                    )
+                        else:
+                            if st.button(
+                                f"🤖 Generate differentiated meta titles for all {len(pages)} pages",
+                                key=f"btn_{ai_key}",
+                            ):
+                                with st.spinner("AI generating meta per page..."):
+                                    try:
+                                        _generate_cannibal_subcategory_meta(query, pages, row, ai_key)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error: {e}")
+
+                        # For true_duplicate: also show redirect instructions
                         if tk == "true_duplicate":
                             losers = [p["page"] for p in pages if normalize_url(p["page"]) != normalize_url(winner)]
-                            st.markdown("**Actions (Magento):**")
-                            st.markdown(f"1. Copy unique content from loser → `{winner}`")
-                            st.markdown(f"2. URL Rewrite Management → add 301 redirects:")
+                            st.markdown("**301 redirect (paste in Magento URL Rewrite Management):**")
                             for l in losers:
                                 st.code(f"{l}  →  {winner}", language="text")
-
-                        elif tk == "subcategory_split":
-                            st.markdown("**Sub-category strategy:**")
-                            st.markdown(f"- Parent `{parent or winner}` targets generic `{query}`")
-                            st.markdown(f"- Each sub-category targets specific variant keyword")
-                            st.markdown(f"- Make sure parent page has visible links to all sub-categories")
-
-                            # Automated quality check: links + text differentiation
-                            validation_issues = _validate_subcategory_quality(parent or winner, pages)
-                            if validation_issues:
-                                st.markdown("**🚨 Detected issues:**")
-                                high = [i for i in validation_issues if i["severity"] == "high"]
-                                med = [i for i in validation_issues if i["severity"] == "medium"]
-                                for iss in high:
-                                    st.error(f"**HIGH** · `{iss['page']}` — {iss['issue']}")
-                                    st.caption(f"→ Fix: {iss['fix']}")
-                                for iss in med:
-                                    st.warning(f"**MED** · `{iss['page']}` — {iss['issue']}")
-                                    st.caption(f"→ Fix: {iss['fix']}")
-                            else:
-                                st.success("✓ Links and titles are already differentiated")
-
-                            ai_key = f"_cannibal_meta_{stable_hash(query)}"
-                            if st.button(f"🤖 Generate meta titles + descriptions for all sub-categories", key=f"btn_{ai_key}"):
-                                with st.spinner("Generating differentiated meta for each sub-category..."):
-                                    try:
-                                        _generate_cannibal_subcategory_meta(query, pages, row, ai_key)
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error: {e}")
-
-                            if ai_key in st.session_state:
-                                meta_results = st.session_state[ai_key]
-                                st.markdown("**🎯 Generated meta per page:**")
-                                for page_url, meta in meta_results.items():
-                                    st.markdown(f"**`{page_url}`**")
-                                    variants = meta.get("variants", [])
-                                    if variants:
-                                        best = variants[0]
-                                        st.code(
-                                            f"Title: {best.get('title','')}\n"
-                                            f"Description: {best.get('description','')}",
-                                            language="text",
-                                        )
-                                        st.caption(f"Strategy: {best.get('strategy','')}")
-
-                        elif tk == "missing_parent":
-                            suggested = row.get("cannibal_suggested_parent") or f"/{query.replace(' ', '-')}"
-                            st.markdown(f"**Action: Create new category page**")
-                            st.markdown(f"- Suggested URL: `{suggested}`")
-                            st.markdown(f"- Target keyword: **{query}**")
-                            st.markdown(f"- In Magento: create category, assign all listed products, write intro + bottom text")
-                            st.info("Use Quick Wins or manually create the category in Magento, then run Quick Wins on it to generate text.")
-
-                        elif tk == "brand_variant":
-                            st.markdown("**Variant differentiation strategy:**")
-                            st.markdown(f"- Each variant gets unique meta title targeting its specific feature")
-                            st.markdown(f"- Do NOT 301 redirect — each variant is a real product")
-
-                            ai_key = f"_cannibal_meta_{stable_hash(query)}"
-                            if st.button(f"🤖 Generate differentiated meta for all variants", key=f"btn_{ai_key}"):
-                                with st.spinner("Generating variant-specific meta..."):
-                                    try:
-                                        _generate_cannibal_subcategory_meta(query, pages, row, ai_key)
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error: {e}")
-
-                            if ai_key in st.session_state:
-                                meta_results = st.session_state[ai_key]
-                                st.markdown("**🎯 Generated meta per variant:**")
-                                for page_url, meta in meta_results.items():
-                                    st.markdown(f"**`{page_url}`**")
-                                    variants = meta.get("variants", [])
-                                    if variants:
-                                        best = variants[0]
-                                        st.code(
-                                            f"Title: {best.get('title','')}\n"
-                                            f"Description: {best.get('description','')}",
-                                            language="text",
-                                        )
-
-                        elif tk == "different_depth":
-                            st.warning("Pages at different depth levels compete. This is usually a sign of missing pillar architecture. Investigate manually.")
-                        else:
-                            st.info("Manual review needed — no clear pattern.")
 
     # ── TAB 2: CREATE ─────────────────────────────────────────
     with tab2:
