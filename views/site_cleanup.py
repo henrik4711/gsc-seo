@@ -614,6 +614,9 @@ def render():
                 grouped.setdefault(t, []).append(row)
 
             type_ui = {
+                "duplicate_categories": ("⚠ Duplicate categories — MERGE", "#ff6644",
+                    "Two category pages target the same query. This is true cannibalization. "
+                    "**Fix:** pick ONE winner, 301 redirect the loser, move products, update meta to cover both keywords."),
                 "category_vs_children": ("🌳 Category + sub-pages", "#33dd88",
                     "NORMAL for e-commerce. Parent category and its sub-pages/products both rank for a generic query. "
                     "**Fix:** differentiate meta titles. Parent = generic, children = specific variant."),
@@ -712,12 +715,14 @@ def render():
                                     except Exception as e:
                                         st.error(f"Error: {e}")
 
-                        # For true_duplicate: also show redirect instructions
-                        if tk == "true_duplicate":
+                        # For true_duplicate + duplicate_categories: show redirect instructions
+                        if tk in ("true_duplicate", "duplicate_categories"):
                             losers = [p["page"] for p in pages if normalize_url(p["page"]) != normalize_url(winner)]
                             st.markdown("**301 redirect (paste in Magento URL Rewrite Management):**")
-                            for l in losers:
+                            for l in losers[:5]:
                                 st.code(f"{l}  →  {winner}", language="text")
+                            if tk == "duplicate_categories":
+                                st.info("After redirect: move all products from loser category to winner category in Magento → Catalog → Categories.")
 
     # ── TAB 2: CREATE ─────────────────────────────────────────
     with tab2:

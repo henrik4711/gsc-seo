@@ -32,6 +32,38 @@ def _classify_cannibal_type(winner: str, losers: list, pages_detail: list, audit
     segments_list = [[s for s in p.split("/") if s] for p in all_paths]
     depths = [len(s) for s in segments_list]
 
+    # ── CASE 0: Duplicate categories ─────────────────────────
+    # Two CATEGORY pages competing = true merge candidate.
+    # E.g. /kukring and /penisringar both target "penisring".
+    import streamlit as _st
+    audit_results = _st.session_state.get("audit_results", [])
+    _types = {}
+    for ar in audit_results:
+        from utils.ui_helpers import normalize_url as _nu
+        _types[_nu(ar.get("url", ""))] = ar.get("page_type", "unknown")
+
+    page_types_in_conflict = [_types.get(_nu(u), "unknown") for u in all_urls]
+    category_count = sum(1 for t in page_types_in_conflict if t == "category")
+
+    if category_count >= 2:
+        cat_urls = [u for u, t in zip(all_urls, page_types_in_conflict) if t == "category"]
+        non_cat = [u for u in all_urls if u not in cat_urls]
+        return {
+            "type": "duplicate_categories",
+            "action": (
+                f"**{category_count} category pages** compete for the same query — "
+                f"this is true cannibalization.\n\n"
+                f"**What to do in Magento:**\n"
+                f"1. Pick ONE category to own this query (🏆 winner)\n"
+                f"2. 301 redirect the other category to the winner\n"
+                f"3. Move all products from the loser category to the winner\n"
+                f"4. Update the winner's meta to target BOTH keyword variants\n"
+                f"5. Click 'Generate meta' below for optimized title + description"
+            ),
+            "parent_url": None,
+            "suggested_parent_path": None,
+        }
+
     # ── Find parent-child relationships ──────────────────────
     # Check if ANY path is a prefix of other paths (majority, not all).
     # This catches /sexdockor being parent of /sexdockor/torso even when
@@ -300,14 +332,31 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                     pd_item["referring_domains"] = int(match.iloc[0].get("referring_domains", 0))
                     pd_item["authority_score"] = int(match.iloc[0].get("authority_score", 0))
 
-        # Pick winner: highest (clicks * 2 + referring_domains * 10 + authority_score)
+        # Pick winner: prefer CATEGORY pages over products for generic queries.
+        # Category pages are better owners of generic queries because they serve
+        # browse/explore intent and link to products.
+        # Detection: use audit_results page_type if available, else use URL depth.
+        audit_results = _st.session_state.get("audit_results", [])
+        _audit_types = {}
+        for ar in audit_results:
+            from utils.ui_helpers import normalize_url as _nu2
+            _audit_types[_nu2(ar.get("url", ""))] = ar.get("page_type", "unknown")
+
         winner_score = -1
         winner_page = best_page["page"]
         for pd_item in pages_detail:
-            score = pd_item["clicks"] * 2 + pd_item["referring_domains"] * 10 + pd_item["authority_score"]
+            page_url = pd_item["page"]
+            page_type = _audit_types.get(_nu(page_url), "unknown")
+            # Category pages get a large bonus for generic queries
+            category_bonus = 500 if page_type == "category" else 0
+            # Shorter URL depth = more generic = better for generic query ownership
+            url_depth = len([s for s in urlparse(page_url).path.split("/") if s])
+            depth_bonus = max(0, (5 - url_depth) * 50)
+            score = (pd_item["clicks"] * 2 + pd_item["referring_domains"] * 10
+                     + pd_item["authority_score"] + category_bonus + depth_bonus)
             if score > winner_score:
                 winner_score = score
-                winner_page = pd_item["page"]
+                winner_page = page_url
 
         # Generate merge instruction — context-aware
         loser_pages = [p["page"] for p in pages_detail if p["page"] != winner_page]
