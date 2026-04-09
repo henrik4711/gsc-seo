@@ -9,13 +9,40 @@ from utils.ui_helpers import stable_hash, normalize_url, shorten_url
 
 
 def _get_top_pages(audit_results, top_n=20):
-    """Get top pages by lost clicks, excluding done."""
+    """Get top pages by lost clicks, excluding done and merge/delete scheduled pages."""
+    # Build sets of URLs scheduled for merge (as source) or delete in ideal structure
+    ideal = st.session_state.get("_ideal_structure") or {}
+    excluded_urls = set()
+    if isinstance(ideal, dict):
+        for m in ideal.get("merge", []) or []:
+            if isinstance(m, dict):
+                for from_url in m.get("from", []):
+                    excluded_urls.add(normalize_url(from_url))
+        for d in ideal.get("delete", []) or []:
+            if isinstance(d, dict) and d.get("url"):
+                excluded_urls.add(normalize_url(d["url"]))
+
+    # Build set of URLs with crawl issues for priority boosting
+    sf_crawl_issues = st.session_state.get("sf_crawl_issues") or {}
+    crawl_issue_urls = set()
+    for b in sf_crawl_issues.get("broken_links", []) or []:
+        if b.get("url"):
+            crawl_issue_urls.add(normalize_url(b["url"]))
+    for c in sf_crawl_issues.get("canonical_issues", []) or []:
+        if c.get("url"):
+            crawl_issue_urls.add(normalize_url(c["url"]))
+
     pages = []
+    excluded_count = 0
     for r in audit_results:
         if not r.get("url"):
             continue
         url_hash = stable_hash(r["url"])
         if st.session_state.get(f"_qw_done_{url_hash}", False):
+            continue
+        # Exclude pages scheduled for merge/delete
+        if normalize_url(r["url"]) in excluded_urls:
+            excluded_count += 1
             continue
         pages.append({
             "url": r["url"],
@@ -32,16 +59,24 @@ def _get_top_pages(audit_results, top_n=20):
             "bottom_text": r.get("bottom_text", ""),
             "audit": r,
         })
-    # Sort by lost_clicks (primary) with quality verdict boost (secondary).
+    # Sort by lost_clicks (primary) with quality verdict + crawl issue boost (secondary).
     # REWRITE pages get priority boost, KEEP pages get deprioritized.
+    # Pages with crawl issues get a boost similar to REWRITE.
     def _sort_key(p):
         quality = st.session_state.get(f"_quality_{stable_hash(p['url'])}")
         verdict = quality.get("verdict", "") if quality else ""
         # Boost: REWRITE=2, IMPROVE=1, KEEP/unknown=0
         verdict_boost = {"REWRITE": 2, "IMPROVE": 1}.get(verdict, 0)
-        # Combined: lost_clicks + verdict bonus (scaled to not overwhelm lost_clicks)
-        return -(p["lost_clicks"] + verdict_boost * max(p["lost_clicks"] * 0.3, 50))
+        # Crawl issue boost: pages with broken links or canonical issues get +2
+        crawl_boost = 2 if normalize_url(p["url"]) in crawl_issue_urls else 0
+        total_boost = verdict_boost + crawl_boost
+        # Combined: lost_clicks + boost bonus (scaled to not overwhelm lost_clicks)
+        return -(p["lost_clicks"] + total_boost * max(p["lost_clicks"] * 0.3, 50))
     pages.sort(key=_sort_key)
+
+    # Store excluded count for display
+    st.session_state["_qw_excluded_count"] = excluded_count
+
     return pages[:top_n]
 
 
@@ -766,6 +801,14 @@ def render():
 
     audit_results = st.session_state["audit_results"]
     pages = _get_top_pages(audit_results, top_n=20)
+
+    excluded_count = st.session_state.get("_qw_excluded_count", 0)
+    if excluded_count > 0:
+        st.markdown(
+            f"<div style='font-size:0.8rem; color:#9b9bb8; margin-bottom:0.5rem;'>"
+            f"{excluded_count} page(s) excluded (scheduled for merge/delete in ideal structure)</div>",
+            unsafe_allow_html=True,
+        )
 
     if not pages:
         st.success("All top pages marked as done. Reset done status to start over.")

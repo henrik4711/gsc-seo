@@ -180,6 +180,23 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # ── Critical issues from site validation ────────────────────
+    v = st.session_state.get("_site_validation")
+    if v and isinstance(v, dict):
+        critical_issues = v.get("critical_issues", [])
+        if critical_issues:
+            items_html = "".join(
+                f"<li style='color:#e8e8f0; font-size:0.82rem; margin-bottom:0.2rem;'>{issue}</li>"
+                for issue in critical_issues[:3]
+            )
+            st.markdown(
+                f"<div style='background:#12121f; border-left:4px solid #ff4455; border-radius:0 6px 6px 0; padding:0.8rem; margin-bottom:1rem;'>"
+                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#ff4455; margin-bottom:0.3rem;'>CRITICAL ISSUES</div>"
+                f"<ul style='margin:0; padding-left:1.2rem;'>{items_html}</ul>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
     # ── Next action ───────────────────────────────────────────
     st.markdown(
         f"<div style='background:#12121f; border:2px solid #5533ff; border-radius:8px; padding:1rem; margin-bottom:1.5rem;'>"
