@@ -337,6 +337,7 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         # browse/explore intent and link to products.
         # Detection: use audit_results page_type if available, else use URL depth.
         audit_results = _st.session_state.get("audit_results", [])
+        from urllib.parse import urlparse as _urlparse
         _audit_types = {}
         for ar in audit_results:
             from utils.ui_helpers import normalize_url as _nu2
@@ -347,10 +348,8 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         for pd_item in pages_detail:
             page_url = pd_item["page"]
             page_type = _audit_types.get(_nu(page_url), "unknown")
-            # Category pages get a large bonus for generic queries
             category_bonus = 500 if page_type == "category" else 0
-            # Shorter URL depth = more generic = better for generic query ownership
-            url_depth = len([s for s in urlparse(page_url).path.split("/") if s])
+            url_depth = len([s for s in _urlparse(page_url).path.split("/") if s])
             depth_bonus = max(0, (5 - url_depth) * 50)
             score = (pd_item["clicks"] * 2 + pd_item["referring_domains"] * 10
                      + pd_item["authority_score"] + category_bonus + depth_bonus)
