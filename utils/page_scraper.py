@@ -18,12 +18,14 @@ except ImportError:
 # Playwright browser instance — created on-demand, not at import
 _browser = None
 _playwright = None
-_playwright_failed = False  # Don't retry if it failed once
+_playwright_failed = False
+_playwright_fail_count = 0
+_PLAYWRIGHT_MAX_RETRIES = 3  # Retry browser restart up to 3 times before giving up
 
 
 def _get_browser():
     """Get or create a shared Playwright browser instance. Restarts if crashed."""
-    global _browser, _playwright, _playwright_failed
+    global _browser, _playwright, _playwright_failed, _playwright_fail_count
     if _playwright_failed:
         return None
     if _browser:
@@ -33,7 +35,8 @@ def _get_browser():
         except Exception:
             pass
         # Browser died — clean up and restart
-        print("[scraper] Browser crashed, restarting...")
+        _playwright_fail_count += 1
+        print(f"[scraper] Browser crashed (attempt {_playwright_fail_count}/{_PLAYWRIGHT_MAX_RETRIES}), restarting...")
         try:
             _browser.close()
         except Exception:
@@ -44,6 +47,13 @@ def _get_browser():
             pass
         _browser = None
         _playwright = None
+        if _playwright_fail_count >= _PLAYWRIGHT_MAX_RETRIES:
+            print(f"[scraper] Playwright crashed {_playwright_fail_count} times — giving up for this session")
+            _playwright_failed = True
+            return None
+        # Brief pause before restart to let resources free
+        import time
+        time.sleep(1)
     try:
         from playwright.sync_api import sync_playwright
         _playwright = sync_playwright().start()
@@ -57,15 +67,39 @@ def _get_browser():
                 "--single-process",
             ],
         )
+        # Reset fail count on successful launch
+        _playwright_fail_count = 0
         return _browser
     except Exception as e:
         import traceback
-        print(f"[scraper] Playwright unavailable: {e}")
-        print(traceback.format_exc())
-        _playwright_failed = True
-        import streamlit as _st
-        _st.session_state["_playwright_error"] = f"{e}\n{traceback.format_exc()}"
+        _playwright_fail_count += 1
+        print(f"[scraper] Playwright launch failed (attempt {_playwright_fail_count}/{_PLAYWRIGHT_MAX_RETRIES}): {e}")
+        if _playwright_fail_count >= _PLAYWRIGHT_MAX_RETRIES:
+            print(f"[scraper] Playwright permanently unavailable after {_playwright_fail_count} failures")
+            _playwright_failed = True
+            import streamlit as _st
+            _st.session_state["_playwright_error"] = f"{e}\n{traceback.format_exc()}"
         return None
+
+
+def reset_playwright():
+    """Reset Playwright state so it can be retried. Call before batch operations."""
+    global _browser, _playwright, _playwright_failed, _playwright_fail_count
+    try:
+        if _browser:
+            _browser.close()
+    except Exception:
+        pass
+    try:
+        if _playwright:
+            _playwright.stop()
+    except Exception:
+        pass
+    _browser = None
+    _playwright = None
+    _playwright_failed = False
+    _playwright_fail_count = 0
+    print("[scraper] Playwright state reset — will retry on next scrape")
 
 
 def scrape_page(url: str, timeout: int = 15) -> dict:

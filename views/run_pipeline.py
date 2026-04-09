@@ -1221,8 +1221,10 @@ def render():
             )
         with col2:
             if st.button(f"Re-scrape {len(category_pages)}", key="rp_rescrape_cats", use_container_width=True):
-                from utils.page_scraper import scrape_page
+                from utils.page_scraper import scrape_page, reset_playwright
                 from utils.category_analyzer import classify_page_type
+                # Reset Playwright so it gets a fresh chance (may have crashed in prior run)
+                reset_playwright()
                 from utils.persistence import save
                 results = st.session_state["audit_results"]
                 progress = st.progress(0)
