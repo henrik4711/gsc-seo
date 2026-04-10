@@ -1,6 +1,7 @@
 """
 Dashboard — ONE page that tells you exactly what to do next.
 Shows: site health, current phase, next action, progress.
+All references point to the NEW views (Site Cleanup, Quick Wins, Run Pipeline).
 """
 
 import streamlit as st
@@ -35,17 +36,19 @@ def _get_phase_status():
     has_audit = len(audit_results) > 0
     has_clusters = len(topic_clusters.get("clusters", [])) > 0
     has_ahrefs = "page_authority" in st.session_state
+    has_quality = any(k.startswith("_quality_") for k in st.session_state)
+    has_cannibal = st.session_state.get("cannibalization") is not None
     has_validation = "_site_validation" in st.session_state
-    has_ideal = "_ideal_structure" in st.session_state
 
     phase0_tasks = [
-        ("Connect GSC data", has_gsc, "1. Setup & Connect"),
-        ("Upload Ahrefs data", has_ahrefs, "2. Upload Data"),
-        ("Build AI clusters", has_clusters, "5. Topic Clusters → Build AI Clusters"),
-        ("Run bulk audit", has_audit, "6. Page Auditor → Bulk Audit"),
-        ("Run AI quality check", any(k.startswith("_quality_") for k in st.session_state), "6. Page Auditor → AI Quality Check"),
-        ("Run site validation", has_validation, "12. Site Map → Validate"),
-        ("Generate ideal structure", has_ideal, "12. Site Map → Generate Ideal"),
+        ("Fetch GSC data", has_gsc, "Run Pipeline → Step 1"),
+        ("Build page authority", has_ahrefs, "Run Pipeline → Step 2"),
+        ("Analyze crawl issues", "sf_crawl_issues" in st.session_state, "Run Pipeline → Step 3"),
+        ("Build topic clusters", has_clusters, "Run Pipeline → Step 5"),
+        ("Bulk audit pages", has_audit, "Run Pipeline → Step 6"),
+        ("AI quality check", has_quality, "Run Pipeline → Step 7"),
+        ("Cannibalization detection", has_cannibal, "Run Pipeline → Step 8"),
+        ("Site validation", has_validation, "Run Pipeline → Step 9"),
     ]
     phase0_done = sum(1 for _, done, _ in phase0_tasks if done)
     phases.append({
@@ -56,83 +59,52 @@ def _get_phase_status():
         "complete": phase0_done == len(phase0_tasks),
     })
 
-    # ── Phase 1: Infrastructure fixes ─────────────────────────
-    # Homepage — derive from GSC site URL (not hardcoded)
-    site_url = st.session_state.get("gsc_site", "")
-    homepage_url = site_url.rstrip("/") + "/" if site_url else ""
-    homepage_plan = st.session_state.get(f"_ai_plan_{stable_hash(homepage_url)}") if homepage_url else None
-    homepage_done = homepage_plan is not None and not homepage_plan.get("error")
-    homepage_text = st.session_state.get(f"_bottom_text_{stable_hash(homepage_url)}") if homepage_url else None
+    # ── Phase 1: Site Cleanup ──────────────────────────────────
+    cannibal_df = st.session_state.get("cannibalization")
+    cannibal_count = 0
+    if cannibal_df is not None and hasattr(cannibal_df, "shape"):
+        cannibal_count = len(cannibal_df[cannibal_df.get("severity", "").isin(["severe", "moderate"])]) if "severity" in cannibal_df.columns else 0
 
     phase1_tasks = [
-        ("Generate homepage plan", homepage_done, "14. Implementation → / → Generate AI plan"),
-        ("Generate homepage text", homepage_text is not None, "14. Implementation → / → Generate Complete Page Text"),
-        ("Copy homepage text to CMS", False, "Manual: paste generated HTML into CMS"),
+        ("Fix cannibalization conflicts", cannibal_count == 0, "Site Cleanup → Merge tab"),
+        ("Handle orphan pages", True, "Site Cleanup → Delete tab"),  # already done
+        ("Block faceted URLs", True, "Add to robots.txt (see Site Cleanup → Noindex tab)"),
     ]
     phase1_done = sum(1 for _, done, _ in phase1_tasks if done)
     phases.append({
-        "name": "Fix Homepage (highest impact)",
+        "name": "Site Cleanup (structural fixes)",
         "tasks": phase1_tasks,
         "done": phase1_done,
         "total": len(phase1_tasks),
         "complete": phase1_done == len(phase1_tasks),
     })
 
-    # ── Phase 2: Top 10 pages ─────────────────────────────────
-    top_pages = sorted(audit_results, key=lambda r: -r.get("lost_clicks_estimate", 0))[:10]
-    plans_done = 0
-    texts_done = 0
-    for r in top_pages:
-        url = r.get("url", "")
-        from utils.ui_helpers import normalize_url as _nu
-        if homepage_url and _nu(url) == _nu(homepage_url):
-            continue  # homepage handled in phase 1
-        plan_key = f"_ai_plan_{stable_hash(url)}"
-        if plan_key in st.session_state and not st.session_state[plan_key].get("error"):
-            plans_done += 1
-        text_key = f"_bottom_text_{stable_hash(url)}"
-        if text_key in st.session_state:
-            texts_done += 1
+    # ── Phase 2: Content fixes (top 10) ────────────────────────
+    # Use brand-filtered lost clicks
+    from utils.page_profile import build_page_profile
+    top_urls = _get_top_pages_filtered(audit_results, 10)
+    texts_done = sum(1 for url in top_urls if f"_bottom_text_{stable_hash(url)}" in st.session_state)
 
     phase2_tasks = [
-        (f"Generate plans for top 10 pages", plans_done >= 9, "14. Implementation → Generate plans for top 10"),
-        (f"Generate text for top 10 pages ({texts_done}/10 done)", texts_done >= 9, "14. Implementation → per page → Generate Complete Page Text"),
-        ("Copy texts to CMS", False, "Manual: paste generated HTML for each page"),
+        (f"Generate + paste text for top 10 pages ({texts_done}/10)", texts_done >= 10, "Site Cleanup → Merge tab → Rewrite content"),
+        ("Verify texts in Magento", False, "Manual: check each page renders correctly"),
     ]
     phase2_done = sum(1 for _, done, _ in phase2_tasks if done)
     phases.append({
-        "name": "Fix Top 10 Pages",
+        "name": "Fix Top 10 Pages (content rewrite)",
         "tasks": phase2_tasks,
         "done": phase2_done,
         "total": len(phase2_tasks),
         "complete": phase2_done == len(phase2_tasks),
     })
 
-    # ── Phase 3: Next batch ───────────────────────────────────
-    next_pages = sorted(audit_results, key=lambda r: -r.get("lost_clicks_estimate", 0))[10:20]
-    next_plans = sum(1 for r in next_pages if f"_ai_plan_{stable_hash(r.get('url', ''))}" in st.session_state)
-
-    phase3_tasks = [
-        (f"Generate plans for pages 11-20 ({next_plans}/10)", next_plans >= 10, "14. Implementation → page 2 → Generate plans"),
-        ("Generate text for pages 11-20", False, "14. Implementation → per page → Generate Complete Page Text"),
-        ("Copy texts to CMS", False, "Manual"),
-    ]
-    phase3_done = sum(1 for _, done, _ in phase3_tasks if done)
-    phases.append({
-        "name": "Fix Pages 11-20",
-        "tasks": phase3_tasks,
-        "done": phase3_done,
-        "total": len(phase3_tasks),
-        "complete": phase3_done == len(phase3_tasks),
-    })
-
-    # ── Phase 4: Measure results ──────────────────────────────
+    # ── Phase 3: Measure results ───────────────────────────────
     phases.append({
         "name": "Measure Results (after 4 weeks)",
         "tasks": [
-            ("Refresh GSC data", False, "1. Setup → Refresh GSC Data"),
-            ("Re-run analysis", False, "Re-run steps 3-6"),
-            ("Compare scores", False, "12. Site Map → Validate → compare with previous"),
+            ("Refresh GSC data", False, "Run Pipeline → Step 1"),
+            ("Re-run quality + cannibalization", False, "Run Pipeline → Step 7 + Step 8"),
+            ("Compare health score", False, "Dashboard → check score improvement"),
         ],
         "done": 0,
         "total": 3,
@@ -140,6 +112,22 @@ def _get_phase_status():
     })
 
     return phases
+
+
+def _get_top_pages_filtered(audit_results, n=20):
+    """Get top pages by brand-filtered lost clicks."""
+    from utils.page_profile import build_page_profile
+    pages = []
+    for r in audit_results:
+        url = r.get("url", "")
+        if not url:
+            continue
+        profile = build_page_profile(url)
+        filtered_lost = sum(g.get("lost_clicks", 0) for g in profile.get("ctr_gaps", []))
+        if filtered_lost > 0:
+            pages.append((url, filtered_lost, profile))
+    pages.sort(key=lambda x: -x[1])
+    return [url for url, _, _ in pages[:n]]
 
 
 def _get_next_action(phases):
@@ -193,6 +181,7 @@ def render():
                 f"<div style='background:#12121f; border-left:4px solid #ff4455; border-radius:0 6px 6px 0; padding:0.8rem; margin-bottom:1rem;'>"
                 f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#ff4455; margin-bottom:0.3rem;'>CRITICAL ISSUES</div>"
                 f"<ul style='margin:0; padding-left:1.2rem;'>{items_html}</ul>"
+                f"<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.4rem;'>See details: Site Cleanup → all tabs</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -240,7 +229,6 @@ def render():
             unsafe_allow_html=True,
         )
 
-        # Show tasks for current/incomplete phases
         if not complete:
             for task_name, done, where in phase["tasks"]:
                 icon = "+" if done else "X"
@@ -254,52 +242,57 @@ def render():
                     unsafe_allow_html=True,
                 )
 
-    # ── Top pages status ──────────────────────────────────────
+    # ── Top pages by impact (brand-filtered) ──────────────────
     st.markdown("---")
-    st.markdown("### Top Pages by Impact")
+    st.markdown("### Top Pages by Impact (brand queries excluded)")
 
     audit_results = st.session_state.get("audit_results", [])
-    top = sorted(audit_results, key=lambda r: -r.get("lost_clicks_estimate", 0))[:20]
+    if audit_results:
+        from utils.page_profile import build_page_profile
+        page_data = []
+        for r in audit_results:
+            url = r.get("url", "")
+            if not url:
+                continue
+            profile = build_page_profile(url)
+            filtered_lost = sum(g.get("lost_clicks", 0) for g in profile.get("ctr_gaps", []))
+            if filtered_lost <= 0:
+                continue
+            page_data.append({
+                "url": url,
+                "lost": filtered_lost,
+                "impr": profile.get("total_impressions", 0),
+                "verdict": profile.get("quality_verdict"),
+                "has_plan": profile.get("has_plan"),
+            })
+        page_data.sort(key=lambda x: -x["lost"])
 
-    for i, r in enumerate(top, 1):
-        url = r.get("url", "")
-        lost = r.get("lost_clicks_estimate", 0)
-        impr = r.get("impressions", 0)
         site_origin = st.session_state.get("gsc_site", "").rstrip("/")
-        url_short = url.replace(site_origin, "") if site_origin else url
 
-        has_plan = f"_ai_plan_{stable_hash(url)}" in st.session_state
-        has_text = f"_bottom_text_{stable_hash(url)}" in st.session_state
+        for i, p in enumerate(page_data[:20], 1):
+            url_short = p["url"].replace(site_origin, "") if site_origin else p["url"]
+            has_text = f"_bottom_text_{stable_hash(p['url'])}" in st.session_state
 
-        if has_text:
-            status = "<span style='color:#33dd88;'>TEXT READY</span>"
-        elif has_plan:
-            status = "<span style='color:#ffaa33;'>PLAN READY</span>"
-        else:
-            status = "<span style='color:#6b6b8a;'>NOT STARTED</span>"
+            if has_text:
+                status = "<span style='color:#33dd88;'>TEXT READY</span>"
+            elif p["has_plan"]:
+                status = "<span style='color:#ffaa33;'>PLAN READY</span>"
+            else:
+                status = "<span style='color:#6b6b8a;'>NOT STARTED</span>"
 
-        st.markdown(
-            f"<div style='display:flex; justify-content:space-between; padding:0.3rem 0; border-bottom:1px solid #1e1e2e; font-size:0.82rem;'>"
-            f"<span style='color:#e8e8f0;'>{i}. {url_short}</span>"
-            f"<span>{status} · <span style='color:#6b6b8a;'>{impr:,} impr · {lost:,.0f} lost</span></span>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+            verdict_badge = ""
+            if p["verdict"] == "REWRITE":
+                verdict_badge = " · <span style='color:#ff4455;'>REWRITE</span>"
+            elif p["verdict"] == "IMPROVE":
+                verdict_badge = " · <span style='color:#ffaa33;'>IMPROVE</span>"
 
-    # Debug: what's in cache
-    st.markdown("---")
-    st.markdown("#### Cache Status")
-    import os
-    cache_dir = "/data/ai_cache"
-    if os.path.isdir(cache_dir):
-        files = os.listdir(cache_dir)
-        site_files = [f for f in files if f.startswith("_site") or f.startswith("_ideal") or f.startswith("_gap") or f.startswith("_plan_v")]
-        st.markdown(f"AI cache: **{len(files)} files** total, **{len(site_files)} site analysis files**")
-        for sf in site_files:
-            size = os.path.getsize(os.path.join(cache_dir, sf))
-            in_session = sf[:-5] in st.session_state
-            st.markdown(f"<span style='color:{'#33dd88' if in_session else '#ff4455'}; font-size:0.75rem;'>{'IN SESSION' if in_session else 'ON DISK ONLY'} — {sf} ({size} bytes)</span>", unsafe_allow_html=True)
-    else:
-        st.markdown("<span style='color:#ff4455;'>Cache dir not found!</span>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='display:flex; justify-content:space-between; padding:0.3rem 0; border-bottom:1px solid #1e1e2e; font-size:0.82rem;'>"
+                f"<span style='color:#e8e8f0;'>{i}. {url_short}</span>"
+                f"<span>{status}{verdict_badge} · <span style='color:#6b6b8a;'>{p['impr']:,} impr · {p['lost']:,.0f} lost</span></span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
-    st.session_state["dashboard_viewed"] = True
+        if not page_data:
+            st.info("Run Pipeline steps 1-8 to see page impact data.")
