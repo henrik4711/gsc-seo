@@ -408,10 +408,22 @@ def build_page_profile(url: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 13. Computed flags
     # ─────────────────────────────────────────────────────────
-    body = profile["body_text"]
+    # For category pages: use EDITORIAL text only (intro_text + bottom_text)
+    # NOT full body_text which includes product grid with prices.
+    # "kr rea" x26 comes from product cards, not editorial content.
+    intro_text = (page_data.get("intro_text") or "")
+    bottom_text_raw = (page_data.get("bottom_text") or "")
+    editorial_wc = page_data.get("total_editorial_words", 0)
+    profile["intro_text"] = intro_text
+    profile["bottom_text_content"] = bottom_text_raw
+    profile["editorial_word_count"] = editorial_wc
 
-    # Thin content
-    profile["is_thin"] = profile["word_count"] < 300
+    editorial = (intro_text + " " + bottom_text_raw).strip().lower()
+    body = editorial if editorial and len(editorial) > 50 else profile["body_text"].lower()
+
+    # Thin content — based on editorial words for categories
+    check_wc = editorial_wc if editorial_wc > 0 else profile["word_count"]
+    profile["is_thin"] = check_wc < 300
 
     # Orphan: no internal links in AND no crawl issues mentioning it as linked
     if profile["internal_links_in_count"] == 0:

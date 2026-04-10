@@ -359,8 +359,13 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                 p_url = p["page"]
                 p_norm = _nu(p_url)
                 p_audit = audit_by_url.get(p_norm, {})
-                p_body = (p_audit.get("body_text") or "").lower()
-                p_wc = p_audit.get("word_count", 0)
+                # Use EDITORIAL text (intro + bottom) for quality checks, not full body
+                # which includes product grid prices ("kr rea" x26 = product cards, not editorial)
+                _intro = (p_audit.get("intro_text") or "")
+                _bottom = (p_audit.get("bottom_text") or "")
+                _editorial = (_intro + " " + _bottom).strip().lower()
+                p_body = _editorial if _editorial and len(_editorial) > 50 else (p_audit.get("body_text") or "").lower()
+                p_wc = p_audit.get("total_editorial_words", 0) or p_audit.get("word_count", 0)
                 short = p_url.split("/")[-1][:30]
 
                 # Check 0: AI quality verdict (E-E-A-T, relevance, depth)

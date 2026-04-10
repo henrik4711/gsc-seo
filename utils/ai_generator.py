@@ -305,7 +305,12 @@ def assess_content_quality_batch(
     page_sections = []
     for i, p in enumerate(pages):
         body = _clean_body_text(p, 800)
-        full_body = (p.get("body_text") or "").lower()
+        # Use EDITORIAL text (intro + bottom) for quality checks on category pages.
+        # Full body_text includes product grid prices ("kr rea" x26 = product cards).
+        _intro = (p.get("intro_text") or "")
+        _bottom = (p.get("bottom_text") or "")
+        _editorial = (_intro + " " + _bottom).strip().lower()
+        full_body = _editorial if _editorial and len(_editorial) > 50 else (p.get("body_text") or "").lower()
 
         # ── Deterministic content quality checks (no AI needed) ──
         auto_flags = []
