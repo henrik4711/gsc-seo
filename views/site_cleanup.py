@@ -467,12 +467,41 @@ A category page has TWO text areas separated by a product grid:
    - End with FAQ section (3-5 questions from lower-volume GSC queries)
    - E-E-A-T: expert advice, material comparisons, specific brand knowledge
 
-## RULES FOR BOTH TEXTS
+## WRITING STYLE — CRITICAL
+The text MUST read like it was written by a real person who works at the store,
+NOT like AI-generated content. Follow these rules strictly:
+
+BANNED AI PATTERNS (never use these):
+- "Sammanfattningsvis" / "Avslutningsvis" / "I slutändan"
+- "Det är viktigt att notera/komma ihåg"
+- "Oavsett om du ... eller ..."
+- "Denna/Denna guide/I denna artikel"
+- "Utforska vår/vårt" as opening sentence
+- "Perfekt för dig som..."
+- Starting 3+ sentences with same word
+- Bullet points that all follow identical structure
+- "Upptäck" as first word (overused in Swedish SEO)
+- Generic filler like "Vi förstår att..." / "Vi erbjuder..."
+
+REQUIRED STYLE:
+- Write like a knowledgeable friend giving advice, not a brochure
+- Mix short punchy sentences (5 words) with longer ones (25 words)
+- Use "du/dig" directly — talk TO the reader
+- Share opinions: "Vi gillar X för att..." / "Ärligt talat är Y bättre än Z"
+- Include 1-2 unexpected details that show real expertise (e.g. "TPE-materialet
+  är känsligt för oljor — använd ALLTID vattenbaserat glidmedel")
+- Tone should match an ADULT STORE: direct, open, no prudishness, but not vulgar.
+  Customers buying these products want practical honest advice, not marketing speak.
+- Vary paragraph length: some 2 sentences, some 5 sentences
+- If the cluster/pillar is about a specific product TYPE, write from experience
+  with that type — not generic "there are many options" filler
+
+## CONTENT RULES
 1. NO keyword stuffing — primary keyword max 2x in top, max 5-6x in bottom (natural use across 1000 words)
 2. Mention product NAMES and BRANDS — but NEVER specific prices (they change)
 3. MUST be EVERGREEN — relevant regardless of which products are currently shown
 4. MUST be DIFFERENT from competing pages
-5. E-E-A-T: knowledgeable store with real product experience
+5. E-E-A-T: real product knowledge, material comparisons, honest recommendations
 6. Language: {language}
 7. For /rea/ sale pages: describe the CATEGORY of products on sale and WHY
    they're good value, NOT specific sale items or rotating discounts
