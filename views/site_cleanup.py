@@ -1067,15 +1067,19 @@ def render():
                             _sale_pats = _gsp()
                             from urllib.parse import urlparse as _up2
                             _winner_p = _up2(normalize_url(winner)).path.rstrip("/")
+                            _winner_parent = "/".join(_winner_p.split("/")[:-1]) if "/" in _winner_p else ""
                             for rp in pages:
                                 rp_norm = normalize_url(rp.get("page", ""))
                                 rp_path = _up2(rp_norm).path.rstrip("/")
+                                rp_parent = "/".join(rp_path.split("/")[:-1]) if "/" in rp_path else ""
                                 if rp_norm == normalize_url(winner):
                                     continue
                                 if any(sp in rp.get("page", "").lower() for sp in _sale_pats):
                                     continue
                                 if _winner_p and rp_path.startswith(_winner_p + "/"):
                                     continue
+                                if _winner_parent and rp_parent == _winner_parent and _winner_parent != "":
+                                    continue  # sibling category
                                 from utils.page_profile import build_page_profile as _bpp
                                 if _bpp(rp.get("page", "")).get("page_type") == "product":
                                     continue
@@ -1197,10 +1201,17 @@ def render():
                                 l_url_path = _up(l_norm).path.rstrip("/")
                                 skip_reason = None
 
+                                # Parent paths for sibling detection
+                                winner_parent = "/".join(winner_url_path.split("/")[:-1]) if "/" in winner_url_path else ""
+                                loser_parent = "/".join(l_url_path.split("/")[:-1]) if "/" in l_url_path else ""
+
                                 if any(sp in l_lower for sp in sale_patterns):
                                     skip_reason = "sale/discount page — keep, differentiate meta + add link to main category"
                                 elif winner_url_path and l_url_path.startswith(winner_url_path + "/"):
                                     skip_reason = "sub-category of winner — keep, differentiate meta + add link to parent"
+                                elif winner_parent and loser_parent == winner_parent and winner_parent != "":
+                                    # SIBLINGS: same parent directory (e.g. /dildos/klassisk-dildo + /dildos/dildo-maskin)
+                                    skip_reason = f"sibling category under {winner_parent}/ — keep, each targets a different product type"
                                 else:
                                     from utils.page_profile import build_page_profile
                                     l_profile = build_page_profile(l)
