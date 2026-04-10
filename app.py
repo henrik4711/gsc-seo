@@ -41,17 +41,45 @@ html, body, [class*="css"],
     color: #e8e8f0;
 }
 
-/* Hide default streamlit elements — but KEEP the status widget (running indicator) */
+/* Hide default streamlit elements */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-header {
-    background: transparent !important;
-}
 header [data-testid="stToolbar"] {
     visibility: hidden;
 }
 header [data-testid="stDecoration"] {
     visibility: hidden;
+}
+/* Force the running indicator visible with bright styling */
+header {
+    background: transparent !important;
+    visibility: visible !important;
+}
+header [data-testid="stStatusWidget"] {
+    visibility: visible !important;
+    background: #1a1a2e !important;
+    border: 2px solid #ff4455 !important;
+    border-radius: 8px !important;
+    padding: 6px 12px !important;
+    opacity: 1 !important;
+}
+header [data-testid="stStatusWidget"] label,
+header [data-testid="stStatusWidget"] span,
+header [data-testid="stStatusWidget"] div,
+header [data-testid="stStatusWidget"] p {
+    color: #ff4455 !important;
+    visibility: visible !important;
+}
+header [data-testid="stStatusWidget"] svg {
+    fill: #ff4455 !important;
+    visibility: visible !important;
+    filter: none !important;
+}
+header [data-testid="stStatusWidget"] button {
+    color: #ff4455 !important;
+    border-color: #ff4455 !important;
+    background: #12121f !important;
+    visibility: visible !important;
 }
 
 /* Background */
@@ -265,26 +293,7 @@ section[data-testid="stSidebar"] .stMarkdown h3 {
     border-top-color: #5533ff !important;
 }
 
-/* ── Running indicator (top-right) — make visible on dark bg ── */
-[data-testid="stStatusWidget"] {
-    background: #1a1a2e !important;
-    border: 2px solid #5533ff !important;
-    border-radius: 8px !important;
-    padding: 4px 8px !important;
-}
-[data-testid="stStatusWidget"] * {
-    color: #c8b4ff !important;
-}
-[data-testid="stStatusWidget"] svg,
-[data-testid="stStatusWidget"] img,
-header [data-testid="stStatusWidget"] svg {
-    filter: invert(1) brightness(2) !important;
-}
-[data-testid="stStatusWidget"] button {
-    color: #c8b4ff !important;
-    border-color: #5533ff !important;
-    background: #12121f !important;
-}
+/* (running indicator styles are in header section above) */
 
 /* ── Tooltip / help icons ───────────────────────────────── */
 [data-testid="stTooltipIcon"] svg {
