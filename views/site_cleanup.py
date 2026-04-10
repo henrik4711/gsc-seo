@@ -1060,13 +1060,25 @@ def render():
 
                         # ── Rewrite content button per page with issues ──
                         # Only for pages that are NOT being redirected (redirect + rewrite = contradictory)
-                        skip_redirect_patterns = ["/rea/", "/rea-", "/sale/", "/outlet/", "/kampanj/"]
+                        # Build set of pages that WILL be redirected (for suppressing rewrite button)
                         redirect_losers_set = set()
                         if tk in ("true_duplicate", "duplicate_categories"):
+                            _skip_pats = ["/rea/", "/rea-", "/sale/", "/outlet/", "/kampanj/"]
+                            _winner_p = normalize_url(winner).split("//")[-1].split("/", 1)[-1] if "/" in normalize_url(winner) else ""
                             for rp in pages:
-                                rp_url = rp.get("page", "").lower()
-                                if normalize_url(rp_url) != normalize_url(winner) and not any(sp in rp_url for sp in skip_redirect_patterns):
-                                    redirect_losers_set.add(normalize_url(rp.get("page", "")))
+                                rp_norm = normalize_url(rp.get("page", ""))
+                                rp_path = rp_norm.split("//")[-1].split("/", 1)[-1] if "/" in rp_norm else ""
+                                if rp_norm == normalize_url(winner):
+                                    continue
+                                # Skip same patterns as above
+                                if any(sp in rp.get("page", "").lower() for sp in _skip_pats):
+                                    continue
+                                if _winner_p and rp_path.startswith(_winner_p + "/"):
+                                    continue
+                                from utils.page_profile import build_page_profile as _bpp
+                                if _bpp(rp.get("page", "")).get("page_type") == "product":
+                                    continue
+                                redirect_losers_set.add(rp_norm)
 
                         for p in pages:
                             p_url = p.get("page", "")
@@ -1167,22 +1179,44 @@ def render():
                         # BUT skip pages that serve a different PURPOSE (sale/rea pages, filter views)
                         if tk in ("true_duplicate", "duplicate_categories"):
                             losers = [p["page"] for p in pages if normalize_url(p["page"]) != normalize_url(winner)]
-                            # Filter out pages that should NOT be redirected
+                            # Filter out pages that should NOT be redirected:
+                            # 1. Sale/rea pages (serve different purpose)
+                            # 2. Sub-categories of the winner (they're children, not duplicates)
+                            # 3. Product pages (they're products, not duplicate categories)
                             skip_patterns = ["/rea/", "/rea-", "/sale/", "/outlet/", "/kampanj/"]
+                            winner_path = normalize_url(winner).split("//")[-1]  # strip scheme
+                            winner_url_path = winner_path.split("/", 1)[-1] if "/" in winner_path else ""
+
                             real_losers = []
                             skipped_losers = []
                             for l in losers:
                                 l_path = l.lower()
+                                l_norm = normalize_url(l)
+                                l_url_path = l_norm.split("//")[-1].split("/", 1)[-1] if "/" in l_norm else ""
+                                skip_reason = None
+
+                                # Skip sale/rea pages
                                 if any(sp in l_path for sp in skip_patterns):
-                                    skipped_losers.append(l)
+                                    skip_reason = "sale/rea page — differentiate meta instead"
+                                # Skip sub-categories (loser URL starts with winner URL path)
+                                elif winner_url_path and l_url_path.startswith(winner_url_path + "/"):
+                                    skip_reason = "sub-category of winner — differentiate meta, don't redirect"
+                                # Skip products (check audit page_type)
+                                else:
+                                    from utils.page_profile import build_page_profile
+                                    l_profile = build_page_profile(l)
+                                    if l_profile.get("page_type") == "product":
+                                        skip_reason = "product page — differentiate product meta, don't redirect"
+
+                                if skip_reason:
+                                    skipped_losers.append((l, skip_reason))
                                 else:
                                     real_losers.append(l)
 
                             if skipped_losers:
                                 st.warning(
-                                    f"**{len(skipped_losers)} page(s) skipped from redirect** — "
-                                    f"these are sale/rea pages that serve a different purpose:\n"
-                                    + "\n".join(f"- `{s}` (keep — differentiate meta instead)" for s in skipped_losers)
+                                    f"**{len(skipped_losers)} page(s) skipped from redirect:**\n"
+                                    + "\n".join(f"- `{s}` — {reason}" for s, reason in skipped_losers)
                                 )
 
                             if real_losers:
