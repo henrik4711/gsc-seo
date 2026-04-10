@@ -292,6 +292,89 @@ def _pages_to_noindex():
     return noindex_candidates
 
 
+def _generate_cannibal_rewrite(page_url: str, query: str, issues: list, context: str, rewrite_key: str):
+    """
+    Generate COMPLETE new body text for a page, fixing ALL detected issues.
+    Sends: current content + all issues + target query + competing pages info.
+    """
+    from config import get_anthropic_key, has_anthropic_key
+    if not has_anthropic_key():
+        raise ValueError("Anthropic API key missing")
+    from utils.ai_generator import get_client, _parse_ai_json, ANTI_HALLUCINATION_RULES
+    from utils.persistence import save
+
+    client = get_client(get_anthropic_key())
+    audit_results = st.session_state.get("audit_results", [])
+    audit_by_url = {normalize_url(r.get("url", "")): r for r in audit_results}
+    page_data = audit_by_url.get(normalize_url(page_url), {})
+
+    current_body = (page_data.get("body_text") or "")[:3000]
+    word_count = page_data.get("word_count", 0)
+    page_type = page_data.get("page_type", "unknown")
+    title = page_data.get("title", "")
+    h1 = page_data.get("h1", "")
+    language = st.session_state.get("content_language", "Swedish")
+    site_context = st.session_state.get("site_context", "")
+
+    issues_text = "\n".join(f"- {i}" for i in issues) if issues else "No specific issues listed"
+
+    prompt = f"""{ANTI_HALLUCINATION_RULES}
+
+You are rewriting the BODY TEXT for an e-commerce page. The current text has quality
+problems that must ALL be fixed in the new version.
+
+## PAGE INFO
+URL: {page_url}
+Page type: {page_type}
+Current title: {title}
+Current H1: {h1}
+Current word count: {word_count}
+Target query: {query}
+Language: {language}
+Site context: {site_context}
+
+## DETECTED ISSUES (MUST ALL BE FIXED)
+{issues_text}
+
+## CONTEXT FROM CANNIBALIZATION ANALYSIS
+{context[:1000] if context else 'N/A'}
+
+## CURRENT TEXT (first 2000 chars — this is what needs rewriting)
+{current_body[:2000]}
+
+## REQUIREMENTS FOR THE NEW TEXT
+1. NO keyword stuffing — use the target keyword naturally, max 3-4 times in 500 words
+2. MUST mention real product names, brands, or features from the store
+3. MUST include at least one internal link suggestion (anchor text + target URL)
+4. E-E-A-T: write as a knowledgeable store, not generic AI text
+5. Include 2-3 practical tips that show real expertise
+6. If category page: mention 2-3 specific products with their actual features
+7. Keep between 300-600 words (quality over quantity)
+8. Structure with 2-3 H2 headings
+9. End with a short FAQ (2-3 questions) if relevant
+10. Language: {language}
+
+## OUTPUT (JSON):
+{{
+    "html": "<h2>heading</h2><p>text...</p>...",
+    "word_count": 0,
+    "target_keyword": "{query}",
+    "keyword_count": 0,
+    "internal_links_suggested": [{{"anchor": "text", "url": "/path"}}],
+    "issues_fixed": ["which issues from the list above were fixed"]
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4000,
+        temperature=0,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    result = _parse_ai_json(message)
+    st.session_state[rewrite_key] = result
+    save(rewrite_key)
+
+
 def _generate_cannibal_subcategory_meta(query: str, pages: list, row, ai_key: str):
     """
     Generate differentiated meta titles + descriptions for each page in a
@@ -807,6 +890,46 @@ def render():
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"Error: {e}")
+
+                        # ── Rewrite content button per page with issues ──
+                        # Collects ALL detected issues and sends to AI for full text generation
+                        for p in pages:
+                            p_url = p.get("page", "")
+                            p_norm = normalize_url(p_url)
+                            p_short = shorten_url(p_url)
+                            rewrite_key = f"_cannibal_rewrite_{stable_hash(p_url + query)}"
+
+                            # Collect all issues for this specific page from action_text
+                            page_issues = []
+                            if action_text and p_short in action_text:
+                                page_issues.append("See issues above")
+                            # Add quality verdict
+                            q_key = f"_quality_{stable_hash(p_url)}"
+                            q_data = st.session_state.get(q_key, {})
+                            if isinstance(q_data, dict) and q_data.get("verdict") in ("REWRITE", "IMPROVE"):
+                                page_issues.extend(q_data.get("main_issues", []))
+                                page_issues.extend(q_data.get("specific_fixes", []))
+
+                            if rewrite_key in st.session_state:
+                                rw = st.session_state[rewrite_key]
+                                if isinstance(rw, dict) and rw.get("html"):
+                                    st.markdown(f"**✅ Rewritten text for `{p_short}`** ({rw.get('word_count', '?')} words):")
+                                    st.code(rw["html"][:3000], language="html")
+                                    st.download_button(
+                                        f"Download {p_short}.html",
+                                        data=rw["html"],
+                                        file_name=f"{p_url.split('/')[-1] or 'page'}_rewrite.html",
+                                        mime="text/html",
+                                        key=f"dl_{rewrite_key}",
+                                    )
+                            elif page_issues or (isinstance(q_data, dict) and q_data.get("verdict") == "REWRITE"):
+                                if st.button(f"📝 Rewrite content for {p_short}", key=f"btn_{rewrite_key}"):
+                                    with st.spinner(f"AI rewriting content for {p_short}..."):
+                                        try:
+                                            _generate_cannibal_rewrite(p_url, query, page_issues, action_text, rewrite_key)
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error: {e}")
 
                         # For true_duplicate + duplicate_categories: show redirect instructions
                         if tk in ("true_duplicate", "duplicate_categories"):
