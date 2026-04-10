@@ -111,6 +111,24 @@ def get_faceted_query_params() -> list:
     return DEFAULT_FACETED_QUERY_PARAMS + _get("faceted_params_extra", [])
 
 
+# Universal sale/discount path patterns — pages that serve a different purpose
+# and should NEVER be 301-redirected to a main category
+DEFAULT_SALE_PATTERNS = [
+    "/rea/", "/rea-", "/sale/", "/sales/",
+    "/outlet/", "/clearance/",
+    "/kampanj/", "/campaign/",
+    "/tilbud/", "/tilbod/",  # Danish/Norwegian
+    "/angebot/", "/angebote/",  # German
+    "/promo/", "/promotion/",
+    "/rabat/", "/rabatt/",  # Danish/Swedish discount
+    "/soldes/",  # French
+]
+
+
+def get_sale_patterns() -> list:
+    return DEFAULT_SALE_PATTERNS + _get("sale_patterns_extra", [])
+
+
 # ── Sample presets for common site types ─────────────────────────
 
 PRESET_SWEDISH_ADULT_ECOMMERCE = {
