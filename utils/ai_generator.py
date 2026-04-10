@@ -24,6 +24,31 @@ CRITICAL — ACCURACY RULES (never violate these):
 - When stating what is wrong, quote the ACTUAL current value. Example: "Title is 85 chars (too long)" not just "title needs fixing".
 - If something looks fine, say it is fine. Do NOT invent problems."""
 
+HUMAN_WRITING_STYLE = """
+WRITING STYLE — the text MUST read like a real person wrote it, NOT AI.
+
+BANNED PATTERNS (never use):
+- "Sammanfattningsvis" / "Avslutningsvis" / "I slutändan" / "In conclusion"
+- "Det är viktigt att notera/komma ihåg" / "It is important to note"
+- "Oavsett om du ... eller ..." / "Whether you ... or ..."
+- "Denna guide" / "I denna artikel" / "In this guide"
+- "Utforska vår/vårt" / "Discover our" as opening
+- "Perfekt för dig som..." / "Perfect for those who..."
+- Starting 3+ sentences with the same word
+- Bullet points that all follow identical structure
+- "Upptäck" / "Discover" as first word
+- Generic filler: "Vi förstår att..." / "Vi erbjuder..." / "We understand..."
+
+REQUIRED:
+- Write like a knowledgeable friend, not a brochure or textbook
+- Mix short punchy sentences (5 words) with longer ones (25 words)
+- Use "du/dig" / "you" — talk TO the reader
+- Share opinions: "Vi gillar X för att..." / "Ärligt talat är Y bättre"
+- Include unexpected expert details that show real product knowledge
+- Vary paragraph length: some 2 sentences, some 5 sentences
+- NEVER include specific prices (they change)
+- For FAQ: use FAQPage schema microdata (itemscope/itemprop attributes)"""
+
 
 def _strip_nav_text(text: str) -> str:
     """Remove navigation/header/trust-bar text from any string."""
@@ -161,6 +186,8 @@ IMPORTANT: Meta for category pages should focus on category intent (browse/explo
 
     prompt = f"""You are a senior SEO specialist and conversion optimization expert for an e-commerce webshop.
 {ANTI_HALLUCINATION_RULES}
+{HUMAN_WRITING_STYLE}
+{HUMAN_WRITING_STYLE}
 
 ## CURRENT SITUATION
 URL: {url}{cat_context}
@@ -246,6 +273,8 @@ def generate_content_audit(
     body_word_count = len(body.split()) if body else 0
     prompt = f"""You are an SEO content analyst. Analyze this landing page and its keyword coverage.
 {ANTI_HALLUCINATION_RULES}
+{HUMAN_WRITING_STYLE}
+{HUMAN_WRITING_STYLE}
 
 URL: {url}
 Page type: {page_type}
@@ -400,6 +429,8 @@ def assess_content_quality_batch(
 
     prompt = f"""You are a Google Search Quality Rater evaluating page content quality.
 {ANTI_HALLUCINATION_RULES}
+{HUMAN_WRITING_STYLE}
+{HUMAN_WRITING_STYLE}
 
 For EACH page below, assess the text quality using Google's Helpful Content guidelines.
 
@@ -473,6 +504,8 @@ def assess_content_quality(
 
     prompt = f"""You are a senior SEO content strategist and UX copywriter. Evaluate this page's EXISTING text quality — not just keyword presence, but whether the text is actually good.
 {ANTI_HALLUCINATION_RULES}
+{HUMAN_WRITING_STYLE}
+{HUMAN_WRITING_STYLE}
 
 ## PAGE
 URL: {url}
@@ -593,6 +626,8 @@ Focus on informational value, E-E-A-T signals and depth.
     existing_word_count = len(existing.split()) if existing else 0
     prompt = f"""You are a senior SEO copywriter specialized in e-commerce.
 {ANTI_HALLUCINATION_RULES}
+{HUMAN_WRITING_STYLE}
+{HUMAN_WRITING_STYLE}
 
 ## CONTEXT
 URL: {url}
@@ -1370,6 +1405,8 @@ def generate_category_bottom_text(
     prompt = f"""You are a senior SEO copywriter.
 Rewrite the category page bottom text following the EXACT format below.
 {ANTI_HALLUCINATION_RULES}
+{HUMAN_WRITING_STYLE}
+{HUMAN_WRITING_STYLE}
 
 ## CRITICAL REQUIREMENTS — YOU MUST FOLLOW THESE
 1. You MUST include AT LEAST 8-12 internal links in the text. Use ALL subcategory URLs and at least 3 sibling URLs from the lists below.
@@ -1660,6 +1697,8 @@ def generate_page_implementation_plan(
 
     prompt = f"""You are a senior SEO strategist reviewing a single page. Based on ALL the data below, create a precise implementation plan with ONLY actions that are correct and relevant for THIS specific page.
 {ANTI_HALLUCINATION_RULES}
+{HUMAN_WRITING_STYLE}
+{HUMAN_WRITING_STYLE}
 
 IMPORTANT: When recommending internal links, use the EXACT URLs from the site URL list below. Do NOT invent or guess URLs.{url_list_section}{data_warning_section}
 
