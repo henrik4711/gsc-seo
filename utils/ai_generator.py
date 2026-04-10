@@ -1572,21 +1572,19 @@ def generate_page_implementation_plan(
                         f"{inbound_anchors.get('generic', 0)} generic, "
                         f"{inbound_anchors.get('empty', 0)} empty anchors")
 
-    # Add actual inbound anchor texts from sf_link_map (if available)
-    sf_link_map = st.session_state.get("sf_link_map")
-    if sf_link_map and isinstance(sf_link_map, dict):
-        from utils.ui_helpers import normalize_url as _nu_lm
-        links_to_page = sf_link_map.get("links_to", {}).get(_nu_lm(url), [])
-        if links_to_page:
-            anchor_counts = {}
-            for lt in links_to_page[:100]:
-                a = (lt.get("anchor", "") if isinstance(lt, dict) else "").strip()
-                if a:
-                    anchor_counts[a] = anchor_counts.get(a, 0) + 1
-            if anchor_counts:
-                top_anchors = sorted(anchor_counts.items(), key=lambda x: -x[1])[:10]
-                anchor_list = ", ".join(f'"{a}" ({c}x)' for a, c in top_anchors)
-                inbound_info += f"\nTop inbound anchor texts: {anchor_list}"
+    # Add actual inbound anchor texts from profile (aggregated from sf_link_map)
+    from utils.page_profile import build_page_profile
+    _profile = build_page_profile(url)
+    if _profile["internal_links_in"]:
+        anchor_counts = {}
+        for lt in _profile["internal_links_in"][:100]:
+            a = (lt.get("anchor", "") or "").strip()
+            if a:
+                anchor_counts[a] = anchor_counts.get(a, 0) + 1
+        if anchor_counts:
+            top_anchors = sorted(anchor_counts.items(), key=lambda x: -x[1])[:10]
+            anchor_list = ", ".join(f'"{a}" ({c}x)' for a, c in top_anchors)
+            inbound_info += f"\nTop inbound anchor texts: {anchor_list}"
 
     # Category-specific data
     intro_words = page_data.get("intro_word_count", 0)
@@ -1608,13 +1606,10 @@ def generate_page_implementation_plan(
     # Ahrefs keywords (supplement GSC with volume data)
     ahrefs_kws = page_data.get("ahrefs_keywords", [])
 
-    # Content quality verdict (if previously assessed)
-    from utils.ui_helpers import stable_hash as _sh
-    quality_key = f"_quality_{_sh(url)}"
-    quality = st.session_state.get(quality_key)
+    # Content quality verdict (from profile)
     quality_info = ""
-    if quality:
-        quality_info = f"\nAI content quality verdict: {quality.get('verdict', '?')} ({quality.get('score', '?')}/10) — {quality.get('summary', '')}"
+    if _profile["quality_verdict"]:
+        quality_info = f"\nAI content quality verdict: {_profile['quality_verdict']} ({_profile['quality_score']}/10) — {_profile['quality_summary']}"
 
     # CTR gap opportunities for this page
     ctr_gap_info = ""
@@ -1644,27 +1639,13 @@ def generate_page_implementation_plan(
             site_context_info += f"Structural problems: {'; '.join(structural)}\n"
         site_context_info += "When recommending changes for this page, respect these site-level issues — don't suggest fixes that conflict with them."
 
-    # Ideal structure context — is this page scheduled for merge/delete?
-    ideal_structure = st.session_state.get("_ideal_structure")
-    if isinstance(ideal_structure, dict):
-        url_lower = url.lower()
-        # Check if this page is in merge list
-        for m in ideal_structure.get("merge", []) or []:
-            if isinstance(m, dict):
-                from_urls = [u.lower() for u in m.get("from", [])]
-                to_url = m.get("to", "").lower()
-                if url_lower in from_urls:
-                    site_context_info += f"\n\n## ⚠ CRITICAL: THIS PAGE IS SCHEDULED FOR MERGE\nAI Ideal Structure recommends merging this page INTO {m.get('to', '')}\nReason: {m.get('why', '')}\n**DO NOT** recommend content improvements for this page. Instead recommend: copy unique content to the merge target, set up 301 redirect, update internal links."
-                    break
-                if url_lower == to_url:
-                    from_list = ', '.join(m.get('from', []))
-                    site_context_info += f"\n\n## NOTE: THIS PAGE WILL RECEIVE MERGED CONTENT\nPages being merged INTO this page: {from_list}\nReason: {m.get('why', '')}\nRecommendations for this page should account for the additional content coming in."
-                    break
-        # Check if this page is in delete list
-        for d in ideal_structure.get("delete", []) or []:
-            if isinstance(d, dict) and d.get("url", "").lower() == url_lower:
-                site_context_info += f"\n\n## ⚠ CRITICAL: THIS PAGE IS SCHEDULED FOR DELETION\nAI Ideal Structure recommends deleting this page.\nReason: {d.get('why', '')}\n**DO NOT** recommend content improvements. Instead recommend: delete the page, set up 301 redirect to a related page if it has any backlinks."
-                break
+    # Ideal structure context — is this page scheduled for merge/delete? (from profile)
+    if _profile["ideal_action"] == "merge_from":
+        site_context_info += f"\n\n## CRITICAL: THIS PAGE IS SCHEDULED FOR MERGE\nAI Ideal Structure recommends: {_profile['ideal_detail']}\n**DO NOT** recommend content improvements for this page. Instead recommend: copy unique content to the merge target, set up 301 redirect, update internal links."
+    elif _profile["ideal_action"] == "merge_to":
+        site_context_info += f"\n\n## NOTE: THIS PAGE WILL RECEIVE MERGED CONTENT\n{_profile['ideal_detail']}\nRecommendations for this page should account for the additional content coming in."
+    elif _profile["ideal_action"] == "delete":
+        site_context_info += f"\n\n## CRITICAL: THIS PAGE IS SCHEDULED FOR DELETION\nAI Ideal Structure recommends deleting this page.\nReason: {_profile['ideal_detail']}\n**DO NOT** recommend content improvements. Instead recommend: delete the page, set up 301 redirect to a related page if it has any backlinks."
 
     # Data quality warnings (from scraper validation)
     data_warnings = page_data.get("_data_warnings", [])

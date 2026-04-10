@@ -284,41 +284,33 @@ def _generate_all_fixes(page):
 
 def _build_total_plan(page, plan_data, text_data, intro_data):
     """Build ordered action list with priorities and time estimates."""
+    from utils.page_profile import build_page_profile
+
     url = page["url"]
     audit = page["audit"]
     url_hash = stable_hash(url)
+    profile = build_page_profile(url)
     actions = []
 
     # Priority 1: Cannibalization resolution (if this page is a LOSER)
-    cannibal_df = st.session_state.get("cannibalization")
-    if cannibal_df is not None and not cannibal_df.empty:
-        for _, row in cannibal_df.iterrows():
-            if row.get("severity") not in ("severe", "moderate"):
-                continue
-            pages_detail = row.get("pages_detail", [])
-            if isinstance(pages_detail, list):
-                is_involved = any(normalize_url(p.get("page", "")) == normalize_url(url) for p in pages_detail)
-                if is_involved:
-                    is_winner = normalize_url(row.get("recommended_winner", "")) == normalize_url(url)
-                    merge_action = row.get("merge_action", "")
-                    if "DIFFERENT INTENTS" not in merge_action and "Homepage involved" not in merge_action:
-                        if is_winner:
-                            actions.append({
-                                "priority": 1,
-                                "title": f"CANNIBALIZATION: This page WINS for '{row['query']}'",
-                                "detail": f"{row['lost_clicks_estimate']:,} lost clicks. Redirect loser pages here.",
-                                "time": 15,
-                                "type": "cannibalization",
-                            })
-                        else:
-                            actions.append({
-                                "priority": 1,
-                                "title": f"CANNIBALIZATION: This page LOSES for '{row['query']}'",
-                                "detail": f"Redirect this page to: {row.get('recommended_winner', '')}",
-                                "time": 10,
-                                "type": "cannibalization",
-                            })
-                    break
+    for cannibal in profile["cannibalization"]:
+        if cannibal.get("is_winner"):
+            actions.append({
+                "priority": 1,
+                "title": f"CANNIBALIZATION: This page WINS for '{cannibal['query']}'",
+                "detail": f"{cannibal.get('lost_clicks', 0):,.0f} lost clicks. Redirect loser pages here.",
+                "time": 15,
+                "type": "cannibalization",
+            })
+        else:
+            actions.append({
+                "priority": 1,
+                "title": f"CANNIBALIZATION: This page LOSES for '{cannibal['query']}'",
+                "detail": f"Redirect this page to: {', '.join(cannibal.get('competing_pages', []))}",
+                "time": 10,
+                "type": "cannibalization",
+            })
+        break  # Only show first cannibalization issue
 
     # Priority 2: Meta title + description — only if actually different from current
     if plan_data.get("meta_changed"):
@@ -449,32 +441,21 @@ def _build_total_plan(page, plan_data, text_data, intro_data):
             "type": "blogs",
         })
 
-    # Priority 7b: Topic-level gaps (from content_gaps analysis)
-    content_gaps = st.session_state.get("content_gaps", []) or []
-    topic_clusters_data = st.session_state.get("topic_clusters", {}) or {}
-    page_topics_map = topic_clusters_data.get("page_topics", {}) if isinstance(topic_clusters_data, dict) else {}
-    # Find topics this page belongs to (normalize URLs for matching)
-    page_topic_names = set()
-    norm_url = normalize_url(url)
-    for p_url, topics in page_topics_map.items():
-        if normalize_url(p_url) == norm_url and isinstance(topics, list):
-            for t in topics:
-                if isinstance(t, dict) and t.get("topic"):
-                    page_topic_names.add(t["topic"])
-    page_gaps = [g for g in content_gaps
-                 if isinstance(g, dict) and g.get("topic") in page_topic_names and g.get("issues")]
+    # Priority 7b: Topic-level gaps (from profile's content_gaps + clusters)
+    page_gaps = profile["content_gaps"]
     if page_gaps:
         all_issues = []
         for g in page_gaps:
             for iss in g.get("issues", []):
-                all_issues.append(f"[{g.get('topic','?')}] {iss}")
-        actions.append({
-            "priority": 7,
-            "title": f"Topic gaps: {len(all_issues)} issue(s) in clusters this page belongs to",
-            "detail": " · ".join(all_issues[:3]) + (" …" if len(all_issues) > 3 else ""),
-            "time": 15,
-            "type": "topic_gaps",
-        })
+                all_issues.append(f"[{g.get('topic', g.get('cluster', '?'))}] {iss}")
+        if all_issues:
+            actions.append({
+                "priority": 7,
+                "title": f"Topic gaps: {len(all_issues)} issue(s) in clusters this page belongs to",
+                "detail": " · ".join(all_issues[:3]) + (" ..." if len(all_issues) > 3 else ""),
+                "time": 15,
+                "type": "topic_gaps",
+            })
 
     # Priority 8: Technical fixes
     tech_items = []
@@ -734,26 +715,19 @@ def _export_page_as_markdown(page, plan_data, text_data, intro_data):
             md.append(f"- `{l.get('url', '')}` — anchor: '{l.get('anchor', '')}'")
         md.append("")
 
-    # Cannibalization
-    cannibal_df = st.session_state.get("cannibalization")
-    if cannibal_df is not None and not cannibal_df.empty:
-        cannibal_rows = []
-        for _, row in cannibal_df.iterrows():
-            pages_detail = row.get("pages_detail", [])
-            if isinstance(pages_detail, list):
-                if any(normalize_url(p.get("page", "")) == normalize_url(url) for p in pages_detail):
-                    cannibal_rows.append(row)
-        if cannibal_rows:
-            md.append("## CANNIBALIZATION CONFLICTS")
-            md.append("")
-            for row in cannibal_rows[:5]:
-                is_winner = normalize_url(row.get("recommended_winner", "")) == normalize_url(url)
-                winner_text = "This page WINS" if is_winner else f"Winner: {row.get('recommended_winner', '')}"
-                md.append(f"- **'{row['query']}'** [{row['severity'].upper()}]")
-                md.append(f"  - {winner_text}")
-                md.append(f"  - Lost clicks: {row['lost_clicks_estimate']:,}")
-                md.append(f"  - Action: {row.get('merge_action', '')[:200]}")
-            md.append("")
+    # Cannibalization (from profile)
+    from utils.page_profile import build_page_profile as _bpp_export
+    _export_profile = _bpp_export(url)
+    cannibal_entries = _export_profile["cannibalization"]
+    if cannibal_entries:
+        md.append("## CANNIBALIZATION CONFLICTS")
+        md.append("")
+        for entry in cannibal_entries[:5]:
+            winner_text = "This page WINS" if entry.get("is_winner") else f"Competing: {', '.join(entry.get('competing_pages', []))}"
+            md.append(f"- **'{entry.get('query', '')}'** [{entry.get('type', '').upper()}]")
+            md.append(f"  - {winner_text}")
+            md.append(f"  - Lost clicks: {entry.get('lost_clicks', 0):,.0f}")
+        md.append("")
 
     return "\n".join(md)
 

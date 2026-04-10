@@ -162,6 +162,7 @@ def _generate_plan(url, audit_data):
         return
     try:
         from utils.ai_generator import get_client, generate_page_implementation_plan
+        from utils.page_profile import build_page_profile
         client = get_client(get_anthropic_key())
         site_context = st.session_state.get("site_context", "")
         language = st.session_state.get("content_language", "Swedish")
@@ -175,14 +176,9 @@ def _generate_plan(url, audit_data):
             raw_urls.update(gsc["page"].unique().tolist())
         all_site_urls = sorted(raw_urls)
 
-        # Gather CTR gaps for this page
-        from utils.ui_helpers import normalize_url as _nu
-        _ctr_gaps_for_page = []
-        _ctr_gaps_df = st.session_state.get("ctr_gaps")
-        if _ctr_gaps_df is not None and not _ctr_gaps_df.empty:
-            _page_gaps = _ctr_gaps_df[_ctr_gaps_df["page"].apply(_nu) == _nu(url)]
-            if not _page_gaps.empty:
-                _ctr_gaps_for_page = _page_gaps.to_dict("records")
+        # Gather CTR gaps from profile
+        profile = build_page_profile(url)
+        _ctr_gaps_for_page = profile["ctr_gaps"]
 
         with st.spinner("AI generating plan..."):
             result = generate_page_implementation_plan(

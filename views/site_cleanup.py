@@ -558,49 +558,32 @@ def _validate_subcategory_quality(parent_url: str, child_pages: list):
     3. Is child content a near-duplicate of parent?
     Returns dict of issues.
     """
-    audit_results = st.session_state.get("audit_results", [])
-    audit_by_url = {normalize_url(r.get("url", "")): r for r in audit_results}
-    sf_link_map = st.session_state.get("sf_link_map") or {}
-    links_to = sf_link_map.get("links_to") if isinstance(sf_link_map, dict) else {}
+    from utils.page_profile import build_page_profile
 
+    parent_profile = build_page_profile(parent_url)
     parent_norm = normalize_url(parent_url)
-    parent_audit = audit_by_url.get(parent_norm, {})
-    parent_title = (parent_audit.get("title") or "").lower().strip()
-    parent_h1 = (parent_audit.get("h1") or "").lower().strip()
-    parent_word_count = parent_audit.get("word_count", 0)
+    parent_title = parent_profile["title"].lower().strip()
+    parent_h1 = parent_profile["h1"].lower().strip()
+    parent_word_count = parent_profile["word_count"]
 
     issues = []
 
-    # Check which child pages have an incoming link from the parent
+    # Build set of parent's outbound link targets (from profile)
     parent_outbound = set()
-    if isinstance(links_to, dict):
-        # links_to maps a page -> list of pages that link TO it
-        # To get parent's outbound links, check each child's incoming set
-        for target_url, inbound_links in links_to.items():
-            if isinstance(inbound_links, list):
-                for link_entry in inbound_links:
-                    source = link_entry.get("from", "") if isinstance(link_entry, dict) else (link_entry if isinstance(link_entry, str) else "")
-                    if normalize_url(source) == parent_norm:
-                        parent_outbound.add(normalize_url(target_url))
-
-    # Also walk audit's internal_links for parent (supplement sf_link_map)
-    parent_internal_links = parent_audit.get("internal_links") or []
-    if isinstance(parent_internal_links, list):
-        for l in parent_internal_links:
-            link_url = normalize_url(l) if isinstance(l, str) else normalize_url(l.get("url", ""))
-            if link_url:
-                parent_outbound.add(link_url)
-    parent_outbound.discard("")
+    for lnk in parent_profile["internal_links_out"]:
+        link_url = normalize_url(lnk.get("url", ""))
+        if link_url:
+            parent_outbound.add(link_url)
 
     for child in child_pages:
         child_url = child.get("page", "") if isinstance(child, dict) else child
         child_norm = normalize_url(child_url)
         if child_norm == parent_norm:
             continue  # skip self
-        child_audit = audit_by_url.get(child_norm, {})
-        child_title = (child_audit.get("title") or "").lower().strip()
-        child_h1 = (child_audit.get("h1") or "").lower().strip()
-        child_wc = child_audit.get("word_count", 0)
+        child_profile = build_page_profile(child_url)
+        child_title = child_profile["title"].lower().strip()
+        child_h1 = child_profile["h1"].lower().strip()
+        child_wc = child_profile["word_count"]
 
         # Check 1: does parent link to child?
         has_link = child_norm in parent_outbound
