@@ -382,6 +382,56 @@ def _generate_cannibal_rewrite(page_url: str, query: str, issues: list, context:
     if cannibal_link_instruction:
         related_text += "\n\n**CRITICAL LINKS (must include):**" + cannibal_link_instruction
 
+    # 3b. Hierarchy links (parent + children + brand pages)
+    from urllib.parse import urlparse as _up_hier
+    page_path = _up_hier(prof["url"]).path.rstrip("/")
+    page_segments = [s for s in page_path.split("/") if s]
+
+    hierarchy_text = ""
+    hier_lines = []
+
+    # Parent page (one level up)
+    if len(page_segments) >= 2:
+        parent_path = "/" + "/".join(page_segments[:-1])
+        parent_url = prof["url"].split("//")[0] + "//" + _up_hier(prof["url"]).netloc + parent_path
+        parent_audit = audit_by_url.get(normalize_url(parent_url), {})
+        if parent_audit:
+            parent_title = (parent_audit.get("title") or "").split("|")[0].split("»")[0].strip()
+            hier_lines.append(f"  PARENT (link UP): <a href=\"{parent_url}\">{parent_title or parent_path.split('/')[-1]}</a>")
+
+    # Child pages (if this is a pillar)
+    if prof["is_pillar"] and prof["child_pages"]:
+        hier_lines.append(f"  CHILDREN (link DOWN — this page is a PILLAR with {len(prof['child_pages'])} sub-pages):")
+        for child_url in prof["child_pages"][:8]:
+            child_audit = audit_by_url.get(normalize_url(child_url), {})
+            child_title = (child_audit.get("title") or "").split("|")[0].split("»")[0].strip()
+            child_name = child_url.split("/")[-1].replace("-", " ")
+            hier_lines.append(f"    <a href=\"{child_url}\">{child_title or child_name}</a>")
+
+    # Brand pages (detect from products on page + check if brand page exists)
+    brand_names = set()
+    for prod in prof["products"][:20]:
+        if isinstance(prod, dict):
+            name = (prod.get("name") or "").lower()
+            for brand in ["fleshlight", "tenga", "satisfyer", "womanizer", "lovense", "we-vibe", "lelo", "fun factory", "doll king"]:
+                if brand in name:
+                    brand_names.add(brand)
+    if brand_names:
+        for brand in sorted(brand_names):
+            brand_slug = brand.replace(" ", "-")
+            # Check common brand page URL patterns
+            for pattern in [f"/alla/{brand_slug}", f"/{brand_slug}", f"/brands/{brand_slug}"]:
+                brand_url = prof["url"].split("//")[0] + "//" + _up_hier(prof["url"]).netloc + pattern
+                if audit_by_url.get(normalize_url(brand_url)):
+                    hier_lines.append(f"  BRAND PAGE: <a href=\"{brand_url}\">{brand.title()}</a>")
+                    break
+
+    if hier_lines:
+        hierarchy_text = "\n## HIERARCHY LINKS (site architecture)\n" + "\n".join(hier_lines)
+        hierarchy_text += "\n\nInclude these links naturally in the text. Parent link can go in intro or first paragraph. Child/brand links spread across the bottom text."
+
+    related_text += hierarchy_text
+
     # 4. Top GSC queries
     gsc_queries_text = ""
     if prof["gsc_queries"]:
