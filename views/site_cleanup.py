@@ -447,24 +447,28 @@ Site context: {site_context}
 A category page has TWO text areas separated by a product grid:
 
 1. **TOP TEXT** (intro) — shown ABOVE the product grid
-   - Short: 50-100 words max
+   - 80-150 words
    - Purpose: tell the visitor what this category is and why they should browse
    - Include primary keyword in first sentence
    - Warm, inviting tone — not a wall of text
+   - Can include 1-2 key benefits or differentiators
    - NO FAQ, NO long explanations — save those for bottom text
 
 2. **PRODUCT GRID** — we CANNOT change this (products with images, prices, names)
 
 3. **BOTTOM TEXT** (footer) — shown BELOW the product grid
-   - Longer: 250-400 words
-   - Structure with 2-3 H2 headings
-   - E-E-A-T: expert advice, material knowledge, practical tips
+   - 600-1200 words — this is where the real SEO value lives
+   - Structure with 3-5 H2 headings covering:
+     * Buying guide / how to choose (what to look for, materials, features)
+     * Product types / variants (explain the differences)
+     * Expert tips / usage advice (show real knowledge)
+     * Care and maintenance (practical value)
    - Internal links to related pages using <a href="URL">anchor</a>
-   - End with short FAQ (2-3 questions from lower-volume GSC queries)
-   - This is where the real SEO content lives
+   - End with FAQ section (3-5 questions from lower-volume GSC queries)
+   - E-E-A-T: expert advice, material comparisons, specific brand knowledge
 
 ## RULES FOR BOTH TEXTS
-1. NO keyword stuffing — primary keyword max 2x in top, max 3x in bottom
+1. NO keyword stuffing — primary keyword max 2x in top, max 5-6x in bottom (natural use across 1000 words)
 2. Mention product NAMES and BRANDS — but NEVER specific prices (they change)
 3. MUST be EVERGREEN — relevant regardless of which products are currently shown
 4. MUST be DIFFERENT from competing pages
