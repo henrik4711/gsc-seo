@@ -208,57 +208,15 @@ def _generate_plan(url, audit_data):
 
 
 def _generate_page_text(url, audit_data):
-    """Generate complete category bottom text."""
+    """Generate complete page text using the unified generator."""
     if not has_anthropic_key():
         st.error("Anthropic API key missing")
         return
     try:
-        from utils.ai_generator import get_client, generate_category_bottom_text
-        from urllib.parse import urlparse
-        client = get_client(get_anthropic_key())
-        site_context = st.session_state.get("site_context", "")
-        language = st.session_state.get("content_language", "Swedish")
-
-        # Build URL lists
-        audit_results = st.session_state.get("audit_results", [])
-        raw_urls = set(r["url"] for r in audit_results if r.get("url"))
-        gsc = st.session_state.get("gsc_data")
-        if gsc is not None and hasattr(gsc, "page"):
-            raw_urls.update(gsc["page"].unique().tolist())
-        all_site_urls = sorted(raw_urls)
-
-        # Find subcategory + sibling URLs
-        page_path = urlparse(url).path.lower().rstrip("/")
-        subcategory_urls = [
-            u for u in all_site_urls
-            if urlparse(u).path.lower().rstrip("/").startswith(page_path + "/")
-            and urlparse(u).path.lower().rstrip("/").count("/") == page_path.count("/") + 1
-        ][:20]
-
-        parent_path = "/".join(page_path.split("/")[:-1])
-        sibling_urls = [
-            u for u in all_site_urls
-            if u != url
-            and urlparse(u).path.lower().rstrip("/").startswith(parent_path + "/")
-            and urlparse(u).path.lower().rstrip("/").count("/") == page_path.count("/")
-        ][:15] if parent_path else []
+        from utils.ai_generator import generate_page_content
 
         with st.spinner("AI generating page text..."):
-            result = generate_category_bottom_text(
-                client, url,
-                audit_data.get("title", ""),
-                audit_data.get("h1", ""),
-                audit_data.get("bottom_text", "") or (audit_data.get("body_text") or "")[-2000:],
-                audit_data.get("target_keywords", []),
-                subcategory_urls=subcategory_urls,
-                sibling_urls=sibling_urls,
-                products=None,
-                all_site_urls=all_site_urls,
-                site_context=site_context,
-                language=language,
-                current_intro_text=audit_data.get("intro_text", ""),
-                impressions=audit_data.get("impressions", 0),
-            )
+            result = generate_page_content(url)
         st.session_state[f"_bottom_text_{stable_hash(url)}"] = result
         from utils.persistence import save_ai_cache
         save_ai_cache()

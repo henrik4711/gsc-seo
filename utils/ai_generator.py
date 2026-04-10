@@ -1358,6 +1358,366 @@ Language: {language}
     return _parse_ai_json(message)
 
 
+# ──────────────────────────────────────────────────────────────────────
+# UNIFIED page content generator — single source of truth for ALL views
+# ──────────────────────────────────────────────────────────────────────
+
+def generate_page_content(url: str, target_query: str = None) -> dict:
+    """
+    Generate COMPLETE body text (top + bottom + FAQ) for any page.
+
+    Uses build_page_profile(url) to gather ALL data, then builds the full
+    prompt with every rule (keyword focus, competing pages, GSC queries,
+    hierarchy links, products with images, FAQ schema, writing style, etc.).
+
+    Parameters
+    ----------
+    url : str
+        The page URL to generate content for.
+    target_query : str, optional
+        Primary keyword to focus on. If None, uses profile's primary_query.
+
+    Returns
+    -------
+    dict with keys: top_html, bottom_html, faq_schema, internal_links,
+                    issues_fixed, top_word_count, bottom_word_count,
+                    target_keyword
+    """
+    from config import get_anthropic_key, has_anthropic_key
+    if not has_anthropic_key():
+        raise ValueError("Anthropic API key missing")
+    from utils.page_profile import build_page_profile
+    from utils.ui_helpers import normalize_url
+    from urllib.parse import urlparse as _up
+
+    client = get_client(get_anthropic_key())
+    prof = build_page_profile(url)
+
+    # ── Core page data ──
+    current_body = prof["body_text"]
+    word_count = prof["word_count"]
+    page_type = prof["page_type"]
+    title = prof["title"]
+    h1 = prof["h1"]
+    language = st.session_state.get("content_language", "Swedish")
+    site_context = st.session_state.get("site_context", "")
+
+    query = target_query or prof["primary_query"] or h1 or title.split("|")[0].strip()
+
+    # ── Auto-detected issues ──
+    issues = prof.get("auto_issues", [])
+    issues_text = "\n".join(f"- {i}" for i in issues) if issues else "No specific issues listed"
+
+    # ── 1. Competing pages (from cannibalization) ──
+    competing_pages = []
+    audit_results = st.session_state.get("audit_results", [])
+    audit_by_url = {normalize_url(r.get("url", "")): r for r in audit_results}
+    for cannibal in prof["cannibalization"]:
+        if cannibal.get("query", "").lower() == query.lower():
+            for cp_url in cannibal.get("competing_pages", []):
+                cp_audit = audit_by_url.get(normalize_url(cp_url), {})
+                competing_pages.append(
+                    f"  - {cp_url} title: \"{(cp_audit.get('title') or '')[:60]}\""
+                )
+            break
+    competing_text = "\n".join(competing_pages[:5]) if competing_pages else "None found"
+
+    # ── 2. Current internal links FROM this page ──
+    existing_links_text = ""
+    if prof["internal_links_out"]:
+        link_items = []
+        for lnk in prof["internal_links_out"][:10]:
+            link_items.append(f"  - \"{lnk.get('anchor', '')}\" → {lnk.get('url', '')}")
+        existing_links_text = "\n".join(link_items)
+    if not existing_links_text:
+        existing_links_text = "NO internal links found on this page"
+
+    # ── 3. Related pages from topic clusters ──
+    related_pages = []
+    topic_clusters = st.session_state.get("topic_clusters", {})
+    for cluster_info in prof["clusters"]:
+        topic_name = cluster_info.get("topic", "")
+        if isinstance(topic_clusters, dict):
+            for cluster in topic_clusters.get("clusters", []):
+                if cluster.get("topic") == topic_name:
+                    for cp in cluster.get("pages", []):
+                        cp_url = cp.get("page", "")
+                        if normalize_url(cp_url) != prof["url"]:
+                            cp_audit = audit_by_url.get(normalize_url(cp_url), {})
+                            related_pages.append(
+                                f"  - {cp_url} \"{(cp_audit.get('title') or cp_url.split('/')[-1])[:50]}\""
+                            )
+
+    # Cannibalized page link instructions
+    cannibal_link_instruction = ""
+    for cp_line in competing_pages:
+        cp_url = cp_line.strip().split(" ")[1] if len(cp_line.strip().split(" ")) > 1 else ""
+        if cp_url:
+            cannibal_link_instruction += f"\n  - MUST LINK: <a href=\"{cp_url}\">{query}</a> (anchor = the cannibalized query)"
+
+    # Add suggested anchors from GSC queries for related pages
+    gsc_data = st.session_state.get("gsc_data")
+    for i, rp in enumerate(related_pages):
+        rp_url = rp.strip().split(" ")[1].strip('"') if len(rp.strip().split(" ")) > 1 else ""
+        if rp_url:
+            rp_norm = normalize_url(rp_url)
+            if gsc_data is not None and hasattr(gsc_data, "groupby"):
+                rp_gsc = gsc_data[gsc_data["page"].apply(normalize_url) == rp_norm]
+                if not rp_gsc.empty:
+                    top_query = rp_gsc.sort_values("impressions", ascending=False).iloc[0]["query"]
+                    related_pages[i] = f"{rp} → suggested anchor: \"{top_query}\""
+
+    related_text = "\n".join(related_pages[:10]) if related_pages else "No cluster-related pages found"
+    if cannibal_link_instruction:
+        related_text += "\n\n**CRITICAL LINKS (must include):**" + cannibal_link_instruction
+
+    # ── 3b. Hierarchy links (parent + children + brand pages) ──
+    page_path = _up(prof["url"]).path.rstrip("/")
+    page_segments = [s for s in page_path.split("/") if s]
+
+    hierarchy_text = ""
+    hier_lines = []
+
+    # Parent page (one level up)
+    if len(page_segments) >= 2:
+        parent_path = "/" + "/".join(page_segments[:-1])
+        parent_url = prof["url"].split("//")[0] + "//" + _up(prof["url"]).netloc + parent_path
+        parent_audit = audit_by_url.get(normalize_url(parent_url), {})
+        if parent_audit:
+            parent_title = (parent_audit.get("title") or "").split("|")[0].split("»")[0].strip()
+            hier_lines.append(f"  PARENT (link UP): <a href=\"{parent_url}\">{parent_title or parent_path.split('/')[-1]}</a>")
+
+    # Child pages (if this is a pillar)
+    if prof["is_pillar"] and prof["child_pages"]:
+        hier_lines.append(f"  CHILDREN (link DOWN — this page is a PILLAR with {len(prof['child_pages'])} sub-pages):")
+        for child_url in prof["child_pages"][:8]:
+            child_audit = audit_by_url.get(normalize_url(child_url), {})
+            child_title = (child_audit.get("title") or "").split("|")[0].split("»")[0].strip()
+            child_name = child_url.split("/")[-1].replace("-", " ")
+            hier_lines.append(f"    <a href=\"{child_url}\">{child_title or child_name}</a>")
+
+    # Brand pages (detect from products + check if brand page exists)
+    brand_names = set()
+    for prod in prof["products"][:20]:
+        if isinstance(prod, dict):
+            name = (prod.get("name") or "").lower()
+            for brand in ["fleshlight", "tenga", "satisfyer", "womanizer", "lovense", "we-vibe", "lelo", "fun factory", "doll king"]:
+                if brand in name:
+                    brand_names.add(brand)
+    if brand_names:
+        for brand in sorted(brand_names):
+            brand_slug = brand.replace(" ", "-")
+            for pattern in [f"/alla/{brand_slug}", f"/{brand_slug}", f"/brands/{brand_slug}"]:
+                brand_url = prof["url"].split("//")[0] + "//" + _up(prof["url"]).netloc + pattern
+                if audit_by_url.get(normalize_url(brand_url)):
+                    hier_lines.append(f"  BRAND PAGE: <a href=\"{brand_url}\">{brand.title()}</a>")
+                    break
+
+    if hier_lines:
+        hierarchy_text = "\n## HIERARCHY LINKS (site architecture)\n" + "\n".join(hier_lines)
+        hierarchy_text += "\n\nInclude these links naturally in the text. Parent link can go in intro or first paragraph. Child/brand links spread across the bottom text."
+
+    related_text += hierarchy_text
+
+    # ── 4. Top GSC queries ──
+    gsc_queries_text = ""
+    if prof["gsc_queries"]:
+        gsc_lines = []
+        for qr in prof["gsc_queries"][:10]:
+            gsc_lines.append(
+                f"  - \"{qr['query']}\" ({qr['impressions']} impr, {qr['clicks']} clicks, pos {qr['position']})"
+            )
+        gsc_queries_text = "\n".join(gsc_lines)
+    if not gsc_queries_text:
+        gsc_queries_text = f"  - \"{query}\" (primary target)"
+
+    # ── 5. Products on this page (with images) ──
+    products_text = ""
+    products_with_images = []
+    if prof["products"]:
+        prod_lines = []
+        for prod in prof["products"][:8]:
+            if isinstance(prod, dict):
+                name = prod.get("name", "?")
+                p_url = prod.get("url", "")
+                image = prod.get("image", "")
+                prod_line = f"  - {name} — {prod.get('price', '?')} — {p_url}"
+                if image:
+                    prod_line += f" — IMAGE: {image}"
+                    products_with_images.append({"name": name, "url": p_url, "image": image})
+                prod_lines.append(prod_line)
+        products_text = "\n".join(prod_lines)
+    if not products_text:
+        products_text = "No product data available — use generic product references from the store"
+
+    # Build image instruction
+    images_instruction = ""
+    if products_with_images:
+        images_instruction = (
+            "\n\n## PRODUCT IMAGES (include 2-3 in bottom text)\n"
+            "Google rewards pages with relevant images. Include 2-3 product images\n"
+            "in the bottom text using this format:\n"
+            '<figure><a href="PRODUCT_URL"><img src="IMAGE_URL" alt="PRODUCT NAME" '
+            'width="300" loading="lazy"></a><figcaption>Short description</figcaption></figure>\n\n'
+            "Available images:\n"
+        )
+        for pi in products_with_images[:5]:
+            images_instruction += f'  - {pi["name"]}: <img src="{pi["image"]}" alt="{pi["name"]}">\n'
+            images_instruction += f'    Link to: {pi["url"]}\n'
+        images_instruction += (
+            "\nPlace images between text sections (after an H2), not at the end.\n"
+            "Use descriptive alt text with the product name. Add width='300' and loading='lazy'."
+        )
+
+    # ── Build the full prompt ──
+    prompt = f"""{ANTI_HALLUCINATION_RULES}
+
+You are rewriting the BODY TEXT for an e-commerce category page.
+
+## CRITICAL: KEYWORD FOCUS
+The PRIMARY keyword for this page is: **{query}**
+This keyword MUST:
+- Appear in at least 2 of your H2 headings (naturally, not forced)
+- Be used in the first sentence of the top text
+- Be the SUBJECT of the text — the entire text is ABOUT "{query}"
+- NOT be replaced with synonyms or generic terms like "masturbator" or "sexleksak"
+If the page is about "pocket pussy", write about pocket pussy specifically.
+If the page is about "dildo", write about dildos specifically.
+Do NOT write generic category text that could apply to any product.
+
+## PAGE INFO
+URL: {url}
+Page type: {page_type}
+Current title: {title}
+Current H1: {h1}
+Current word count: {word_count}
+Target query: {query}
+Language: {language}
+Site context: {site_context}
+
+## DETECTED ISSUES (MUST ALL BE FIXED)
+{issues_text}
+
+## COMPETING PAGES (differentiate your text from these)
+{competing_text}
+
+## GSC QUERIES THIS PAGE SHOULD TARGET
+{gsc_queries_text}
+
+## CURRENT INTERNAL LINKS ON THIS PAGE
+{existing_links_text}
+
+## RELATED PAGES TO LINK TO (from topic cluster)
+{related_text}
+
+## REAL PRODUCTS ON THIS PAGE (use these, don't invent)
+{products_text}
+{images_instruction}
+
+## CURRENT TEXT (this is what needs rewriting)
+{current_body[:2000]}
+
+## PAGE STRUCTURE (Magento category page)
+A category page has TWO text areas separated by a product grid:
+
+1. **TOP TEXT** (intro) — shown ABOVE the product grid
+   - 80-150 words
+   - Purpose: tell the visitor what this category is and why they should browse
+   - Include primary keyword in first sentence
+   - Warm, inviting tone — not a wall of text
+   - Can include 1-2 key benefits or differentiators
+   - NO FAQ, NO long explanations — save those for bottom text
+
+2. **PRODUCT GRID** — we CANNOT change this (products with images, prices, names)
+
+3. **BOTTOM TEXT** (footer) — shown BELOW the product grid
+   - 600-1200 words — this is where the real SEO value lives
+   - Structure with 3-5 H2 headings covering:
+     * Buying guide / how to choose (what to look for, materials, features)
+     * Product types / variants (explain the differences)
+     * Expert tips / usage advice (show real knowledge)
+     * Care and maintenance (practical value)
+   - Internal links to related pages using <a href="URL">anchor</a>
+   - End with FAQ section (3-5 questions from lower-volume GSC queries)
+   - E-E-A-T: expert advice, material comparisons, specific brand knowledge
+
+## WRITING STYLE — CRITICAL
+{HUMAN_WRITING_STYLE}
+
+## LINK ANCHOR RULES (critical)
+Every internal link MUST have a UNIQUE anchor text that matches the TARGET page:
+- Link to /klassisk-dildo → anchor "klassisk dildo" (NOT just "dildo")
+- Link to /amor-black → anchor "Fun Factory Amor" (product name, NOT "dildo")
+- Link to /uppblasbar-dildo → anchor "uppblåsbar dildo" (specific variant)
+- Link to /rea/billig-pocket-pussy → anchor "billiga pocket pussy" (sale variant)
+NEVER use the same anchor text for different link targets.
+NEVER use just the generic primary keyword as anchor for sub-pages.
+Each anchor should help Google understand what the TARGET page is about.
+
+## CONTENT RULES
+1. NO keyword stuffing — primary keyword max 2x in top, max 5-6x in bottom (natural use across 1000 words)
+2. Mention product NAMES and BRANDS — but NEVER specific prices (they change).
+   This includes FAQ answers — do NOT mention price ranges like "1000-3000 kr".
+   Instead say "priserna varierar beroende på funktioner och kvalitet".
+3. MUST be EVERGREEN — relevant regardless of which products are currently shown
+4. MUST be DIFFERENT from competing pages
+5. E-E-A-T: real product knowledge, material comparisons, honest recommendations
+6. Language: {language}
+7. For /rea/ sale pages: describe the CATEGORY of products on sale and WHY
+   they're good value, NOT specific sale items or rotating discounts
+
+## FAQ FORMAT
+The FAQ in bottom_html must use visible HTML markup like this:
+<h2>Vanliga frågor</h2>
+<div itemscope itemtype="https://schema.org/FAQPage">
+  <div itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+    <h3 itemprop="name">Question here?</h3>
+    <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+      <p itemprop="text">Answer here.</p>
+    </div>
+  </div>
+</div>
+
+ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
+
+## OUTPUT (JSON):
+{{
+    "top_html": "<p>Intro text above product grid...</p>",
+    "top_word_count": 0,
+    "bottom_html": "<h2>heading</h2><p>text...</p><h2>Vanliga frågor</h2><div itemscope itemtype='https://schema.org/FAQPage'>...</div>",
+    "bottom_word_count": 0,
+    "faq_schema": {{
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+            {{
+                "@type": "Question",
+                "name": "question?",
+                "acceptedAnswer": {{
+                    "@type": "Answer",
+                    "text": "answer"
+                }}
+            }}
+        ]
+    }},
+    "target_keyword": "{query}",
+    "internal_links": [{{"anchor": "text", "url": "/path"}}],
+    "issues_fixed": ["which issues from the list above were fixed"]
+}}"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=6000,
+        temperature=0,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return _parse_ai_json(message)
+
+
+# DEPRECATED: Use generate_page_content(url, target_query) instead.
+# This older function lacks: top/bottom split, FAQ schema, product images,
+# hierarchy links, unique anchors, keyword focus, competing pages context.
+# Kept for backward compatibility — will be removed in a future release.
 def generate_category_bottom_text(
     client: anthropic.Anthropic,
     url: str,

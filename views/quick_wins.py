@@ -160,10 +160,9 @@ def _generate_all_fixes(page):
     from utils.ai_generator import (
         get_client,
         generate_page_implementation_plan,
-        generate_category_bottom_text,
+        generate_page_content,
         generate_intro_rewrite,
     )
-    from urllib.parse import urlparse
 
     client = get_client(get_anthropic_key())
     site_context = st.session_state.get("site_context", "")
@@ -200,52 +199,12 @@ def _generate_all_fixes(page):
                 st.error(f"Plan generation failed: {e}")
                 st.session_state[plan_key] = {"error": str(e), "steps": []}
 
-    # ── Generate bottom text (only for category pages)
+    # ── Generate page text (only for category pages) — uses unified generator
     text_key = f"_bottom_text_{url_hash}"
     if page["page_type"] == "category" and text_key not in st.session_state:
         with st.spinner("Generating page text with FAQ + E-E-A-T..."):
             try:
-                page_path = urlparse(url).path.lower().rstrip("/")
-                subcategory_urls = [
-                    u for u in all_site_urls
-                    if urlparse(u).path.lower().rstrip("/").startswith(page_path + "/")
-                    and urlparse(u).path.lower().rstrip("/").count("/") == page_path.count("/") + 1
-                ][:20]
-                parent_path = "/".join(page_path.split("/")[:-1])
-                sibling_urls = [
-                    u for u in all_site_urls
-                    if u != url
-                    and urlparse(u).path.lower().rstrip("/").startswith(parent_path + "/")
-                    and urlparse(u).path.lower().rstrip("/").count("/") == page_path.count("/")
-                ][:15] if parent_path else []
-
-                # Build product list from audit data (deep_scrape_category stores rich data)
-                products = []
-                rich_products = audit.get("products", []) or []
-                for p in rich_products[:8]:
-                    products.append({
-                        "name": p.get("name", ""),
-                        "product_url": p.get("url", ""),
-                        "image_url": p.get("image", ""),
-                        "price": p.get("price", ""),
-                        "description": "",
-                    })
-
-                result = generate_category_bottom_text(
-                    client, url,
-                    audit.get("title", ""),
-                    audit.get("h1", ""),
-                    audit.get("bottom_text", "") or (audit.get("body_text") or "")[-2000:],
-                    audit.get("target_keywords", []),
-                    subcategory_urls=subcategory_urls,
-                    sibling_urls=sibling_urls,
-                    products=products if products else None,
-                    all_site_urls=all_site_urls,
-                    site_context=site_context,
-                    language=language,
-                    current_intro_text=audit.get("intro_text", ""),
-                    impressions=audit.get("impressions", 0),
-                )
+                result = generate_page_content(url)
                 st.session_state[text_key] = result
             except Exception as e:
                 st.error(f"Text generation failed: {e}")

@@ -762,49 +762,11 @@ def render():
                     st.markdown("**Bottom text** (below product grid, 800-1500 words)")
                     bottom_key = f"_bottom_text_{url_hash}"
                     if st.button("Generate bottom text with products & links", key=f"btn_bottom_{url_hash}", type="primary"):
-                        with st.spinner("Scraping products + generating bottom text... (~60 sec)"):
+                        with st.spinner("Generating page text... (~60 sec)"):
                             try:
-                                from utils.product_scraper import scrape_products_from_page
-                                from utils.ai_generator import get_client, generate_category_bottom_text
-                                from urllib.parse import urlparse as _up_bt
+                                from utils.ai_generator import generate_page_content
 
-                                client = get_client(get_anthropic_key())
-
-                                # Scrape products from this category
-                                products = scrape_products_from_page(url, max_products=6)
-
-                                # Find subcategory URLs (children in URL hierarchy)
-                                page_path = _up_bt(url).path.lower().rstrip("/")
-                                subcategory_urls = [
-                                    u for u in all_site_urls
-                                    if _up_bt(u).path.lower().rstrip("/").startswith(page_path + "/")
-                                    and _up_bt(u).path.lower().rstrip("/").count("/") == page_path.count("/") + 1
-                                ]
-
-                                # Find sibling URLs (same parent)
-                                parent_path = "/".join(page_path.split("/")[:-1])
-                                sibling_urls = [
-                                    u for u in all_site_urls
-                                    if u != url
-                                    and _up_bt(u).path.lower().rstrip("/").startswith(parent_path + "/")
-                                    and _up_bt(u).path.lower().rstrip("/").count("/") == page_path.count("/")
-                                ] if parent_path else []
-
-                                result = generate_category_bottom_text(
-                                    client, url,
-                                    page_r.get("title", ""),
-                                    page_r.get("h1", ""),
-                                    page_r.get("bottom_text", "") or (page_r.get("body_text") or "")[-2000:],
-                                    page_r.get("target_keywords", []),
-                                    subcategory_urls=subcategory_urls[:20],
-                                    sibling_urls=sibling_urls[:10],
-                                    products=products,
-                                    all_site_urls=all_site_urls,
-                                    site_context=site_context,
-                                    language=language,
-                                    current_intro_text=page_r.get("intro_text", ""),
-                                    impressions=page_r.get("impressions", 0),
-                                )
+                                result = generate_page_content(url)
                                 st.session_state[bottom_key] = result
                             except Exception as e:
                                 st.error(f"Error: {e}")
