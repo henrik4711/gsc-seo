@@ -444,18 +444,43 @@ def _generate_cannibal_rewrite(page_url: str, query: str, issues: list, context:
     if not gsc_queries_text:
         gsc_queries_text = f"  - \"{query}\" (primary target)"
 
-    # 5. Products on this page
+    # 5. Products on this page (with images)
     products_text = ""
+    products_with_images = []
     if prof["products"]:
         prod_lines = []
         for prod in prof["products"][:8]:
             if isinstance(prod, dict):
-                prod_lines.append(
-                    f"  - {prod.get('name', '?')} — {prod.get('price', '?')} — {prod.get('url', '')}"
-                )
+                name = prod.get("name", "?")
+                url = prod.get("url", "")
+                image = prod.get("image", "")
+                prod_line = f"  - {name} — {prod.get('price', '?')} — {url}"
+                if image:
+                    prod_line += f" — IMAGE: {image}"
+                    products_with_images.append({"name": name, "url": url, "image": image})
+                prod_lines.append(prod_line)
         products_text = "\n".join(prod_lines)
     if not products_text:
         products_text = "No product data available — use generic product references from the store"
+
+    # Build image instruction
+    images_instruction = ""
+    if products_with_images:
+        images_instruction = (
+            "\n\n## PRODUCT IMAGES (include 2-3 in bottom text)\n"
+            "Google rewards pages with relevant images. Include 2-3 product images\n"
+            "in the bottom text using this format:\n"
+            '<figure><a href="PRODUCT_URL"><img src="IMAGE_URL" alt="PRODUCT NAME" '
+            'width="300" loading="lazy"></a><figcaption>Short description</figcaption></figure>\n\n'
+            "Available images:\n"
+        )
+        for pi in products_with_images[:5]:
+            images_instruction += f'  - {pi["name"]}: <img src="{pi["image"]}" alt="{pi["name"]}">\n'
+            images_instruction += f'    Link to: {pi["url"]}\n'
+        images_instruction += (
+            "\nPlace images between text sections (after an H2), not at the end.\n"
+            "Use descriptive alt text with the product name. Add width='300' and loading='lazy'."
+        )
 
     prompt = f"""{ANTI_HALLUCINATION_RULES}
 
@@ -499,6 +524,7 @@ Site context: {site_context}
 
 ## REAL PRODUCTS ON THIS PAGE (use these, don't invent)
 {products_text}
+{images_instruction}
 
 ## CURRENT TEXT (this is what needs rewriting)
 {current_body[:2000]}
