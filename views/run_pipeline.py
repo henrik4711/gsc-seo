@@ -1181,6 +1181,132 @@ def render():
     st.markdown("---")
     st.markdown("### Maintenance")
 
+    # ── ONE-CLICK: Refresh all analyses ────────────────────
+    if "audit_results" in st.session_state:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(
+                "<div style='font-size:0.85rem; color:#c8b4ff; background:#12121f; border:2px solid #5533ff; border-radius:6px; padding:0.8rem;'>"
+                "<strong>🔄 Refresh ALL analyses (one click)</strong><br>"
+                "Runs everything in order: fix editorial text → re-classify pages → "
+                "reset quality scores → re-run quality check (all pages) → re-run cannibalization. "
+                "No re-scrape needed. Takes 5-15 min depending on number of pages.</div>",
+                unsafe_allow_html=True,
+            )
+        with col2:
+            if st.button("🔄 Refresh all", key="rp_refresh_all", use_container_width=True, type="primary"):
+                import re as _re
+                import os
+                from utils.category_analyzer import classify_page_type
+                from utils.persistence import AI_CACHE_DIR
+
+                results = st.session_state["audit_results"]
+                progress = st.progress(0)
+                status = st.empty()
+
+                # Step 1: Fix editorial text
+                status.text("Step 1/5: Fixing editorial text separation...")
+                fixed_ed = 0
+                for r in results:
+                    if r.get("intro_text") or r.get("bottom_text"):
+                        continue
+                    body = r.get("body_text", "")
+                    if not body or len(body) < 100:
+                        continue
+                    lines = body.split(". ")
+                    intro_lines, bottom_lines = [], []
+                    found_grid = False
+                    for line in lines:
+                        ls = line.strip()
+                        if not ls:
+                            continue
+                        has_price = bool(_re.search(r'\d+\s*kr|\d+:-|rea\s|pris:', ls.lower()))
+                        is_short = len(ls.split()) < 8
+                        if has_price and is_short:
+                            found_grid = True
+                            continue
+                        if not found_grid:
+                            intro_lines.append(ls)
+                        elif len(ls.split()) >= 10 and not has_price:
+                            bottom_lines.append(ls)
+                    intro = ". ".join(intro_lines).strip()
+                    bottom = ". ".join(bottom_lines).strip()
+                    if intro or bottom:
+                        r["intro_text"] = intro[:3000]
+                        r["intro_word_count"] = len(intro.split()) if intro else 0
+                        r["bottom_text"] = bottom[:3000]
+                        r["bottom_word_count"] = len(bottom.split()) if bottom else 0
+                        r["total_editorial_words"] = r["intro_word_count"] + r["bottom_word_count"]
+                        fixed_ed += 1
+                progress.progress(0.1)
+
+                # Step 2: Re-classify
+                status.text("Step 2/5: Re-classifying pages...")
+                changed = 0
+                for r in results:
+                    old_type = r.get("page_type", "unknown")
+                    new_class = classify_page_type(r.get("url", ""), r)
+                    new_type = new_class.get("page_type", "unknown")
+                    if new_type != old_type:
+                        r["page_type"] = new_type
+                        changed += 1
+                save_key("audit_results")
+                progress.progress(0.2)
+
+                # Step 3: Reset quality scores
+                status.text("Step 3/5: Clearing old quality scores...")
+                keys_del = [k for k in st.session_state if k.startswith("_quality_")]
+                for k in keys_del:
+                    del st.session_state[k]
+                if os.path.isdir(AI_CACHE_DIR):
+                    for f in os.listdir(AI_CACHE_DIR):
+                        if f.startswith("_quality_"):
+                            try:
+                                os.remove(os.path.join(AI_CACHE_DIR, f))
+                            except Exception:
+                                pass
+                progress.progress(0.3)
+
+                # Step 4: Re-run quality check (all pages)
+                status.text("Step 4/5: AI quality check (this takes a few minutes)...")
+                try:
+                    total_checked = 0
+                    while True:
+                        _run_quality_check()
+                        total_checked += 50
+                        remaining = sum(1 for r in results
+                                       if r.get("page_type") in ("category", "blog", "faq")
+                                       and r.get("word_count", 0) > 50
+                                       and f"_quality_{stable_hash(r['url'])}" not in st.session_state)
+                        pct = 0.3 + (0.5 * (1 - remaining / max(1, remaining + total_checked)))
+                        progress.progress(min(0.8, pct))
+                        status.text(f"Step 4/5: AI quality check... {total_checked} done, {remaining} remaining")
+                        if remaining == 0:
+                            break
+                except Exception as e:
+                    status.text(f"Quality check: {e}")
+                progress.progress(0.85)
+
+                # Step 5: Re-run cannibalization
+                status.text("Step 5/5: Cannibalization detection...")
+                try:
+                    _run_cannibalization()
+                except Exception as e:
+                    status.text(f"Cannibalization: {e}")
+                progress.progress(1.0)
+
+                status.empty()
+                progress.empty()
+                st.success(
+                    f"✅ All done! Editorial: {fixed_ed} fixed · "
+                    f"Re-classified: {changed} pages · "
+                    f"Quality: {len(keys_del)} reset + re-checked · "
+                    f"Cannibalization: refreshed"
+                )
+                st.rerun()
+
+        st.markdown("---")
+
     # Re-classify all audit results without re-scraping
     if "audit_results" in st.session_state:
         col1, col2 = st.columns([3, 1])
