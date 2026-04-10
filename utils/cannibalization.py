@@ -339,13 +339,90 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
 
         if already_differentiated:
             cannibal_type["already_differentiated"] = True
-            cannibal_type["action"] = (
-                "✅ **Meta titles are already differentiated** — no immediate action needed. "
-                "Monitor positions over the next 4-6 weeks.\n\n"
-                "Current titles:\n" +
-                "\n".join(f"- `{p['page'].split('/')[-1]}`: {page_titles.get(_nu(p['page']), '(unknown)')}"
-                          for p in pages_detail[:5])
-            )
+
+            # Deeper check: titles OK, but is CONTENT + LINKING also aligned?
+            # Build per-page diagnosis
+            content_issues = []
+            linking_issues = []
+
+            # Get body text and link data
+            audit_by_url = {_nu(ar.get("url", "")): ar for ar in audit_results}
+            sf_link_map = _st.session_state.get("sf_link_map") or {}
+            links_from = sf_link_map.get("links_from", {}) if isinstance(sf_link_map, dict) else {}
+
+            all_conflict_urls = [_nu(p["page"]) for p in pages_detail]
+
+            for p in pages_detail:
+                p_url = p["page"]
+                p_norm = _nu(p_url)
+                p_audit = audit_by_url.get(p_norm, {})
+                p_body = (p_audit.get("body_text") or "").lower()
+                p_wc = p_audit.get("word_count", 0)
+                short = p_url.split("/")[-1][:30]
+
+                # Check 1: does query appear in body text?
+                if query.lower() not in p_body and p_wc > 0:
+                    content_issues.append(
+                        f"`{short}`: query **'{query}'** not found in body text ({p_wc} words)"
+                    )
+
+                # Check 2: is content thin?
+                if p_wc < 200 and p_audit.get("page_type") == "category":
+                    content_issues.append(
+                        f"`{short}`: only {p_wc} words — needs more targeted content"
+                    )
+
+                # Check 3: does this page link to the OTHER competing pages?
+                p_outbound = set()
+                p_internal_links = p_audit.get("internal_links") or []
+                if isinstance(p_internal_links, list):
+                    for link in p_internal_links:
+                        link_url = link.get("url", "") if isinstance(link, dict) else str(link)
+                        if link_url:
+                            p_outbound.add(_nu(link_url))
+                # Also check sf_link_map
+                for lf_url, targets in links_from.items():
+                    if _nu(lf_url) == p_norm and isinstance(targets, list):
+                        for t in targets:
+                            t_url = t.get("target", "") if isinstance(t, dict) else str(t)
+                            if t_url:
+                                p_outbound.add(_nu(t_url))
+
+                other_urls = [u for u in all_conflict_urls if u != p_norm]
+                missing_links = [u for u in other_urls if u not in p_outbound]
+                if missing_links:
+                    for ml in missing_links:
+                        ml_short = ml.split("/")[-1][:30]
+                        linking_issues.append(
+                            f"`{short}` → `{ml_short}`: no internal link (add with anchor text '{query}')"
+                        )
+
+            # Build action text
+            parts = ["✅ **Meta titles are already differentiated.**\n"]
+            parts.append("Current titles:\n" + "\n".join(
+                f"- `{p['page'].split('/')[-1]}`: {page_titles.get(_nu(p['page']), '(unknown)')}"
+                for p in pages_detail[:5]
+            ))
+
+            if content_issues:
+                parts.append(f"\n\n⚠️ **Content issues ({len(content_issues)}):**")
+                for ci in content_issues[:5]:
+                    parts.append(f"- {ci}")
+
+            if linking_issues:
+                parts.append(f"\n\n🔗 **Missing internal links ({len(linking_issues)}):**")
+                for li in linking_issues[:5]:
+                    parts.append(f"- {li}")
+
+            if not content_issues and not linking_issues:
+                parts.append("\n\n✅ Content is targeted and pages are interlinked. **Monitor only.**")
+                cannibal_type["fully_resolved"] = True
+            else:
+                parts.append("\n\nClick **Generate meta** below for AI content recommendations.")
+
+            cannibal_type["action"] = "\n".join(parts)
+            cannibal_type["has_content_issues"] = len(content_issues) > 0
+            cannibal_type["has_linking_issues"] = len(linking_issues) > 0
 
         # Different intents → don't merge, differentiate
         if len(unique_intents) > 1:
@@ -392,8 +469,8 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         potential_clicks = best_ctr * row["total_impressions"]
         lost_clicks = max(0, int(potential_clicks - row["total_clicks"]))
 
-        # Lower severity if already differentiated
-        if already_differentiated and severity in ("severe", "moderate"):
+        # Lower severity only if FULLY resolved (titles + content + links all OK)
+        if cannibal_type.get("fully_resolved"):
             severity = "handled"
 
         records.append({
