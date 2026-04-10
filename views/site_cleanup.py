@@ -409,8 +409,18 @@ def _generate_cannibal_rewrite(page_url: str, query: str, issues: list, context:
 
     prompt = f"""{ANTI_HALLUCINATION_RULES}
 
-You are rewriting the BODY TEXT for an e-commerce page. The current text has quality
-problems that must ALL be fixed in the new version.
+You are rewriting the BODY TEXT for an e-commerce category page.
+
+## CRITICAL: KEYWORD FOCUS
+The PRIMARY keyword for this page is: **{query}**
+This keyword MUST:
+- Appear in at least 2 of your H2 headings (naturally, not forced)
+- Be used in the first sentence of the top text
+- Be the SUBJECT of the text — the entire text is ABOUT "{query}"
+- NOT be replaced with synonyms or generic terms like "masturbator" or "sexleksak"
+If the page is about "pocket pussy", write about pocket pussy specifically.
+If the page is about "dildo", write about dildos specifically.
+Do NOT write generic category text that could apply to any product.
 
 ## PAGE INFO
 URL: {page_url}
