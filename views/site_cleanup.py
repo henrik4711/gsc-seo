@@ -302,88 +302,76 @@ def _generate_cannibal_rewrite(page_url: str, query: str, issues: list, context:
         raise ValueError("Anthropic API key missing")
     from utils.ai_generator import get_client, _parse_ai_json, ANTI_HALLUCINATION_RULES
     from utils.persistence import save
+    from utils.page_profile import build_page_profile
 
     client = get_client(get_anthropic_key())
-    audit_results = st.session_state.get("audit_results", [])
-    audit_by_url = {normalize_url(r.get("url", "")): r for r in audit_results}
-    page_data = audit_by_url.get(normalize_url(page_url), {})
+    prof = build_page_profile(page_url)
 
-    current_body = (page_data.get("body_text") or "")[:3000]
-    word_count = page_data.get("word_count", 0)
-    page_type = page_data.get("page_type", "unknown")
-    title = page_data.get("title", "")
-    h1 = page_data.get("h1", "")
+    current_body = prof["body_text"]
+    word_count = prof["word_count"]
+    page_type = prof["page_type"]
+    title = prof["title"]
+    h1 = prof["h1"]
     language = st.session_state.get("content_language", "Swedish")
     site_context = st.session_state.get("site_context", "")
 
     issues_text = "\n".join(f"- {i}" for i in issues) if issues else "No specific issues listed"
 
-    # ── Gather REAL data to pass to AI ────────────────────────
+    # ── Build prompt context from page profile ────────────────
 
-    # 1. Competing pages (from cannibalization) — so AI knows what to differentiate from
+    # 1. Competing pages (from cannibalization)
     competing_pages = []
-    cannibal_df = st.session_state.get("cannibalization")
-    if cannibal_df is not None and not cannibal_df.empty:
-        for _, crow in cannibal_df.iterrows():
-            if crow.get("query", "").lower() == query.lower():
-                for cp in crow.get("pages_detail", []):
-                    if normalize_url(cp.get("page", "")) != normalize_url(page_url):
-                        cp_audit = audit_by_url.get(normalize_url(cp["page"]), {})
-                        competing_pages.append(
-                            f"  - {cp['page']} (pos {cp.get('position','?')}, {cp.get('clicks',0)} clicks) "
-                            f"title: \"{(cp_audit.get('title') or '')[:60]}\""
-                        )
-                break
+    audit_results = st.session_state.get("audit_results", [])
+    audit_by_url = {normalize_url(r.get("url", "")): r for r in audit_results}
+    for cannibal in prof["cannibalization"]:
+        if cannibal.get("query", "").lower() == query.lower():
+            for cp_url in cannibal.get("competing_pages", []):
+                cp_audit = audit_by_url.get(normalize_url(cp_url), {})
+                competing_pages.append(
+                    f"  - {cp_url} title: \"{(cp_audit.get('title') or '')[:60]}\""
+                )
+            break
     competing_text = "\n".join(competing_pages[:5]) if competing_pages else "None found"
 
-    # 2. Current internal links FROM this page — so AI knows what already exists
-    current_links = page_data.get("internal_links") or []
+    # 2. Current internal links FROM this page
     existing_links_text = ""
-    if isinstance(current_links, list) and current_links:
+    if prof["internal_links_out"]:
         link_items = []
-        for lnk in current_links[:10]:
-            if isinstance(lnk, dict):
-                link_items.append(f"  - \"{lnk.get('anchor', '')}\" → {lnk.get('url', '')}")
-            else:
-                link_items.append(f"  - {lnk}")
+        for lnk in prof["internal_links_out"][:10]:
+            link_items.append(f"  - \"{lnk.get('anchor', '')}\" → {lnk.get('url', '')}")
         existing_links_text = "\n".join(link_items)
     if not existing_links_text:
         existing_links_text = "NO internal links found on this page"
 
-    # 3. Related pages AI SHOULD link to — from topic_clusters + audit
+    # 3. Related pages from topic clusters
     related_pages = []
     topic_clusters = st.session_state.get("topic_clusters", {})
-    page_topics = topic_clusters.get("page_topics", {}) if isinstance(topic_clusters, dict) else {}
-    my_topics = page_topics.get(normalize_url(page_url), [])
-    if isinstance(my_topics, list):
-        for t in my_topics:
-            topic_name = t.get("topic", "") if isinstance(t, dict) else ""
-            # Find other pages in same cluster
+    for cluster_info in prof["clusters"]:
+        topic_name = cluster_info.get("topic", "")
+        if isinstance(topic_clusters, dict):
             for cluster in topic_clusters.get("clusters", []):
                 if cluster.get("topic") == topic_name:
                     for cp in cluster.get("pages", []):
                         cp_url = cp.get("page", "")
-                        if normalize_url(cp_url) != normalize_url(page_url):
+                        if normalize_url(cp_url) != prof["url"]:
                             cp_audit = audit_by_url.get(normalize_url(cp_url), {})
                             related_pages.append(
                                 f"  - {cp_url} \"{(cp_audit.get('title') or cp_url.split('/')[-1])[:50]}\""
                             )
-    # Also add the CANNIBALIZED page specifically with ideal anchor = the query
+
+    # Cannibalized page link instructions
     cannibal_link_instruction = ""
     for cp_line in competing_pages:
-        if normalize_url(page_url) not in cp_line:
-            # This is a competing page — we should link TO it with the query as anchor
-            cp_url = cp_line.strip().split(" ")[1] if len(cp_line.strip().split(" ")) > 1 else ""
-            if cp_url:
-                cannibal_link_instruction += f"\n  - MUST LINK: <a href=\"{cp_url}\">{query}</a> (anchor = the cannibalized query)"
+        cp_url = cp_line.strip().split(" ")[1] if len(cp_line.strip().split(" ")) > 1 else ""
+        if cp_url:
+            cannibal_link_instruction += f"\n  - MUST LINK: <a href=\"{cp_url}\">{query}</a> (anchor = the cannibalized query)"
 
-    # Add suggested anchors based on GSC queries for related pages
+    # Add suggested anchors from GSC queries for related pages
+    gsc_data = st.session_state.get("gsc_data")
     for i, rp in enumerate(related_pages):
-        # Extract URL from the line
         rp_url = rp.strip().split(" ")[1].strip('"') if len(rp.strip().split(" ")) > 1 else ""
         if rp_url:
             rp_norm = normalize_url(rp_url)
-            # Find top GSC query for this related page to use as anchor
             if gsc_data is not None and hasattr(gsc_data, "groupby"):
                 rp_gsc = gsc_data[gsc_data["page"].apply(normalize_url) == rp_norm]
                 if not rp_gsc.empty:
@@ -394,29 +382,23 @@ def _generate_cannibal_rewrite(page_url: str, query: str, issues: list, context:
     if cannibal_link_instruction:
         related_text += "\n\n**CRITICAL LINKS (must include):**" + cannibal_link_instruction
 
-    # 4. Top GSC queries for this page — so AI targets the RIGHT keywords
-    gsc_data = st.session_state.get("gsc_data")
+    # 4. Top GSC queries
     gsc_queries_text = ""
-    if gsc_data is not None and hasattr(gsc_data, "groupby"):
-        page_gsc = gsc_data[gsc_data["page"].apply(normalize_url) == normalize_url(page_url)]
-        if not page_gsc.empty:
-            top_q = page_gsc.sort_values("impressions", ascending=False).head(10)
-            gsc_lines = []
-            for _, qr in top_q.iterrows():
-                gsc_lines.append(
-                    f"  - \"{qr['query']}\" ({int(qr['impressions'])} impr, {int(qr['clicks'])} clicks, pos {qr['position']:.1f})"
-                )
-            gsc_queries_text = "\n".join(gsc_lines)
+    if prof["gsc_queries"]:
+        gsc_lines = []
+        for qr in prof["gsc_queries"][:10]:
+            gsc_lines.append(
+                f"  - \"{qr['query']}\" ({qr['impressions']} impr, {qr['clicks']} clicks, pos {qr['position']})"
+            )
+        gsc_queries_text = "\n".join(gsc_lines)
     if not gsc_queries_text:
         gsc_queries_text = f"  - \"{query}\" (primary target)"
 
-    # 5. Products on this page (from audit) — so AI can reference real products
+    # 5. Products on this page
     products_text = ""
-    content_audit = page_data.get("content_audit") or {}
-    product_data = content_audit.get("products") or page_data.get("products") or []
-    if isinstance(product_data, list) and product_data:
+    if prof["products"]:
         prod_lines = []
-        for prod in product_data[:8]:
+        for prod in prof["products"][:8]:
             if isinstance(prod, dict):
                 prod_lines.append(
                     f"  - {prod.get('name', '?')} — {prod.get('price', '?')} — {prod.get('url', '')}"
