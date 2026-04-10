@@ -1059,7 +1059,15 @@ def render():
                                         st.error(f"Error: {e}")
 
                         # ── Rewrite content button per page with issues ──
-                        # Collects ALL detected issues and sends to AI for full text generation
+                        # Only for pages that are NOT being redirected (redirect + rewrite = contradictory)
+                        skip_redirect_patterns = ["/rea/", "/rea-", "/sale/", "/outlet/", "/kampanj/"]
+                        redirect_losers_set = set()
+                        if tk in ("true_duplicate", "duplicate_categories"):
+                            for rp in pages:
+                                rp_url = rp.get("page", "").lower()
+                                if normalize_url(rp_url) != normalize_url(winner) and not any(sp in rp_url for sp in skip_redirect_patterns):
+                                    redirect_losers_set.add(normalize_url(rp.get("page", "")))
+
                         for p in pages:
                             p_url = p.get("page", "")
                             p_norm = normalize_url(p_url)
@@ -1100,44 +1108,34 @@ def render():
                                             key=f"ta_top_{rewrite_key}",
                                         )
 
-                                    # BOTTOM TEXT
+                                    # BOTTOM TEXT — includes FAQ schema merged in
                                     bottom_html = rw.get("bottom_html", "")
-                                    if bottom_html:
-                                        st.markdown("**📌 BOTTOM TEXT** (paste in Magento → Category → CMS Block or Description, BELOW product grid)")
-                                        st.markdown(
-                                            f"<div style='background:#1a1a2e; border:1px solid #5533ff; border-radius:6px; padding:1rem; margin:0.5rem 0;'>{bottom_html}</div>",
-                                            unsafe_allow_html=True,
-                                        )
-                                        st.text_area(
-                                            "Bottom text HTML (select all + copy)",
-                                            value=bottom_html,
-                                            height=300,
-                                            key=f"ta_bottom_{rewrite_key}",
-                                        )
-
-                                    # FAQ Schema (JSON-LD for Google rich results)
                                     faq_schema = rw.get("faq_schema")
                                     if isinstance(faq_schema, dict) and faq_schema.get("mainEntity"):
                                         import json as _json
                                         schema_script = f'<script type="application/ld+json">\n{_json.dumps(faq_schema, ensure_ascii=False, indent=2)}\n</script>'
-                                        st.markdown("**📌 FAQ SCHEMA** (paste in Magento → Category → Custom Layout Update, or in page HTML head)")
+                                        bottom_html = bottom_html + "\n" + schema_script
+
+                                    if bottom_html:
+                                        st.markdown("**📌 BOTTOM TEXT + FAQ SCHEMA** (paste in Magento → Category → Description, BELOW product grid. Schema is included at the end.)")
+                                        st.markdown(
+                                            f"<div style='background:#1a1a2e; border:1px solid #5533ff; border-radius:6px; padding:1rem; margin:0.5rem 0;'>{rw.get('bottom_html', '')}</div>",
+                                            unsafe_allow_html=True,
+                                        )
                                         st.text_area(
-                                            "FAQ JSON-LD schema (select all + copy)",
-                                            value=schema_script,
-                                            height=150,
-                                            key=f"ta_schema_{rewrite_key}",
+                                            "Bottom text + FAQ schema HTML (select all + copy — paste as ONE block)",
+                                            value=bottom_html,
+                                            height=350,
+                                            key=f"ta_bottom_{rewrite_key}",
                                         )
 
                                     fixed = rw.get("issues_fixed", [])
                                     if fixed:
                                         st.caption("Issues fixed: " + " · ".join(fixed))
 
-                                    # Download all (top + bottom + schema)
                                     combined = (top_html or "") + "\n\n<!-- PRODUCT GRID -->\n\n" + (bottom_html or "")
-                                    if isinstance(faq_schema, dict) and faq_schema.get("mainEntity"):
-                                        combined += "\n\n" + schema_script
                                     st.download_button(
-                                        f"⬇ Download all (top + bottom + schema)",
+                                        f"⬇ Download all",
                                         data=combined,
                                         file_name=f"{p_url.split('/')[-1] or 'page'}_rewrite.html",
                                         mime="text/html",
@@ -1154,7 +1152,10 @@ def render():
                                     st.text_area("HTML source", value=rw["html"], height=300, key=f"ta_{rewrite_key}")
                                     st.download_button(f"⬇ Download", data=rw["html"], file_name=f"{p_url.split('/')[-1]}_rewrite.html", mime="text/html", key=f"dl_{rewrite_key}")
                             elif page_issues or (isinstance(q_data, dict) and q_data.get("verdict") == "REWRITE"):
-                                if st.button(f"📝 Rewrite content for {p_short}", key=f"btn_{rewrite_key}"):
+                                # Don't show rewrite for pages being redirected (contradictory)
+                                if p_norm in redirect_losers_set:
+                                    st.caption(f"↗ `{p_short}` will be 301 redirected — no rewrite needed")
+                                elif st.button(f"📝 Rewrite content for {p_short}", key=f"btn_{rewrite_key}"):
                                     with st.spinner(f"AI rewriting content for {p_short}..."):
                                         try:
                                             _generate_cannibal_rewrite(p_url, query, page_issues, action_text, rewrite_key)
@@ -1163,13 +1164,33 @@ def render():
                                             st.error(f"Error: {e}")
 
                         # For true_duplicate + duplicate_categories: show redirect instructions
+                        # BUT skip pages that serve a different PURPOSE (sale/rea pages, filter views)
                         if tk in ("true_duplicate", "duplicate_categories"):
                             losers = [p["page"] for p in pages if normalize_url(p["page"]) != normalize_url(winner)]
-                            st.markdown("**301 redirect (paste in Magento URL Rewrite Management):**")
-                            for l in losers[:5]:
-                                st.code(f"{l}  →  {winner}", language="text")
-                            if tk == "duplicate_categories":
-                                st.info("After redirect: move all products from loser category to winner category in Magento → Catalog → Categories.")
+                            # Filter out pages that should NOT be redirected
+                            skip_patterns = ["/rea/", "/rea-", "/sale/", "/outlet/", "/kampanj/"]
+                            real_losers = []
+                            skipped_losers = []
+                            for l in losers:
+                                l_path = l.lower()
+                                if any(sp in l_path for sp in skip_patterns):
+                                    skipped_losers.append(l)
+                                else:
+                                    real_losers.append(l)
+
+                            if skipped_losers:
+                                st.warning(
+                                    f"**{len(skipped_losers)} page(s) skipped from redirect** — "
+                                    f"these are sale/rea pages that serve a different purpose:\n"
+                                    + "\n".join(f"- `{s}` (keep — differentiate meta instead)" for s in skipped_losers)
+                                )
+
+                            if real_losers:
+                                st.markdown("**301 redirect (paste in Magento URL Rewrite Management):**")
+                                for l in real_losers[:5]:
+                                    st.code(f"{l}  →  {winner}", language="text")
+                                if tk == "duplicate_categories":
+                                    st.info("After redirect: move all products from loser category to winner category in Magento → Catalog → Categories.")
 
     # ── TAB 2: CREATE ─────────────────────────────────────────
     with tab2:
