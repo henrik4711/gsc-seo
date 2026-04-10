@@ -1208,6 +1208,69 @@ def render():
                 st.success(f"Re-classified {changed}/{len(results)} pages")
                 st.rerun()
 
+        # Fix editorial text separation on existing data (no re-scrape needed)
+        col1, col2 = st.columns([3, 1])
+        missing_editorial = sum(1 for r in st.session_state.get("audit_results", [])
+                                if not r.get("intro_text") and not r.get("bottom_text") and r.get("word_count", 0) > 100)
+        with col1:
+            st.markdown(
+                f"<div style='font-size:0.85rem; color:#9b9bb8;'>"
+                f"<strong>Fix editorial text ({missing_editorial} pages missing)</strong><br>"
+                f"Separates intro + bottom text from product grid in existing audit data. "
+                f"No re-scrape needed — parses stored body_text to extract editorial content only.</div>",
+                unsafe_allow_html=True,
+            )
+        with col2:
+            if st.button("Fix editorial", key="rp_fix_editorial", use_container_width=True):
+                import re as _re
+                results = st.session_state["audit_results"]
+                fixed = 0
+                for r in results:
+                    if r.get("intro_text") or r.get("bottom_text"):
+                        continue  # already has editorial separation
+                    body = r.get("body_text", "")
+                    if not body or len(body) < 100:
+                        continue
+
+                    # Split body at price/product patterns
+                    # Product grid lines typically contain: "XXX kr", "Rea", "Köp", repeated price patterns
+                    lines = body.split(". ")
+                    intro_lines = []
+                    bottom_lines = []
+                    found_grid = False
+
+                    for line in lines:
+                        line_stripped = line.strip()
+                        if not line_stripped:
+                            continue
+                        # Detect product grid content: price patterns, short fragments
+                        has_price = bool(_re.search(r'\d+\s*kr|\d+:-|rea\s|pris:', line_stripped.lower()))
+                        is_short_fragment = len(line_stripped.split()) < 8
+                        if has_price and is_short_fragment:
+                            found_grid = True
+                            continue  # skip product grid content
+                        if not found_grid:
+                            intro_lines.append(line_stripped)
+                        else:
+                            # After grid: only keep substantial paragraphs (not more price fragments)
+                            if len(line_stripped.split()) >= 10 and not has_price:
+                                bottom_lines.append(line_stripped)
+
+                    intro = ". ".join(intro_lines).strip()
+                    bottom = ". ".join(bottom_lines).strip()
+
+                    if intro or bottom:
+                        r["intro_text"] = intro[:3000]
+                        r["intro_word_count"] = len(intro.split()) if intro else 0
+                        r["bottom_text"] = bottom[:3000]
+                        r["bottom_word_count"] = len(bottom.split()) if bottom else 0
+                        r["total_editorial_words"] = r["intro_word_count"] + r["bottom_word_count"]
+                        fixed += 1
+
+                save_key("audit_results")
+                st.success(f"Fixed editorial text on {fixed} pages. Run Step 7 + Step 8 to see corrected quality scores.")
+                st.rerun()
+
         # Re-scrape + re-classify category pages (picks up new HTML signals)
         col1, col2 = st.columns([3, 1])
         category_pages = [r for r in st.session_state.get("audit_results", []) if r.get("page_type") == "category"]
