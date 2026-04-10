@@ -1312,6 +1312,38 @@ def render():
                     with st.expander(f"Diagnostic log ({len(log_lines)} entries)", expanded=True):
                         st.code("\n".join(log_lines[:50]), language="text")
 
+        # Reset + re-run ALL quality checks (with new detection rules)
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            # Count existing quality checks
+            existing_quality = sum(1 for k in st.session_state if k.startswith("_quality_"))
+            st.markdown(
+                f"<div style='font-size:0.85rem; color:#9b9bb8;'>"
+                f"<strong>Reset + re-run ALL quality checks ({existing_quality} existing)</strong><br>"
+                f"Clears all cached quality scores and re-evaluates every page with latest "
+                f"detection rules (keyword stuffing, generic text, E-E-A-T). "
+                f"Then automatically re-runs Step 5 (Cannibalization) so all data is fresh.</div>",
+                unsafe_allow_html=True,
+            )
+        with col2:
+            if st.button("Reset & re-run", key="rp_reset_quality", use_container_width=True):
+                # 1. Delete all cached quality scores
+                keys_to_delete = [k for k in st.session_state if k.startswith("_quality_")]
+                for k in keys_to_delete:
+                    del st.session_state[k]
+                # Also delete from disk
+                import os
+                from utils.persistence import AI_CACHE_DIR
+                if os.path.isdir(AI_CACHE_DIR):
+                    for f in os.listdir(AI_CACHE_DIR):
+                        if f.startswith("_quality_"):
+                            try:
+                                os.remove(os.path.join(AI_CACHE_DIR, f))
+                            except Exception:
+                                pass
+                st.success(f"Cleared {len(keys_to_delete)} quality scores. Now run Step 8 (click Run button above) to re-evaluate with new rules, then Step 5 for cannibalization.")
+                st.rerun()
+
     # ── Export pipeline state ────────────────────────────────
     st.markdown("---")
     st.markdown("### 📋 Export pipeline state")
