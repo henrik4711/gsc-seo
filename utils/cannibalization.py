@@ -391,6 +391,27 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                         f"`{short}`: only {p_wc} words — needs more targeted content"
                     )
 
+                # Check 3: keyword stuffing (same 2-3 word phrase >5 times)
+                if p_body and p_wc > 100:
+                    from collections import Counter
+                    words = p_body.split()
+                    bigrams = [f"{words[j]} {words[j+1]}" for j in range(len(words)-1)]
+                    bigram_counts = Counter(bigrams).most_common(3)
+                    for phrase, count in bigram_counts:
+                        if count >= 6 and len(phrase) > 5:
+                            content_issues.append(
+                                f"`{short}`: **keyword stuffing** — '{phrase}' repeated {count} times"
+                            )
+                            break
+
+                # Check 4: no real product/brand references on category pages
+                if p_audit.get("page_type") == "category" and p_wc > 200:
+                    has_specifics = any(term in p_body for term in [" kr", ":-", "pris", "modell", "märke", "brand"])
+                    if not has_specifics:
+                        content_issues.append(
+                            f"`{short}`: **generic text** — no product names, prices, or brand mentions"
+                        )
+
                 # Check 3: does this page link to the OTHER competing pages?
                 p_outbound = set()
                 p_internal_links = p_audit.get("internal_links") or []

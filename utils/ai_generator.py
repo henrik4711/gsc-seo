@@ -305,6 +305,56 @@ def assess_content_quality_batch(
     page_sections = []
     for i, p in enumerate(pages):
         body = _clean_body_text(p, 800)
+        full_body = (p.get("body_text") or "").lower()
+
+        # ── Deterministic content quality checks (no AI needed) ──
+        auto_flags = []
+        word_count = p.get("word_count", 0)
+
+        # 1. Keyword stuffing: any 2-3 word phrase repeated >5 times
+        if full_body and word_count > 100:
+            from collections import Counter
+            words = full_body.split()
+            bigrams = [f"{words[j]} {words[j+1]}" for j in range(len(words)-1)]
+            trigrams = [f"{words[j]} {words[j+1]} {words[j+2]}" for j in range(len(words)-2)]
+            bigram_counts = Counter(bigrams).most_common(5)
+            trigram_counts = Counter(trigrams).most_common(5)
+            stuffed = []
+            for phrase, count in bigram_counts + trigram_counts:
+                # Skip very common/generic phrases
+                if count >= 6 and len(phrase) > 5:
+                    stuffed.append(f"'{phrase}' x{count}")
+            if stuffed:
+                auto_flags.append(f"KEYWORD STUFFING: {', '.join(stuffed[:3])}")
+
+        # 2. No product/brand mentions on category pages
+        if p.get("page_type") == "category" and word_count > 200:
+            # Check for brand names, product names, prices
+            has_brand = any(b in full_body for b in ["fleshlight", "satisfyer", "tenga", "womanizer", "lovense", "we-vibe", "lelo"])
+            has_price = any(p_word in full_body for p_word in [" kr", ":-", "pris"])
+            if not has_brand and not has_price:
+                auto_flags.append("NO PRODUCT/BRAND/PRICE mentions — generic text without real product references")
+
+        # 3. Repetitive sentence structure (many sentences start the same way)
+        if full_body and word_count > 200:
+            sentences = [s.strip() for s in full_body.replace(".", ".\n").split("\n") if len(s.strip()) > 20]
+            if len(sentences) >= 5:
+                starts = [s[:20] for s in sentences]
+                start_counts = Counter(starts)
+                repetitive = [(s, c) for s, c in start_counts.most_common(3) if c >= 4]
+                if repetitive:
+                    auto_flags.append(f"REPETITIVE STRUCTURE: {repetitive[0][1]} sentences start with '{repetitive[0][0][:15]}...'")
+
+        # 4. Very high word count but low information density (filler text)
+        if word_count > 1000:
+            unique_words = len(set(full_body.split()))
+            ratio = unique_words / max(word_count, 1)
+            if ratio < 0.25:
+                auto_flags.append(f"LOW VOCABULARY DIVERSITY: {unique_words} unique words in {word_count} total ({ratio:.0%}) — likely filler/repetitive content")
+
+        auto_flags_text = ""
+        if auto_flags:
+            auto_flags_text = "⚠️ AUTO-DETECTED ISSUES:\n" + "\n".join(f"- {f}" for f in auto_flags) + "\n"
 
         # Get cluster context for this page
         cluster_info = ""
@@ -338,6 +388,7 @@ def assess_content_quality_batch(
             f"Internal links: {link_count}\n"
             f"Impressions: {p.get('impressions', 0):,}\n"
             f"{cluster_info}"
+            f"{auto_flags_text}"
             f"Target keywords: {', '.join(p.get('target_keywords', [])[:5])}\n"
             f"Text sample:\n{body}\n"
         )
