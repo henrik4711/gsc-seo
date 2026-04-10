@@ -506,12 +506,40 @@ REQUIRED STYLE:
 7. For /rea/ sale pages: describe the CATEGORY of products on sale and WHY
    they're good value, NOT specific sale items or rotating discounts
 
+## FAQ FORMAT
+The FAQ in bottom_html must use visible HTML markup like this:
+<h2>Vanliga frågor</h2>
+<div itemscope itemtype="https://schema.org/FAQPage">
+  <div itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+    <h3 itemprop="name">Question here?</h3>
+    <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+      <p itemprop="text">Answer here.</p>
+    </div>
+  </div>
+</div>
+
+ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
+
 ## OUTPUT (JSON):
 {{
-    "top_html": "<p>Short intro text above product grid...</p>",
+    "top_html": "<p>Intro text above product grid...</p>",
     "top_word_count": 0,
-    "bottom_html": "<h2>heading</h2><p>longer text below products...</p>",
+    "bottom_html": "<h2>heading</h2><p>text...</p><h2>Vanliga frågor</h2><div itemscope itemtype='https://schema.org/FAQPage'>...</div>",
     "bottom_word_count": 0,
+    "faq_schema": {{
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+            {{
+                "@type": "Question",
+                "name": "question?",
+                "acceptedAnswer": {{
+                    "@type": "Answer",
+                    "text": "answer"
+                }}
+            }}
+        ]
+    }},
     "target_keyword": "{query}",
     "internal_links": [{{"anchor": "text", "url": "/path"}}],
     "issues_fixed": ["which issues from the list above were fixed"]
@@ -519,7 +547,7 @@ REQUIRED STYLE:
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=4000,
+        max_tokens=6000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -1087,13 +1115,29 @@ def render():
                                             key=f"ta_bottom_{rewrite_key}",
                                         )
 
+                                    # FAQ Schema (JSON-LD for Google rich results)
+                                    faq_schema = rw.get("faq_schema")
+                                    if isinstance(faq_schema, dict) and faq_schema.get("mainEntity"):
+                                        import json as _json
+                                        schema_script = f'<script type="application/ld+json">\n{_json.dumps(faq_schema, ensure_ascii=False, indent=2)}\n</script>'
+                                        st.markdown("**📌 FAQ SCHEMA** (paste in Magento → Category → Custom Layout Update, or in page HTML head)")
+                                        st.text_area(
+                                            "FAQ JSON-LD schema (select all + copy)",
+                                            value=schema_script,
+                                            height=150,
+                                            key=f"ta_schema_{rewrite_key}",
+                                        )
+
                                     fixed = rw.get("issues_fixed", [])
                                     if fixed:
                                         st.caption("Issues fixed: " + " · ".join(fixed))
 
+                                    # Download all (top + bottom + schema)
                                     combined = (top_html or "") + "\n\n<!-- PRODUCT GRID -->\n\n" + (bottom_html or "")
+                                    if isinstance(faq_schema, dict) and faq_schema.get("mainEntity"):
+                                        combined += "\n\n" + schema_script
                                     st.download_button(
-                                        f"⬇ Download both texts",
+                                        f"⬇ Download all (top + bottom + schema)",
                                         data=combined,
                                         file_name=f"{p_url.split('/')[-1] or 'page'}_rewrite.html",
                                         mime="text/html",
