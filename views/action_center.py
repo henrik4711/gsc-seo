@@ -10,23 +10,34 @@ from utils.ui_helpers import stable_hash, normalize_url
 
 
 def _get_page_actions(audit_results, top_n=100):
-    """Build action list per page, sorted by lost clicks."""
+    """Build action list per page, sorted by brand-filtered lost clicks."""
+    from utils.page_profile import build_page_profile
     pages = []
     for r in audit_results:
         if not r.get("url"):
             continue
+        # Use brand-filtered lost_clicks from ctr_gaps (via page profile)
+        # instead of raw lost_clicks_estimate which includes brand queries
+        profile = build_page_profile(r["url"])
+        filtered_lost = sum(g.get("lost_clicks", 0) for g in profile.get("ctr_gaps", []))
         pages.append({
             "url": r["url"],
             "page_type": r.get("page_type", "unknown"),
-            "impressions": r.get("impressions", 0),
-            "lost_clicks": r.get("lost_clicks_estimate", 0),
+            "impressions": profile.get("total_impressions", 0),
+            "lost_clicks": filtered_lost,
             "meta_score": r.get("meta_score"),
             "content_score": r.get("content_score"),
             "title": r.get("title", ""),
             "word_count": r.get("word_count", 0),
             "audit": r,
+            "quality_verdict": profile.get("quality_verdict"),
+            "has_old_text": bool(st.session_state.get(f"_bottom_text_{stable_hash(r['url'])}")),
         })
-    pages.sort(key=lambda p: -p["lost_clicks"])
+    # Sort: REWRITE pages boosted, then by lost clicks
+    for p in pages:
+        boost = 1.3 if p["quality_verdict"] == "REWRITE" else 1.1 if p["quality_verdict"] == "IMPROVE" else 1.0
+        p["_sort_score"] = p["lost_clicks"] * boost
+    pages.sort(key=lambda p: -p["_sort_score"])
     return pages[:top_n]
 
 
@@ -140,10 +151,13 @@ def _action_card(page, idx):
         # Show generated text if available
         if has_text:
             bt = st.session_state[text_key]
+            # Check if text was generated with old rules (no top/bottom split, no FAQ schema)
+            has_new_format = bt.get("top_html") or bt.get("bottom_html") or bt.get("faq_schema")
+            if not has_new_format and bt.get("html"):
+                st.warning("⚠ Text generated with old rules — regenerate in **Site Cleanup → Merge tab** for improved text with FAQ schema, product images, correct links, and no prices.")
             html = bt.get("html", "")
             if html:
                 st.markdown("**Generated text preview:**")
-                # Can't nest expander inside an expander — use a toggle instead
                 if st.toggle("Show HTML source", key=f"toggle_html_{url_hash}", value=False):
                     st.code(html[:2000] + ("..." if len(html) > 2000 else ""), language="html")
                 st.download_button(
