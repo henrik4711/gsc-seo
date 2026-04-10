@@ -582,9 +582,21 @@ REQUIRED STYLE:
 - If the cluster/pillar is about a specific product TYPE, write from experience
   with that type — not generic "there are many options" filler
 
+## LINK ANCHOR RULES (critical)
+Every internal link MUST have a UNIQUE anchor text that matches the TARGET page:
+- Link to /klassisk-dildo → anchor "klassisk dildo" (NOT just "dildo")
+- Link to /amor-black → anchor "Fun Factory Amor" (product name, NOT "dildo")
+- Link to /uppblasbar-dildo → anchor "uppblåsbar dildo" (specific variant)
+- Link to /rea/billig-pocket-pussy → anchor "billiga pocket pussy" (sale variant)
+NEVER use the same anchor text for different link targets.
+NEVER use just the generic primary keyword as anchor for sub-pages.
+Each anchor should help Google understand what the TARGET page is about.
+
 ## CONTENT RULES
 1. NO keyword stuffing — primary keyword max 2x in top, max 5-6x in bottom (natural use across 1000 words)
-2. Mention product NAMES and BRANDS — but NEVER specific prices (they change)
+2. Mention product NAMES and BRANDS — but NEVER specific prices (they change).
+   This includes FAQ answers — do NOT mention price ranges like "1000-3000 kr".
+   Instead say "priserna varierar beroende på funktioner och kvalitet".
 3. MUST be EVERGREEN — relevant regardless of which products are currently shown
 4. MUST be DIFFERENT from competing pages
 5. E-E-A-T: real product knowledge, material comparisons, honest recommendations
