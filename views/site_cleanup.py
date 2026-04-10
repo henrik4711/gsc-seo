@@ -368,7 +368,31 @@ def _generate_cannibal_rewrite(page_url: str, query: str, issues: list, context:
                             related_pages.append(
                                 f"  - {cp_url} \"{(cp_audit.get('title') or cp_url.split('/')[-1])[:50]}\""
                             )
+    # Also add the CANNIBALIZED page specifically with ideal anchor = the query
+    cannibal_link_instruction = ""
+    for cp_line in competing_pages:
+        if normalize_url(page_url) not in cp_line:
+            # This is a competing page — we should link TO it with the query as anchor
+            cp_url = cp_line.strip().split(" ")[1] if len(cp_line.strip().split(" ")) > 1 else ""
+            if cp_url:
+                cannibal_link_instruction += f"\n  - MUST LINK: <a href=\"{cp_url}\">{query}</a> (anchor = the cannibalized query)"
+
+    # Add suggested anchors based on GSC queries for related pages
+    for i, rp in enumerate(related_pages):
+        # Extract URL from the line
+        rp_url = rp.strip().split(" ")[1].strip('"') if len(rp.strip().split(" ")) > 1 else ""
+        if rp_url:
+            rp_norm = normalize_url(rp_url)
+            # Find top GSC query for this related page to use as anchor
+            if gsc_data is not None and hasattr(gsc_data, "groupby"):
+                rp_gsc = gsc_data[gsc_data["page"].apply(normalize_url) == rp_norm]
+                if not rp_gsc.empty:
+                    top_query = rp_gsc.sort_values("impressions", ascending=False).iloc[0]["query"]
+                    related_pages[i] = f"{rp} → suggested anchor: \"{top_query}\""
+
     related_text = "\n".join(related_pages[:10]) if related_pages else "No cluster-related pages found"
+    if cannibal_link_instruction:
+        related_text += "\n\n**CRITICAL LINKS (must include):**" + cannibal_link_instruction
 
     # 4. Top GSC queries for this page — so AI targets the RIGHT keywords
     gsc_data = st.session_state.get("gsc_data")
