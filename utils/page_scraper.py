@@ -371,6 +371,37 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         result["body_text"] = body_text[:8000]
         result["word_count"] = len(body_text.split())
 
+        # ── Editorial text separation (intro + bottom, excluding product grid)
+        # Same logic as deep_scrape_category: split text at product grid boundary.
+        # Paragraphs BEFORE product elements = intro_text (top)
+        # Paragraphs AFTER product elements = bottom_text (footer)
+        all_paragraphs = main_content.find_all(["p", "div", "h2", "h3"], recursive=True)
+        intro_parts = []
+        bottom_parts = []
+        found_products = False
+
+        for p_tag in all_paragraphs:
+            text = p_tag.get_text(strip=True)
+            if len(text) < 15:
+                continue
+            # Skip elements inside product cards/grid
+            if p_tag.find_parent(attrs={"class": re.compile(r"product|card|grid|item|price|swiper", re.I)}):
+                found_products = True
+                continue
+            # Skip navigation, menus, footer
+            if p_tag.find_parent(["nav", "footer", "header"]):
+                continue
+            if not found_products:
+                intro_parts.append(text)
+            else:
+                bottom_parts.append(text)
+
+        result["intro_text"] = " ".join(intro_parts)[:3000]
+        result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
+        result["bottom_text"] = " ".join(bottom_parts)[:3000]
+        result["bottom_word_count"] = len(result["bottom_text"].split()) if result["bottom_text"] else 0
+        result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
+
     # ── Links: extract from content area ──────────────────────
     link_soup = BeautifulSoup(html, "html.parser")
     content_for_links = (
