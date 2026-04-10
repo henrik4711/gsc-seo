@@ -318,6 +318,89 @@ def _generate_cannibal_rewrite(page_url: str, query: str, issues: list, context:
 
     issues_text = "\n".join(f"- {i}" for i in issues) if issues else "No specific issues listed"
 
+    # ── Gather REAL data to pass to AI ────────────────────────
+
+    # 1. Competing pages (from cannibalization) — so AI knows what to differentiate from
+    competing_pages = []
+    cannibal_df = st.session_state.get("cannibalization")
+    if cannibal_df is not None and not cannibal_df.empty:
+        for _, crow in cannibal_df.iterrows():
+            if crow.get("query", "").lower() == query.lower():
+                for cp in crow.get("pages_detail", []):
+                    if normalize_url(cp.get("page", "")) != normalize_url(page_url):
+                        cp_audit = audit_by_url.get(normalize_url(cp["page"]), {})
+                        competing_pages.append(
+                            f"  - {cp['page']} (pos {cp.get('position','?')}, {cp.get('clicks',0)} clicks) "
+                            f"title: \"{(cp_audit.get('title') or '')[:60]}\""
+                        )
+                break
+    competing_text = "\n".join(competing_pages[:5]) if competing_pages else "None found"
+
+    # 2. Current internal links FROM this page — so AI knows what already exists
+    current_links = page_data.get("internal_links") or []
+    existing_links_text = ""
+    if isinstance(current_links, list) and current_links:
+        link_items = []
+        for lnk in current_links[:10]:
+            if isinstance(lnk, dict):
+                link_items.append(f"  - \"{lnk.get('anchor', '')}\" → {lnk.get('url', '')}")
+            else:
+                link_items.append(f"  - {lnk}")
+        existing_links_text = "\n".join(link_items)
+    if not existing_links_text:
+        existing_links_text = "NO internal links found on this page"
+
+    # 3. Related pages AI SHOULD link to — from topic_clusters + audit
+    related_pages = []
+    topic_clusters = st.session_state.get("topic_clusters", {})
+    page_topics = topic_clusters.get("page_topics", {}) if isinstance(topic_clusters, dict) else {}
+    my_topics = page_topics.get(normalize_url(page_url), [])
+    if isinstance(my_topics, list):
+        for t in my_topics:
+            topic_name = t.get("topic", "") if isinstance(t, dict) else ""
+            # Find other pages in same cluster
+            for cluster in topic_clusters.get("clusters", []):
+                if cluster.get("topic") == topic_name:
+                    for cp in cluster.get("pages", []):
+                        cp_url = cp.get("page", "")
+                        if normalize_url(cp_url) != normalize_url(page_url):
+                            cp_audit = audit_by_url.get(normalize_url(cp_url), {})
+                            related_pages.append(
+                                f"  - {cp_url} \"{(cp_audit.get('title') or cp_url.split('/')[-1])[:50]}\""
+                            )
+    related_text = "\n".join(related_pages[:10]) if related_pages else "No cluster-related pages found"
+
+    # 4. Top GSC queries for this page — so AI targets the RIGHT keywords
+    gsc_data = st.session_state.get("gsc_data")
+    gsc_queries_text = ""
+    if gsc_data is not None and hasattr(gsc_data, "groupby"):
+        page_gsc = gsc_data[gsc_data["page"].apply(normalize_url) == normalize_url(page_url)]
+        if not page_gsc.empty:
+            top_q = page_gsc.sort_values("impressions", ascending=False).head(10)
+            gsc_lines = []
+            for _, qr in top_q.iterrows():
+                gsc_lines.append(
+                    f"  - \"{qr['query']}\" ({int(qr['impressions'])} impr, {int(qr['clicks'])} clicks, pos {qr['position']:.1f})"
+                )
+            gsc_queries_text = "\n".join(gsc_lines)
+    if not gsc_queries_text:
+        gsc_queries_text = f"  - \"{query}\" (primary target)"
+
+    # 5. Products on this page (from audit) — so AI can reference real products
+    products_text = ""
+    content_audit = page_data.get("content_audit") or {}
+    product_data = content_audit.get("products") or page_data.get("products") or []
+    if isinstance(product_data, list) and product_data:
+        prod_lines = []
+        for prod in product_data[:8]:
+            if isinstance(prod, dict):
+                prod_lines.append(
+                    f"  - {prod.get('name', '?')} — {prod.get('price', '?')} — {prod.get('url', '')}"
+                )
+        products_text = "\n".join(prod_lines)
+    if not products_text:
+        products_text = "No product data available — use generic product references from the store"
+
     prompt = f"""{ANTI_HALLUCINATION_RULES}
 
 You are rewriting the BODY TEXT for an e-commerce page. The current text has quality
@@ -336,23 +419,36 @@ Site context: {site_context}
 ## DETECTED ISSUES (MUST ALL BE FIXED)
 {issues_text}
 
-## CONTEXT FROM CANNIBALIZATION ANALYSIS
-{context[:1000] if context else 'N/A'}
+## COMPETING PAGES (differentiate your text from these)
+{competing_text}
 
-## CURRENT TEXT (first 2000 chars — this is what needs rewriting)
+## GSC QUERIES THIS PAGE SHOULD TARGET
+{gsc_queries_text}
+
+## CURRENT INTERNAL LINKS ON THIS PAGE
+{existing_links_text}
+
+## RELATED PAGES TO LINK TO (from topic cluster)
+{related_text}
+
+## REAL PRODUCTS ON THIS PAGE (use these, don't invent)
+{products_text}
+
+## CURRENT TEXT (this is what needs rewriting)
 {current_body[:2000]}
 
 ## REQUIREMENTS FOR THE NEW TEXT
 1. NO keyword stuffing — use the target keyword naturally, max 3-4 times in 500 words
-2. MUST mention real product names, brands, or features from the store
-3. MUST include at least one internal link suggestion (anchor text + target URL)
-4. E-E-A-T: write as a knowledgeable store, not generic AI text
-5. Include 2-3 practical tips that show real expertise
-6. If category page: mention 2-3 specific products with their actual features
-7. Keep between 300-600 words (quality over quantity)
-8. Structure with 2-3 H2 headings
-9. End with a short FAQ (2-3 questions) if relevant
-10. Language: {language}
+2. MUST reference real products from the PRODUCTS list above (names, features, prices)
+3. MUST include internal links to RELATED PAGES listed above — use <a href="URL">anchor</a> in the HTML
+4. MUST target the GSC QUERIES listed above — work them naturally into headings and text
+5. MUST be DIFFERENT from competing pages — don't repeat their angle
+6. E-E-A-T: write as a knowledgeable store with real product experience
+7. Include 2-3 practical tips showing real expertise (not generic advice)
+8. Keep between 300-600 words (quality over quantity)
+9. Structure with 2-3 H2 headings
+10. End with a short FAQ (2-3 questions targeting the lower-volume GSC queries)
+11. Language: {language}
 
 ## OUTPUT (JSON):
 {{
