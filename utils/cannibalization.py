@@ -352,6 +352,9 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
 
             all_conflict_urls = [_nu(p["page"]) for p in pages_detail]
 
+            quality_issues = []
+            from utils.ui_helpers import stable_hash as _sh
+
             for p in pages_detail:
                 p_url = p["page"]
                 p_norm = _nu(p_url)
@@ -359,6 +362,22 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                 p_body = (p_audit.get("body_text") or "").lower()
                 p_wc = p_audit.get("word_count", 0)
                 short = p_url.split("/")[-1][:30]
+
+                # Check 0: AI quality verdict (E-E-A-T, relevance, depth)
+                q_key = f"_quality_{_sh(p_url)}"
+                q_data = _st.session_state.get(q_key, {})
+                if isinstance(q_data, dict) and q_data.get("verdict"):
+                    verdict = q_data.get("verdict", "")
+                    score = q_data.get("score", 0)
+                    summary = q_data.get("summary", "")
+                    if verdict == "REWRITE":
+                        quality_issues.append(
+                            f"🔴 `{short}`: **REWRITE** ({score}/10) — {summary[:100]}"
+                        )
+                    elif verdict == "IMPROVE" and score <= 5:
+                        quality_issues.append(
+                            f"🟡 `{short}`: **IMPROVE** ({score}/10) — {summary[:100]}"
+                        )
 
                 # Check 1: does query appear in body text?
                 if query.lower() not in p_body and p_wc > 0:
@@ -404,8 +423,13 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                 for p in pages_detail[:5]
             ))
 
+            if quality_issues:
+                parts.append(f"\n\n📊 **Content quality (E-E-A-T) issues ({len(quality_issues)}):**")
+                for qi in quality_issues[:5]:
+                    parts.append(f"- {qi}")
+
             if content_issues:
-                parts.append(f"\n\n⚠️ **Content issues ({len(content_issues)}):**")
+                parts.append(f"\n\n⚠️ **Keyword targeting issues ({len(content_issues)}):**")
                 for ci in content_issues[:5]:
                     parts.append(f"- {ci}")
 
@@ -414,8 +438,8 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                 for li in linking_issues[:5]:
                     parts.append(f"- {li}")
 
-            if not content_issues and not linking_issues:
-                parts.append("\n\n✅ Content is targeted and pages are interlinked. **Monitor only.**")
+            if not content_issues and not linking_issues and not quality_issues:
+                parts.append("\n\n✅ Content is targeted, quality is good, and pages are interlinked. **Monitor only.**")
                 cannibal_type["fully_resolved"] = True
             else:
                 parts.append("\n\nClick **Generate meta** below for AI content recommendations.")
