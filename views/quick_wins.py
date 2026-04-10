@@ -44,11 +44,15 @@ def _get_top_pages(audit_results, top_n=20):
         if normalize_url(r["url"]) in excluded_urls:
             excluded_count += 1
             continue
+        # Use brand-filtered lost clicks from page profile
+        from utils.page_profile import build_page_profile as _bpp_qw
+        _prof = _bpp_qw(r["url"])
+        _filtered_lost = sum(g.get("lost_clicks", 0) for g in _prof.get("ctr_gaps", []))
         pages.append({
             "url": r["url"],
             "page_type": r.get("page_type", "unknown"),
-            "impressions": r.get("impressions", 0),
-            "lost_clicks": r.get("lost_clicks_estimate", 0),
+            "impressions": _prof.get("total_impressions", 0),
+            "lost_clicks": _filtered_lost,
             "meta_score": r.get("meta_score") or 0,
             "content_score": r.get("content_score") or 0,
             "title": r.get("title", ""),
@@ -998,8 +1002,12 @@ def render():
             )
 
             text_data = st.session_state[text_key]
-            html = text_data.get("html", "")
-            wc = text_data.get("word_count", 0)
+            # Check if generated with new rules (top/bottom split + FAQ schema)
+            has_new_format = text_data.get("top_html") or text_data.get("bottom_html") or text_data.get("faq_schema")
+            if not has_new_format and text_data.get("html"):
+                st.warning("⚠ Text generated with old rules. Click **Regenerate** below for improved text with FAQ schema, product images, hierarchy links, and no prices.")
+            html = text_data.get("bottom_html") or text_data.get("html", "")
+            wc = text_data.get("bottom_word_count") or text_data.get("word_count", 0)
             kws = text_data.get("keywords_integrated", [])
             links = text_data.get("internal_links_added", [])
             prods = text_data.get("products_featured", [])
@@ -1088,15 +1096,41 @@ def render():
             if new_title and new_title != page['title']:
                 st.markdown(f"**New title:** `{new_title}` ({len(new_title)} chars)")
             else:
-                st.markdown(f"<span style='color:#ffaa33;'>AI did not generate a new title — please write one manually</span>", unsafe_allow_html=True)
+                # Generate meta via AI instead of asking user to write manually
+                meta_key = f"_cannibal_meta_{stable_hash(page['url'])}"
+                if meta_key in st.session_state:
+                    cached_meta = st.session_state[meta_key]
+                    if isinstance(cached_meta, dict):
+                        variants = cached_meta.get("variants", [])
+                        if variants:
+                            st.markdown(f"**Suggested title:** `{variants[0].get('title', '')}` ({len(variants[0].get('title', ''))} chars)")
+                if meta_key not in st.session_state:
+                    if st.button("🤖 Generate meta title + description", key=f"gen_meta_{stable_hash(page['url'])}"):
+                        try:
+                            from utils.ai_generator import get_client, generate_meta_suggestions
+                            from config import get_anthropic_key
+                            client = get_client(get_anthropic_key())
+                            profile = build_page_profile(page["url"])
+                            target_kws = [q["query"] for q in profile.get("gsc_queries", [])[:5]]
+                            result = generate_meta_suggestions(client, page["audit"], target_kws,
+                                st.session_state.get("site_context", ""),
+                                st.session_state.get("content_language", "Swedish"))
+                            st.session_state[meta_key] = result
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
 
             # Description
             d_status = "⚠ TOO LONG" if desc_too_long else "⚠ TOO SHORT" if desc_too_short else "✓ OK"
             st.markdown(f"**Current description:** `{(page['meta_description'] or '')[:100]}...` ({len(page['meta_description'] or '')} chars) {d_status}")
             if new_desc and new_desc != page['meta_description']:
                 st.markdown(f"**New description:** `{new_desc}` ({len(new_desc)} chars)")
-            else:
-                st.markdown(f"<span style='color:#ffaa33;'>AI did not generate a new description — please write one manually</span>", unsafe_allow_html=True)
+            elif meta_key in st.session_state:
+                cached_meta = st.session_state.get(meta_key, {})
+                if isinstance(cached_meta, dict):
+                    variants = cached_meta.get("variants", [])
+                    if variants:
+                        st.markdown(f"**Suggested description:** `{variants[0].get('description', '')}` ({len(variants[0].get('description', ''))} chars)")
 
             if new_title and new_desc and (new_title != page['title'] or new_desc != page['meta_description']):
                 st.code(f"Title: {new_title}\nDescription: {new_desc}", language="text")

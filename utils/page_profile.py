@@ -264,16 +264,15 @@ def build_page_profile(url: str) -> dict:
                     for p in pages_detail if isinstance(p, dict)
                 ]
                 if norm in page_urls_in_row:
-                    # Find this page's entry to check if winner
-                    is_winner = False
+                    # Check if this page is the recommended winner
+                    recommended_winner = normalize_url(str(crow.get("recommended_winner", "")))
+                    is_winner = (norm == recommended_winner)
                     competing = []
                     for p in pages_detail:
                         if not isinstance(p, dict):
                             continue
                         p_norm = normalize_url(p.get("page", ""))
-                        if p_norm == norm:
-                            is_winner = bool(p.get("is_winner", False))
-                        else:
+                        if p_norm != norm:
                             competing.append(p_norm)
                     profile["cannibalization"].append({
                         "query": crow.get("query", ""),
