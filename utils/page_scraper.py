@@ -62,9 +62,11 @@ def _get_browser():
             args=[
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
+                "--disable-setuid-sandbox",
                 "--disable-gpu",
                 "--disable-software-rasterizer",
-                "--single-process",
+                "--disable-extensions",
+                "--disable-background-networking",
             ],
         )
         # Reset fail count on successful launch
@@ -183,7 +185,9 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
         # If browser crashed, force restart and retry once
         if "closed" in str(e).lower() or "crashed" in str(e).lower() or "target" in str(e).lower():
             global _browser
-            print(f"[scraper] Browser crash on {url}, restarting and retrying...")
+            import traceback
+            print(f"[scraper] Browser crash on {url}: {type(e).__name__}: {e}")
+            print(f"[scraper] Traceback: {traceback.format_exc()}")
             _browser = None
             browser = _get_browser()
             if browser:
@@ -206,6 +210,7 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
                     # Jump to parsing (duplicated to avoid goto)
                     return _parse_html(result, soup, html, url)
                 except Exception as e2:
+                    print(f"[scraper] Retry also failed on {url}: {type(e2).__name__}: {e2}")
                     result["error"] = f"Retry also failed: {e2}"
                     try:
                         page.close()
@@ -213,6 +218,7 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
                         pass
                     return result
         result["error"] = str(e)
+        print(f"[scraper] Non-crash error on {url}: {type(e).__name__}: {e}")
         return result
 
     # Parse rendered HTML

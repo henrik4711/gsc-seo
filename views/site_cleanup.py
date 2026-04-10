@@ -1181,6 +1181,21 @@ def render():
                                 from utils.page_profile import build_page_profile as _bpp
                                 if _bpp(rp.get("page", "")).get("page_type") == "product":
                                     continue
+                                # Different-purpose detection: loser serves a more specific intent
+                                _w_segs = [s for s in _winner_p.split("/") if s]
+                                _l_segs = [s for s in rp_path.split("/") if s]
+                                _deeper = len(_l_segs) > len(_w_segs)
+                                # Get winner title from pages list
+                                _wt = next((pp.get("title", "") for pp in pages if normalize_url(pp.get("page", "")) == normalize_url(winner)), "") or ""
+                                _w_title_words = set(_wt.lower().split())
+                                _l_title = rp.get("title", "") or ""
+                                _l_title_words = set(_l_title.lower().split())
+                                _has_extra_words = bool(_l_title_words - _w_title_words) if _w_title_words and _l_title_words else False
+                                _w_tree = _w_segs[0] if _w_segs else ""
+                                _l_tree = _l_segs[0] if _l_segs else ""
+                                _diff_tree = _w_tree != _l_tree and _w_tree and _l_tree
+                                if _deeper or _has_extra_words or _diff_tree:
+                                    continue  # different purpose — keep both
                                 redirect_losers_set.add(rp_norm)
 
                         for p in pages:
@@ -1315,6 +1330,24 @@ def render():
                                     l_profile = build_page_profile(l)
                                     if l_profile.get("page_type") == "product":
                                         skip_reason = "product page — keep, differentiate meta + ensure assigned to category"
+
+                                # Different-purpose detection: loser serves a more specific intent
+                                if not skip_reason:
+                                    _w_segs = [s for s in winner_url_path.split("/") if s]
+                                    _l_segs = [s for s in l_url_path.split("/") if s]
+                                    _deeper = len(_l_segs) > len(_w_segs)
+                                    # Get winner title from pages list
+                                    _wt = next((pp.get("title", "") for pp in pages if normalize_url(pp.get("page", "")) == normalize_url(winner)), "") or ""
+                                    _w_title_words = set(_wt.lower().split())
+                                    # Get loser title from pages list
+                                    _lt = next((pp.get("title", "") for pp in pages if normalize_url(pp.get("page", "")) == l_norm), "") or ""
+                                    _l_title_words = set(_lt.lower().split())
+                                    _has_extra_words = bool(_l_title_words - _w_title_words) if _w_title_words and _l_title_words else False
+                                    _w_tree = _w_segs[0] if _w_segs else ""
+                                    _l_tree = _l_segs[0] if _l_segs else ""
+                                    _diff_tree = _w_tree != _l_tree and _w_tree and _l_tree
+                                    if _deeper or _has_extra_words or _diff_tree:
+                                        skip_reason = "different purpose — keep both, differentiate meta + add cross-links"
 
                                 if skip_reason:
                                     skipped_losers.append((l, skip_reason))
