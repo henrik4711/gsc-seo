@@ -1025,9 +1025,25 @@ def render():
                                 rw = st.session_state[rewrite_key]
                                 if isinstance(rw, dict) and rw.get("html"):
                                     st.markdown(f"**✅ Rewritten text for `{p_short}`** ({rw.get('word_count', '?')} words):")
-                                    st.code(rw["html"][:3000], language="html")
+                                    # Preview: render HTML so user can see how it looks
+                                    st.markdown(
+                                        f"<div style='background:#1a1a2e; border:1px solid #2a2a40; border-radius:6px; padding:1rem; margin:0.5rem 0;'>{rw['html']}</div>",
+                                        unsafe_allow_html=True,
+                                    )
+                                    # Copyable HTML source in a tall text area
+                                    st.text_area(
+                                        "HTML source (select all + copy)",
+                                        value=rw["html"],
+                                        height=300,
+                                        key=f"ta_{rewrite_key}",
+                                    )
+                                    # Issues fixed
+                                    fixed = rw.get("issues_fixed", [])
+                                    if fixed:
+                                        st.caption("Issues fixed: " + " · ".join(fixed))
+                                    # Download
                                     st.download_button(
-                                        f"Download {p_short}.html",
+                                        f"⬇ Download {p_short}.html",
                                         data=rw["html"],
                                         file_name=f"{p_url.split('/')[-1] or 'page'}_rewrite.html",
                                         mime="text/html",
