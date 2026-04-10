@@ -257,6 +257,24 @@ section[data-testid="stSidebar"] .stMarkdown h3 {
     border-top-color: #5533ff !important;
 }
 
+/* ── Running indicator (top-right) — make visible on dark bg ── */
+[data-testid="stStatusWidget"],
+[data-testid="stStatusWidget"] * {
+    color: #5533ff !important;
+}
+[data-testid="stStatusWidget"] svg {
+    fill: #5533ff !important;
+    stroke: #5533ff !important;
+}
+[data-testid="stStatusWidget"] button {
+    color: #c8b4ff !important;
+    border-color: #5533ff !important;
+}
+/* The animated running figure */
+[data-testid="stStatusWidget"] [data-testid="stLogoSvg"] {
+    filter: brightness(3) !important;
+}
+
 /* ── Tooltip / help icons ───────────────────────────────── */
 [data-testid="stTooltipIcon"] svg {
     fill: #9b9bb8 !important;
