@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from config import init_from_env
 from utils.persistence import load_all, save_all, get_storage_info
@@ -8,6 +9,25 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ── Password protection ──────────────────────────────────────
+# Set APP_PASSWORD env var on Railway to enable.
+# Without it, the app is open (for local dev).
+_app_password = os.environ.get("APP_PASSWORD", "")
+if _app_password:
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
+
+    if not st.session_state["authenticated"]:
+        st.markdown("## 🔒 SEO Intelligence Platform")
+        pw = st.text_input("Password", type="password", key="login_pw")
+        if st.button("Login", type="primary"):
+            if pw == _app_password:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Wrong password")
+        st.stop()
 
 # Custom CSS - dark theme with high contrast text
 st.markdown("""
