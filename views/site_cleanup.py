@@ -445,16 +445,22 @@ Site context: {site_context}
 
 ## REQUIREMENTS FOR THE NEW TEXT
 1. NO keyword stuffing — use the target keyword naturally, max 3-4 times in 500 words
-2. MUST reference real products from the PRODUCTS list above (names, features, prices)
-3. MUST include internal links to RELATED PAGES listed above — use <a href="URL">anchor</a> in the HTML
+2. Mention product NAMES and BRANDS from the PRODUCTS list — but NEVER include specific prices.
+   Prices change constantly. The text must be EVERGREEN and stay relevant regardless of
+   which products are on sale or what prices change to.
+3. MUST include internal links to RELATED PAGES listed above — use <a href="URL">anchor</a> in the HTML.
+   Use the anchor text specified in the CRITICAL LINKS section.
 4. MUST target the GSC QUERIES listed above — work them naturally into headings and text
 5. MUST be DIFFERENT from competing pages — don't repeat their angle
-6. E-E-A-T: write as a knowledgeable store with real product experience
+6. E-E-A-T: write as a knowledgeable store with real product experience.
+   Share specific knowledge about materials (silikon vs TPE), features, use cases.
 7. Include 2-3 practical tips showing real expertise (not generic advice)
-8. Keep between 300-600 words (quality over quantity)
+8. Keep between 300-500 words (quality over quantity)
 9. Structure with 2-3 H2 headings
 10. End with a short FAQ (2-3 questions targeting the lower-volume GSC queries)
 11. Language: {language}
+12. For /rea/ or sale pages: describe the CATEGORY of products on sale and WHY they're
+    good value — NOT specific prices or product names that rotate in/out of sale.
 
 ## OUTPUT (JSON):
 {{

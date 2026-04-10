@@ -412,7 +412,14 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                             f"`{short}`: **generic text** — no product names, prices, or brand mentions"
                         )
 
-                # Check 3: does this page link to the OTHER competing pages?
+                # Check 3: smart internal link recommendations
+                # NOT "every page links to every other page" — use site architecture:
+                # - Category → parent category (if exists): anchor = parent's primary query
+                # - Category → sub-categories: anchor = sub-category's primary query
+                # - Product → its parent category: anchor = category's primary query
+                # - /rea/ variant → main category: anchor = generic query
+                # NEVER suggest product-to-product cross-links.
+
                 p_outbound = set()
                 p_internal_links = p_audit.get("internal_links") or []
                 if isinstance(p_internal_links, list):
@@ -420,7 +427,6 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                         link_url = link.get("url", "") if isinstance(link, dict) else str(link)
                         if link_url:
                             p_outbound.add(_nu(link_url))
-                # Also check sf_link_map
                 for lf_url, targets in links_from.items():
                     if _nu(lf_url) == p_norm and isinstance(targets, list):
                         for t in targets:
@@ -428,14 +434,51 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                             if t_url:
                                 p_outbound.add(_nu(t_url))
 
-                other_urls = [u for u in all_conflict_urls if u != p_norm]
-                missing_links = [u for u in other_urls if u not in p_outbound]
-                if missing_links:
-                    for ml in missing_links:
-                        ml_short = ml.split("/")[-1][:30]
+                p_type = _audit_types.get(p_norm, "unknown")
+                p_path = _urlparse(p_url).path.rstrip("/")
+
+                # Find the winner/main category — that's the page products/variants should link TO
+                winner_norm = _nu(winner_page)
+                winner_path = _urlparse(winner_page).path.rstrip("/")
+
+                # Only recommend links that make architectural sense
+                if p_norm != winner_norm:
+                    # This page should link to the winner (main category)
+                    if winner_norm not in p_outbound:
+                        # Anchor = the winner's primary query from GSC (not the shared query)
+                        winner_anchor = query  # fallback
+                        winner_title = page_titles.get(winner_norm, "")
+                        if winner_title:
+                            # Extract main keyword from title (first few words before | or -)
+                            import re as _re
+                            title_kw = _re.split(r'[|–—\-»]', winner_title)[0].strip()
+                            if title_kw and len(title_kw) < 40:
+                                winner_anchor = title_kw
                         linking_issues.append(
-                            f"`{short}` → `{ml_short}`: no internal link (add with anchor text '{query}')"
+                            f"`{short}` should link to `{winner_path.split('/')[-1]}` "
+                            f"with anchor **\"{winner_anchor}\"**"
                         )
+                else:
+                    # This IS the winner — check if it links to sub-pages/variants
+                    for other_url in all_conflict_urls:
+                        if other_url == p_norm:
+                            continue
+                        other_type = _audit_types.get(other_url, "unknown")
+                        other_path = _urlparse(other_url).path.rstrip("/")
+                        # Only suggest winner → child if child is under winner's path
+                        # or if winner is a category and child is a related sub-category
+                        is_child = other_path.startswith(p_path + "/")
+                        if is_child and other_url not in p_outbound:
+                            other_title = page_titles.get(other_url, "")
+                            other_anchor = other_path.split("/")[-1].replace("-", " ")
+                            if other_title:
+                                kw = _re.split(r'[|–—\-»]', other_title)[0].strip()
+                                if kw and len(kw) < 40:
+                                    other_anchor = kw
+                            linking_issues.append(
+                                f"`{short}` should link to sub-page `{other_path.split('/')[-1]}` "
+                                f"with anchor **\"{other_anchor}\"**"
+                            )
 
             # Build action text
             parts = ["✅ **Meta titles are already differentiated.**\n"]
