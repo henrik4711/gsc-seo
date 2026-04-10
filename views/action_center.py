@@ -106,10 +106,22 @@ def _action_card(page, idx):
                 if plan.get("overall_assessment"):
                     st.info(plan["overall_assessment"])
 
-                # Meta title/desc if changed
+                # Meta title/desc if changed — show current vs new for comparison
                 if plan.get("meta_changed") and plan.get("meta_title"):
-                    st.markdown(f"**New title ({len(plan['meta_title'])} chars):** {plan['meta_title']}")
-                    st.markdown(f"**New description ({len(plan.get('meta_description', ''))} chars):** {plan.get('meta_description', '')}")
+                    current_title = page.get("title", "") or ""
+                    current_desc = page["audit"].get("meta_description", "") or "" if "audit" in page else ""
+                    new_title = plan['meta_title']
+                    new_desc = plan.get('meta_description', '')
+                    # Only show if actually different from current
+                    if new_title.strip().lower() != current_title.strip().lower() or new_desc.strip().lower() != current_desc.strip().lower():
+                        if current_title:
+                            st.markdown(f"**Current title ({len(current_title)} chars):** {current_title}")
+                        st.markdown(f"**New title ({len(new_title)} chars):** {new_title}")
+                        if current_desc:
+                            st.markdown(f"**Current desc ({len(current_desc)} chars):** {current_desc[:100]}...")
+                        st.markdown(f"**New desc ({len(new_desc)} chars):** {new_desc}")
+                    else:
+                        st.markdown(f"**Meta: OK** — AI confirms current meta is fine")
 
                 # Steps
                 steps = plan.get("steps", [])
@@ -297,13 +309,42 @@ def _new_articles_section():
         st.info("No new article suggestions yet. Generate plans for top pages to get suggestions.")
         return
 
+    # Build existing page titles/URLs for duplicate checking
+    audit_results = st.session_state.get("audit_results", [])
+    existing_titles = set()
+    existing_url_paths = set()
+    for r in audit_results:
+        t = (r.get("title") or "").lower().strip()
+        if t:
+            existing_titles.add(t)
+        u = r.get("url", "")
+        if u:
+            from urllib.parse import urlparse
+            existing_url_paths.add(urlparse(normalize_url(u)).path.lower().rstrip("/"))
+
     st.markdown(f"### {len(all_articles)} New Articles to Write")
     for i, art in enumerate(all_articles[:20]):
         title = art.get("suggested_title") or art.get("title", "")
         keywords = art.get("target_keywords", [])
         why = art.get("why", "")
 
-        with st.expander(f"{i+1}. {title}", expanded=False):
+        # Check if similar article/page already exists
+        already_exists = title.lower().strip() in existing_titles
+        if not already_exists and keywords:
+            # Check if any keyword matches an existing URL path segment
+            for kw in keywords[:3]:
+                kw_slug = kw.lower().replace(" ", "-")
+                for ep in existing_url_paths:
+                    if kw_slug in ep:
+                        already_exists = True
+                        break
+                if already_exists:
+                    break
+
+        expander_label = f"{i+1}. {title}" + (" — MAY ALREADY EXIST" if already_exists else "")
+        with st.expander(expander_label, expanded=False):
+            if already_exists:
+                st.warning("A page with a similar title or keyword already exists on the site. Check before creating.")
             if keywords:
                 st.markdown(f"**Keywords:** {', '.join(keywords[:8])}")
             if why:

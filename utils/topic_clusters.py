@@ -289,6 +289,15 @@ def generate_content_roadmap(
                         covered = True
                         break
 
+            # Also check if an existing page title/URL already covers this subtopic
+            if not covered:
+                st_topic_lower = st_item["topic"].lower()
+                for p in pages:
+                    p_url = p["page"].lower()
+                    if st_topic_lower in p_url or st_topic_lower.replace(" ", "-") in p_url:
+                        covered = True
+                        break
+
             if not covered and st_impressions >= 50:
                 content_type = _infer_content_type(st_queries)
                 top_query = max(st_queries, key=lambda q: query_impressions.get(q, 0))

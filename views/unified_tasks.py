@@ -126,15 +126,27 @@ def _gather_all_tasks():
                 "impressions": impressions,
             })
 
-    # ── Source 5: New articles ────────────────────────────────────
+    # ── Source 5: New articles (check existing pages first) ─────────
     roadmap = st.session_state.get("content_roadmap", {})
+    audit_results = st.session_state.get("audit_results", [])
+    existing_url_paths = set()
+    for r in audit_results:
+        u = r.get("url", "")
+        if u:
+            from urllib.parse import urlparse
+            existing_url_paths.add(urlparse(u.lower().rstrip("/")).path.rstrip("/"))
     for article in roadmap.get("articles_needed", []):
+        title = article.get("suggested_title", "")
+        # Check if a page already covers this topic (by keyword in URL)
+        topic_slug = title.lower().replace(" ", "-").replace(":", "").replace("?", "")
+        already_covered = any(topic_slug[:20] in ep for ep in existing_url_paths if len(topic_slug) > 5)
+        prefix = "[MAY EXIST] " if already_covered else ""
         tasks.append({
             "url": article.get("supporting_page", ""),
             "priority": article.get("priority", "medium"),
             "category": "New Content",
             "type": "Write new article",
-            "action": f"Write: \"{article.get('suggested_title', '')}\" ({article.get('content_type', 'article')}). Go to New Articles view for AI generation.",
+            "action": f"{prefix}Write: \"{title}\" ({article.get('content_type', 'article')}). Go to New Articles view for AI generation.",
             "source": "Content Roadmap",
             "impressions": article.get("estimated_impressions", 0),
         })

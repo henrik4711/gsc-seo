@@ -80,6 +80,45 @@ def _pages_to_create():
     creates = []
     seen = set()
 
+    # Build set of existing URLs + titles for duplicate checking
+    audit_results = st.session_state.get("audit_results", [])
+    existing_urls = set()
+    existing_titles_lower = set()
+    existing_url_segments = set()
+    for r in audit_results:
+        u = normalize_url(r.get("url", ""))
+        if u:
+            existing_urls.add(u)
+            # Extract path segments for fuzzy URL matching
+            from urllib.parse import urlparse
+            path = urlparse(u).path.lower().rstrip("/")
+            for seg in path.split("/"):
+                if seg and len(seg) > 3:
+                    existing_url_segments.add(seg)
+        t = (r.get("title") or "").lower().strip()
+        if t:
+            existing_titles_lower.add(t)
+
+    def _already_exists(url_or_title: str) -> str:
+        """Check if page already exists. Returns reason string or empty."""
+        # Check exact URL match
+        norm = normalize_url(url_or_title)
+        if norm in existing_urls:
+            return f"Page already exists: {url_or_title}"
+        # Check if URL path matches an existing page
+        from urllib.parse import urlparse
+        path = urlparse(url_or_title).path.lower().rstrip("/") if "://" in url_or_title or url_or_title.startswith("/") else ""
+        if path:
+            for eu in existing_urls:
+                ep = urlparse(eu).path.lower().rstrip("/")
+                if ep == path:
+                    return f"URL path already exists: {eu}"
+        # Check title similarity
+        title_lower = url_or_title.lower().strip()
+        if title_lower in existing_titles_lower:
+            return f"Page with same title already exists"
+        return ""
+
     # Source 1: Ideal structure
     ideal = st.session_state.get("_ideal_structure") or {}
     if isinstance(ideal, dict):
@@ -90,13 +129,17 @@ def _pages_to_create():
             if url in seen:
                 continue
             seen.add(url)
-            creates.append({
+            exists = _already_exists(url)
+            entry = {
                 "url": url,
                 "type": c.get("type", "page"),
                 "keyword": c.get("kw", ""),
                 "why": c.get("why", ""),
                 "source": "ideal_structure",
-            })
+            }
+            if exists:
+                entry["already_exists"] = exists
+            creates.append(entry)
 
     # Source 2: Content roadmap (from topic_clusters)
     roadmap = st.session_state.get("content_roadmap", {})
@@ -108,14 +151,18 @@ def _pages_to_create():
             if title in seen:
                 continue
             seen.add(title)
-            creates.append({
+            exists = _already_exists(title)
+            entry = {
                 "url": f"(new article: {title})",
                 "type": a.get("type", "blog"),
                 "keyword": ", ".join(a.get("target_keywords", [])[:3]),
                 "why": a.get("why", ""),
                 "source": "content_roadmap",
                 "priority": a.get("priority", ""),
-            })
+            }
+            if exists:
+                entry["already_exists"] = exists
+            creates.append(entry)
 
     # Source 3: Per-page plans (collected from all AI plans)
     for key, val in st.session_state.items():
@@ -128,14 +175,18 @@ def _pages_to_create():
             if not title or title in seen:
                 continue
             seen.add(title)
-            creates.append({
+            exists = _already_exists(title)
+            entry = {
                 "url": f"(new article: {title})",
                 "type": nc.get("type", "blog"),
                 "keyword": ", ".join(nc.get("target_keywords", [])[:3]),
                 "why": nc.get("why", ""),
                 "source": "page_plan",
                 "link_from": nc.get("link_from", ""),
-            })
+            }
+            if exists:
+                entry["already_exists"] = exists
+            creates.append(entry)
 
     return creates[:100]
 
@@ -163,12 +214,36 @@ def _pages_to_redirect():
     broken = issues.get("broken_links", [])
     page_authority = st.session_state.get("page_authority")
 
+    # Build set of pages that already have redirects in place
+    redirect_chains = issues.get("redirect_chains", [])
+    already_redirected = set()
+    for rc in redirect_chains:
+        if isinstance(rc, dict) and rc.get("url"):
+            already_redirected.add(normalize_url(rc["url"]))
+
+    # Build set of active pages (have impressions/traffic) to avoid redirecting them
+    audit_results = st.session_state.get("audit_results", [])
+    active_pages = set()
+    for r in audit_results:
+        if r.get("impressions", 0) > 0 or r.get("clicks", 0) > 0:
+            active_pages.add(normalize_url(r.get("url", "")))
+
     redirects = []
     for b in broken:
         url = b.get("url", "")
+        norm = normalize_url(url)
+
+        # Skip if redirect is already in place
+        if norm in already_redirected:
+            continue
+
+        # Skip if page is actually active (may be a false positive from crawl)
+        if norm in active_pages:
+            continue
+
         rd = 0
         if page_authority is not None and not page_authority.empty:
-            match = page_authority[page_authority["page"].apply(normalize_url) == normalize_url(url)]
+            match = page_authority[page_authority["page"].apply(normalize_url) == norm]
             if not match.empty:
                 rd = int(match.iloc[0].get("referring_domains", 0))
         redirects.append({
@@ -296,14 +371,22 @@ def _validate_subcategory_quality(parent_url: str, child_pages: list):
     # Check which child pages have an incoming link from the parent
     parent_outbound = set()
     if isinstance(links_to, dict):
-        # links_to maps a page -> set of pages that link TO it
+        # links_to maps a page -> list of pages that link TO it
         # To get parent's outbound links, check each child's incoming set
-        pass
+        for target_url, inbound_links in links_to.items():
+            if isinstance(inbound_links, list):
+                for link_entry in inbound_links:
+                    source = link_entry.get("from", "") if isinstance(link_entry, dict) else (link_entry if isinstance(link_entry, str) else "")
+                    if normalize_url(source) == parent_norm:
+                        parent_outbound.add(normalize_url(target_url))
 
-    # Alternative: walk audit's internal_links for parent (if stored)
+    # Also walk audit's internal_links for parent (supplement sf_link_map)
     parent_internal_links = parent_audit.get("internal_links") or []
     if isinstance(parent_internal_links, list):
-        parent_outbound = {normalize_url(l) if isinstance(l, str) else normalize_url(l.get("url", "")) for l in parent_internal_links}
+        for l in parent_internal_links:
+            link_url = normalize_url(l) if isinstance(l, str) else normalize_url(l.get("url", ""))
+            if link_url:
+                parent_outbound.add(link_url)
     parent_outbound.discard("")
 
     for child in child_pages:
@@ -758,7 +841,10 @@ def render():
             st.markdown(f"#### {source_labels.get(source, source)} ({len(items)} items)")
             for c in items[:20]:
                 label = c.get("url", "") if c.get("url", "").startswith("(") else f"`{c.get('url', '')}`"
-                st.markdown(f"- {label}")
+                if c.get("already_exists"):
+                    st.markdown(f"- ~~{label}~~ — **SKIP: {c['already_exists']}**")
+                else:
+                    st.markdown(f"- {label}")
                 if c.get("keyword"):
                     st.markdown(f"  <div style='color:#c8b4ff; font-size:0.75rem; margin-left:1rem;'>Keywords: {c.get('keyword', '')}</div>", unsafe_allow_html=True)
                 if c.get("why"):

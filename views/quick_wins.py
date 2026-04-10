@@ -320,41 +320,78 @@ def _build_total_plan(page, plan_data, text_data, intro_data):
                             })
                     break
 
-    # Priority 2: Meta title + description
+    # Priority 2: Meta title + description — only if actually different from current
     if plan_data.get("meta_changed"):
         new_title = plan_data.get("meta_title", "")
         new_desc = plan_data.get("meta_description", "")
-        actions.append({
-            "priority": 2,
-            "title": "Update meta title and description",
-            "detail": f"Title: {new_title}\nDescription: {new_desc}",
-            "time": 5,
-            "type": "meta",
-        })
+        current_title = (page.get("title") or "").strip()
+        current_desc = (page.get("meta_description") or "").strip()
+        # Skip if AI suggestion is identical to current meta
+        title_changed = new_title.strip() and new_title.strip().lower() != current_title.lower()
+        desc_changed = new_desc.strip() and new_desc.strip().lower() != current_desc.lower()
+        if title_changed or desc_changed:
+            detail_parts = []
+            if title_changed:
+                detail_parts.append(f"Current title: {current_title} ({len(current_title)} chars)\nNew title: {new_title} ({len(new_title)} chars)")
+            else:
+                detail_parts.append(f"Title: OK (no change needed)")
+            if desc_changed:
+                detail_parts.append(f"Current desc: {current_desc[:80]}... ({len(current_desc)} chars)\nNew desc: {new_desc} ({len(new_desc)} chars)")
+            else:
+                detail_parts.append(f"Description: OK (no change needed)")
+            actions.append({
+                "priority": 2,
+                "title": "Update meta title and description",
+                "detail": "\n".join(detail_parts),
+                "time": 5,
+                "type": "meta",
+            })
 
-    # Priority 3: Replace bottom text
+    # Priority 3: Replace bottom text — only if current bottom text is thin or missing
     if text_data and text_data.get("html"):
         wc = text_data.get("word_count", 0)
-        actions.append({
-            "priority": 3,
-            "title": "Replace bottom text (below product grid)",
-            "detail": f"New text: {wc} words with FAQ, E-E-A-T, products. Download HTML and paste into Magento Description field.",
-            "time": 10,
-            "type": "bottom_text",
-        })
+        current_bottom_words = audit.get("bottom_word_count", 0)
+        # Skip if current bottom text is already substantial (300+ words) and new text isn't significantly longer
+        if current_bottom_words >= 300 and wc <= current_bottom_words * 1.3:
+            actions.append({
+                "priority": 3,
+                "title": "Bottom text already adequate — review AI suggestion",
+                "detail": f"Current: {current_bottom_words} words. AI generated: {wc} words. Current text may already be good enough — only replace if quality is poor.",
+                "time": 5,
+                "type": "bottom_text",
+            })
+        else:
+            actions.append({
+                "priority": 3,
+                "title": "Replace bottom text (below product grid)",
+                "detail": f"Current: {current_bottom_words} words. New text: {wc} words with FAQ, E-E-A-T, products. Download HTML and paste into Magento Description field.",
+                "time": 10,
+                "type": "bottom_text",
+            })
 
-    # Priority 4: Replace intro text
+    # Priority 4: Replace intro text — only if current intro is thin or missing
     if intro_data and not intro_data.get("error"):
         new_intro = intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
         if new_intro:
             intro_wc = len(new_intro.split())
-            actions.append({
-                "priority": 4,
-                "title": "Update intro text (above product grid)",
-                "detail": f"New intro: {intro_wc} words. Paste as first paragraph of Description.",
-                "time": 5,
-                "type": "intro",
-            })
+            current_intro_words = audit.get("intro_word_count", 0)
+            if current_intro_words >= 80:
+                # Current intro is decent length — flag as review, not replace
+                actions.append({
+                    "priority": 4,
+                    "title": "Intro text exists — review AI suggestion",
+                    "detail": f"Current intro: {current_intro_words} words (already meets minimum). AI suggestion: {intro_wc} words. Only replace if current intro lacks target keywords.",
+                    "time": 5,
+                    "type": "intro",
+                })
+            else:
+                actions.append({
+                    "priority": 4,
+                    "title": "Update intro text (above product grid)",
+                    "detail": f"Current intro: {current_intro_words} words (too thin). New intro: {intro_wc} words. Paste as first paragraph of Description.",
+                    "time": 5,
+                    "type": "intro",
+                })
 
     # Priority 5: Add missing internal links
     content_audit = audit.get("content_audit") or {}
