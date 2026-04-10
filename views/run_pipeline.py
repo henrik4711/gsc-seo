@@ -921,13 +921,7 @@ def render():
     )
 
     _run_step_card(
-        5, "Cannibalization Detection",
-        "Find queries where multiple pages compete (with brand keyword filter)",
-        "cannibalization", _run_cannibalization, "rp_cannibal"
-    )
-
-    _run_step_card(
-        6, "Build Topic Clusters",
+        5, "Build Topic Clusters",
         "AI groups GSC queries into 30-50 topic clusters (~30 sec)",
         "topic_clusters", _run_topic_clusters, "rp_clusters"
     )
@@ -942,7 +936,7 @@ def render():
         )
     with col2:
         st.markdown(
-            f"<div style='font-weight:600; color:#e8e8f0;'>7. Bulk Audit Pages</div>"
+            f"<div style='font-weight:600; color:#e8e8f0;'>6. Bulk Audit Pages</div>"
             f"<div style='font-size:0.8rem; color:#9b9bb8;'>Scrape + audit all pages from GSC (~20 min for 1000+ pages)</div>"
             f"<div style='font-size:0.7rem; color:{color}; margin-top:0.2rem;'>{status}</div>",
             unsafe_allow_html=True,
@@ -973,7 +967,7 @@ def render():
             )
         with col2:
             st.markdown(
-                f"<div style='font-weight:600; color:#e8e8f0;'>8. AI Content Quality Check</div>"
+                f"<div style='font-weight:600; color:#e8e8f0;'>7. AI Content Quality Check</div>"
                 f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI evaluates text quality on category + blog pages (50 per click)</div>"
                 f"<div style='font-size:0.7rem; color:{color}; margin-top:0.2rem;'>{checked}/{len(candidates)} checked</div>",
                 unsafe_allow_html=True,
@@ -990,6 +984,13 @@ def render():
                 except Exception as e:
                     st.error(f"Error: {e}")
         st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
+
+    # ── Step 8: Cannibalization (after quality check so it has E-E-A-T data)
+    _run_step_card(
+        8, "Cannibalization Detection",
+        "Find queries where multiple pages compete (with brand keyword filter + quality verdicts)",
+        "cannibalization", _run_cannibalization, "rp_cannibal"
+    )
 
     # ── Site Validation (step 9) ────────────────────────────
     icon, status, color = _step_status("_site_validation")
@@ -1341,7 +1342,7 @@ def render():
                                 os.remove(os.path.join(AI_CACHE_DIR, f))
                             except Exception:
                                 pass
-                st.success(f"Cleared {len(keys_to_delete)} quality scores. Now run Step 8 (click Run button above) to re-evaluate with new rules, then Step 5 for cannibalization.")
+                st.success(f"Cleared {len(keys_to_delete)} quality scores. Now run Step 7 (Quality Check) to re-evaluate, then Step 8 (Cannibalization).")
                 st.rerun()
 
     # ── Export pipeline state ────────────────────────────────
