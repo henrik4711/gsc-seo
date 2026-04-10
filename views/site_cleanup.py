@@ -443,32 +443,44 @@ Site context: {site_context}
 ## CURRENT TEXT (this is what needs rewriting)
 {current_body[:2000]}
 
-## REQUIREMENTS FOR THE NEW TEXT
-1. NO keyword stuffing — use the target keyword naturally, max 3-4 times in 500 words
-2. Mention product NAMES and BRANDS from the PRODUCTS list — but NEVER include specific prices.
-   Prices change constantly. The text must be EVERGREEN and stay relevant regardless of
-   which products are on sale or what prices change to.
-3. MUST include internal links to RELATED PAGES listed above — use <a href="URL">anchor</a> in the HTML.
-   Use the anchor text specified in the CRITICAL LINKS section.
-4. MUST target the GSC QUERIES listed above — work them naturally into headings and text
-5. MUST be DIFFERENT from competing pages — don't repeat their angle
-6. E-E-A-T: write as a knowledgeable store with real product experience.
-   Share specific knowledge about materials (silikon vs TPE), features, use cases.
-7. Include 2-3 practical tips showing real expertise (not generic advice)
-8. Keep between 300-500 words (quality over quantity)
-9. Structure with 2-3 H2 headings
-10. End with a short FAQ (2-3 questions targeting the lower-volume GSC queries)
-11. Language: {language}
-12. For /rea/ or sale pages: describe the CATEGORY of products on sale and WHY they're
-    good value — NOT specific prices or product names that rotate in/out of sale.
+## PAGE STRUCTURE (Magento category page)
+A category page has TWO text areas separated by a product grid:
+
+1. **TOP TEXT** (intro) — shown ABOVE the product grid
+   - Short: 50-100 words max
+   - Purpose: tell the visitor what this category is and why they should browse
+   - Include primary keyword in first sentence
+   - Warm, inviting tone — not a wall of text
+   - NO FAQ, NO long explanations — save those for bottom text
+
+2. **PRODUCT GRID** — we CANNOT change this (products with images, prices, names)
+
+3. **BOTTOM TEXT** (footer) — shown BELOW the product grid
+   - Longer: 250-400 words
+   - Structure with 2-3 H2 headings
+   - E-E-A-T: expert advice, material knowledge, practical tips
+   - Internal links to related pages using <a href="URL">anchor</a>
+   - End with short FAQ (2-3 questions from lower-volume GSC queries)
+   - This is where the real SEO content lives
+
+## RULES FOR BOTH TEXTS
+1. NO keyword stuffing — primary keyword max 2x in top, max 3x in bottom
+2. Mention product NAMES and BRANDS — but NEVER specific prices (they change)
+3. MUST be EVERGREEN — relevant regardless of which products are currently shown
+4. MUST be DIFFERENT from competing pages
+5. E-E-A-T: knowledgeable store with real product experience
+6. Language: {language}
+7. For /rea/ sale pages: describe the CATEGORY of products on sale and WHY
+   they're good value, NOT specific sale items or rotating discounts
 
 ## OUTPUT (JSON):
 {{
-    "html": "<h2>heading</h2><p>text...</p>...",
-    "word_count": 0,
+    "top_html": "<p>Short intro text above product grid...</p>",
+    "top_word_count": 0,
+    "bottom_html": "<h2>heading</h2><p>longer text below products...</p>",
+    "bottom_word_count": 0,
     "target_keyword": "{query}",
-    "keyword_count": 0,
-    "internal_links_suggested": [{{"anchor": "text", "url": "/path"}}],
+    "internal_links": [{{"anchor": "text", "url": "/path"}}],
     "issues_fixed": ["which issues from the list above were fixed"]
 }}"""
 
@@ -1023,32 +1035,64 @@ def render():
 
                             if rewrite_key in st.session_state:
                                 rw = st.session_state[rewrite_key]
-                                if isinstance(rw, dict) and rw.get("html"):
-                                    st.markdown(f"**✅ Rewritten text for `{p_short}`** ({rw.get('word_count', '?')} words):")
-                                    # Preview: render HTML so user can see how it looks
-                                    st.markdown(
-                                        f"<div style='background:#1a1a2e; border:1px solid #2a2a40; border-radius:6px; padding:1rem; margin:0.5rem 0;'>{rw['html']}</div>",
-                                        unsafe_allow_html=True,
-                                    )
-                                    # Copyable HTML source in a tall text area
-                                    st.text_area(
-                                        "HTML source (select all + copy)",
-                                        value=rw["html"],
-                                        height=300,
-                                        key=f"ta_{rewrite_key}",
-                                    )
-                                    # Issues fixed
+                                has_split = isinstance(rw, dict) and (rw.get("top_html") or rw.get("bottom_html"))
+                                has_single = isinstance(rw, dict) and rw.get("html") and not has_split
+
+                                if has_split:
+                                    st.markdown(f"**✅ Rewritten texts for `{p_short}`:**")
+
+                                    # TOP TEXT
+                                    top_html = rw.get("top_html", "")
+                                    if top_html:
+                                        st.markdown("**📌 TOP TEXT** (paste in Magento → Category → Description, ABOVE product grid)")
+                                        st.markdown(
+                                            f"<div style='background:#1a1a2e; border:1px solid #33dd88; border-radius:6px; padding:1rem; margin:0.5rem 0;'>{top_html}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.text_area(
+                                            "Top text HTML (select all + copy)",
+                                            value=top_html,
+                                            height=120,
+                                            key=f"ta_top_{rewrite_key}",
+                                        )
+
+                                    # BOTTOM TEXT
+                                    bottom_html = rw.get("bottom_html", "")
+                                    if bottom_html:
+                                        st.markdown("**📌 BOTTOM TEXT** (paste in Magento → Category → CMS Block or Description, BELOW product grid)")
+                                        st.markdown(
+                                            f"<div style='background:#1a1a2e; border:1px solid #5533ff; border-radius:6px; padding:1rem; margin:0.5rem 0;'>{bottom_html}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.text_area(
+                                            "Bottom text HTML (select all + copy)",
+                                            value=bottom_html,
+                                            height=300,
+                                            key=f"ta_bottom_{rewrite_key}",
+                                        )
+
                                     fixed = rw.get("issues_fixed", [])
                                     if fixed:
                                         st.caption("Issues fixed: " + " · ".join(fixed))
-                                    # Download
+
+                                    combined = (top_html or "") + "\n\n<!-- PRODUCT GRID -->\n\n" + (bottom_html or "")
                                     st.download_button(
-                                        f"⬇ Download {p_short}.html",
-                                        data=rw["html"],
+                                        f"⬇ Download both texts",
+                                        data=combined,
                                         file_name=f"{p_url.split('/')[-1] or 'page'}_rewrite.html",
                                         mime="text/html",
                                         key=f"dl_{rewrite_key}",
                                     )
+
+                                elif has_single:
+                                    # Fallback for old format (single html field)
+                                    st.markdown(f"**✅ Rewritten text for `{p_short}`** ({rw.get('word_count', '?')} words):")
+                                    st.markdown(
+                                        f"<div style='background:#1a1a2e; border:1px solid #2a2a40; border-radius:6px; padding:1rem; margin:0.5rem 0;'>{rw['html']}</div>",
+                                        unsafe_allow_html=True,
+                                    )
+                                    st.text_area("HTML source", value=rw["html"], height=300, key=f"ta_{rewrite_key}")
+                                    st.download_button(f"⬇ Download", data=rw["html"], file_name=f"{p_url.split('/')[-1]}_rewrite.html", mime="text/html", key=f"dl_{rewrite_key}")
                             elif page_issues or (isinstance(q_data, dict) and q_data.get("verdict") == "REWRITE"):
                                 if st.button(f"📝 Rewrite content for {p_short}", key=f"btn_{rewrite_key}"):
                                     with st.spinner(f"AI rewriting content for {p_short}..."):
