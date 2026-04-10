@@ -255,24 +255,48 @@ def _build_total_plan(page, plan_data, text_data, intro_data):
     profile = build_page_profile(url)
     actions = []
 
-    # Priority 1: Cannibalization resolution (if this page is a LOSER)
+    # Priority 1: Cannibalization — NEVER suggest redirecting homepage, sale pages, etc.
+    from urllib.parse import urlparse as _up_qw
+    page_path = _up_qw(normalize_url(url)).path.rstrip("/")
+    is_homepage = page_path == "" or page_path == "/"
+
     for cannibal in profile["cannibalization"]:
         if cannibal.get("is_winner"):
             actions.append({
                 "priority": 1,
                 "title": f"CANNIBALIZATION: This page WINS for '{cannibal['query']}'",
-                "detail": f"{cannibal.get('lost_clicks', 0):,.0f} lost clicks. Redirect loser pages here.",
+                "detail": f"{cannibal.get('lost_clicks', 0):,.0f} lost clicks. Other pages should link here.",
                 "time": 15,
                 "type": "cannibalization",
             })
         else:
-            actions.append({
-                "priority": 1,
-                "title": f"CANNIBALIZATION: This page LOSES for '{cannibal['query']}'",
-                "detail": f"Redirect this page to: {', '.join(cannibal.get('competing_pages', []))}",
-                "time": 10,
-                "type": "cannibalization",
-            })
+            # NEVER redirect: homepage, sale pages, or pages with different intent
+            from utils.site_patterns import get_sale_patterns
+            is_sale = any(sp in url.lower() for sp in get_sale_patterns())
+            if is_homepage:
+                actions.append({
+                    "priority": 1,
+                    "title": f"CANNIBALIZATION: Homepage competes for '{cannibal['query']}'",
+                    "detail": f"Do NOT redirect homepage. Instead: strengthen {', '.join(cannibal.get('competing_pages', [])[:2])} to own this query, so homepage stops competing.",
+                    "time": 10,
+                    "type": "cannibalization",
+                })
+            elif is_sale:
+                actions.append({
+                    "priority": 1,
+                    "title": f"CANNIBALIZATION: Sale page competes for '{cannibal['query']}'",
+                    "detail": f"Do NOT redirect. Differentiate meta to target sale variant. Add link to main category.",
+                    "time": 10,
+                    "type": "cannibalization",
+                })
+            else:
+                actions.append({
+                    "priority": 1,
+                    "title": f"CANNIBALIZATION: This page competes for '{cannibal['query']}'",
+                    "detail": f"Differentiate meta from {', '.join(cannibal.get('competing_pages', [])[:2])}. See Site Cleanup → Merge tab for full analysis.",
+                    "time": 10,
+                    "type": "cannibalization",
+                })
         break  # Only show first cannibalization issue
 
     # Priority 2: Meta title + description — only if actually different from current
@@ -949,16 +973,19 @@ def render():
     if not has_plan or (page["page_type"] == "category" and not has_text):
         st.markdown("### AI fixes — not generated yet")
         st.info("Click below to generate all AI fixes for this page (~30-60 seconds)")
-        if st.button("Generate all fixes", type="primary", use_container_width=True):
+        if st.button("🤖 Generate all fixes", type="primary", use_container_width=True, key=f"gen_all_{url_hash}"):
             _generate_all_fixes(page)
             st.rerun()
     else:
-        # Regenerate button always available
-        col_h1, col_h2 = st.columns([4, 1])
+        # Check if old format — show prominent regenerate button
+        is_old_format = has_text and not (text_data.get("top_html") or text_data.get("bottom_html") or text_data.get("faq_schema"))
+        col_h1, col_h2 = st.columns([3, 2] if is_old_format else [4, 1])
         with col_h1:
             st.markdown("### AI-generated fixes")
         with col_h2:
-            if st.button("Regenerate", key=f"regen_{url_hash}", help="Delete cached fixes and generate fresh"):
+            btn_label = "🔄 Regenerate with new rules" if is_old_format else "Regenerate"
+            btn_type = "primary" if is_old_format else "secondary"
+            if st.button(btn_label, key=f"regen_{url_hash}", type=btn_type, use_container_width=True):
                 # Clear cached results for this page
                 intro_key = f"_intro_text_{url_hash}"
                 for k in [plan_key, text_key, intro_key]:
