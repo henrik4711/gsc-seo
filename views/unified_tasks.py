@@ -10,29 +10,37 @@ import json
 
 def _gather_all_tasks():
     """Collect tasks from all sources into one unified, prioritized list."""
+    from utils.page_profile import build_page_profile
+    from urllib.parse import urlparse
+
     tasks = []
 
-    # ── Source 1: Crawl issues (SF) ───────────────────────────────
-    crawl_issues = st.session_state.get("sf_crawl_issues", {})
-    for issue_type, items in crawl_issues.items():
-        for item in items:
-            # Map issue type to priority
+    # Collect all audited URLs and build profiles once
+    audit_results = st.session_state.get("audit_results", [])
+    all_urls = [r.get("url", "") for r in audit_results if r.get("url")]
+    profiles = {url: build_page_profile(url) for url in all_urls}
+
+    # ── Source 1: Crawl issues (from profiles) ────────────────────
+    seen_crawl = set()
+    for url, profile in profiles.items():
+        for issue in profile["crawl_issues"]:
+            issue_type = issue.get("type", "unknown")
+            issue_key = (url, issue_type, issue.get("url", ""), issue.get("target", ""))
+            if issue_key in seen_crawl:
+                continue
+            seen_crawl.add(issue_key)
+
             if issue_type == "broken_links":
                 priority = "high"
-                category = "Technical"
             elif issue_type == "orphan_pages":
-                sev = item.get("severity", "HIGH")
+                sev = issue.get("severity", "HIGH")
                 priority = "high" if sev in ("CRITICAL", "HIGH") else "medium" if sev == "MEDIUM" else "low"
-                category = "Technical"
             elif issue_type in ("redirect_chains", "missing_meta"):
                 priority = "medium"
-                category = "Technical"
             elif issue_type in ("deep_pages", "thin_pages", "slow_pages"):
                 priority = "medium"
-                category = "Technical"
             else:
                 priority = "low"
-                category = "Technical"
 
             label = {
                 "broken_links": "Fix broken link",
@@ -46,21 +54,21 @@ def _gather_all_tasks():
             }.get(issue_type, issue_type)
 
             tasks.append({
-                "url": item.get("url", ""),
+                "url": issue.get("url", url),
                 "priority": priority,
-                "category": category,
+                "category": "Technical",
                 "type": label,
-                "action": item.get("action", ""),
+                "action": issue.get("action", ""),
                 "source": "Screaming Frog",
                 "impressions": 0,
             })
 
     # ── Source 2: Audit issues (meta + content) ───────────────────
-    for r in st.session_state.get("audit_results", []):
-        url = r.get("url", "")
-        impressions = r.get("impressions", 0)
+    for url, profile in profiles.items():
+        impressions = profile["total_impressions"]
 
-        # Meta issues
+        # Meta issues (from audit_results, not profile)
+        r = next((r for r in audit_results if r.get("url") == url), {})
         meta_score = r.get("meta_score")
         if meta_score is not None and meta_score < 60:
             tasks.append({
@@ -87,8 +95,6 @@ def _gather_all_tasks():
             })
 
     # ── Source 3: Linking actions ─────────────────────────────────
-    # Re-use the internal linking builder
-    audit_results = st.session_state.get("audit_results", [])
     topic_clusters = st.session_state.get("topic_clusters", {})
     sf_link_map = st.session_state.get("sf_link_map")
 
@@ -107,17 +113,17 @@ def _gather_all_tasks():
             })
 
     # ── Source 4: Missing keywords ────────────────────────────────
-    for r in st.session_state.get("audit_results", []):
-        content_audit = r.get("content_audit") or {}
+    for url, profile in profiles.items():
+        content_audit = profile["content_audit"]
         kw_cov = content_audit.get("keyword_coverage") or {}
         missing = kw_cov.get("missing", [])
         coverage_pct = kw_cov.get("coverage_pct", 100)
-        impressions = r.get("impressions", 0)
+        impressions = profile["total_impressions"]
 
         if missing and coverage_pct < 70:
             kw_list = ", ".join(missing[:5])
             tasks.append({
-                "url": r.get("url", ""),
+                "url": url,
                 "priority": "high" if impressions > 500 and coverage_pct < 50 else "medium",
                 "category": "Keywords",
                 "type": "Add missing keywords",
@@ -128,13 +134,9 @@ def _gather_all_tasks():
 
     # ── Source 5: New articles (check existing pages first) ─────────
     roadmap = st.session_state.get("content_roadmap", {})
-    audit_results = st.session_state.get("audit_results", [])
     existing_url_paths = set()
-    for r in audit_results:
-        u = r.get("url", "")
-        if u:
-            from urllib.parse import urlparse
-            existing_url_paths.add(urlparse(u.lower().rstrip("/")).path.rstrip("/"))
+    for url in all_urls:
+        existing_url_paths.add(urlparse(url.lower().rstrip("/")).path.rstrip("/"))
     for article in roadmap.get("articles_needed", []):
         title = article.get("suggested_title", "")
         # Check if a page already covers this topic (by keyword in URL)

@@ -41,9 +41,9 @@ def _check_prerequisites():
 
 def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authority=None):
     """Build Sheet 1: Site Structure — every page with all metrics."""
+    from utils.page_profile import build_page_profile
+
     rows = []
-    tc = topic_clusters or {}
-    page_topics = tc.get("page_topics", {})
     audit_by_url = {_norm_url(r["url"]): r for r in audit_results}
 
     # Get all unique URLs — deduplicate by stripping query params
@@ -66,65 +66,39 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
         parent_parts = path.strip("/").split("/")[:-1]
         parent_url = f"https://{parsed.netloc}/{'/'.join(parent_parts)}" if parent_parts else ""
 
-        # Audit data (normalized lookup)
+        profile = build_page_profile(url)
+
+        cluster_names = [c.get("topic", "") for c in profile["clusters"][:3]]
+
+        # Avg position from GSC queries
+        avg_pos = None
+        if profile["gsc_queries"]:
+            positions = [q["position"] for q in profile["gsc_queries"] if q.get("position")]
+            avg_pos = round(sum(positions) / len(positions), 1) if positions else None
+
+        # Meta/content scores come from audit_results (not in page profile)
         audit = audit_by_url.get(_norm_url(url), {})
-
-        # Cluster data (try both raw and normalized)
-        topics = page_topics.get(url, []) or page_topics.get(_norm_url(url), [])
-        cluster_names = [t.get("topic", "") for t in topics[:3]]
-
-        # GSC data (normalized comparison)
-        if gsc_data is not None and hasattr(gsc_data, "page"):
-            url_norm = _norm_url(url)
-            page_gsc = gsc_data[gsc_data["page"].apply(_norm_url) == url_norm]
-            impressions = int(page_gsc["impressions"].sum()) if not page_gsc.empty else 0
-            clicks = int(page_gsc["clicks"].sum()) if not page_gsc.empty else 0
-            avg_pos = round(page_gsc["position"].mean(), 1) if not page_gsc.empty else None
-        else:
-            impressions = audit.get("impressions", 0)
-            clicks = audit.get("clicks", 0)
-            avg_pos = audit.get("position")
-
-        # Internal links
-        il = audit.get("internal_links", [])
-        links_out = len(il) if isinstance(il, list) else (il if isinstance(il, int) else 0)
-
-        # Links in (count how many other pages link to this one)
-        links_in = 0
-        for other_r in audit_results:
-            other_links = other_r.get("internal_links", [])
-            if isinstance(other_links, list):
-                for l in other_links:
-                    if _norm_url(l.get("url", "")) == _norm_url(url):
-                        links_in += 1
-                        break
-
-        # AI quality
-        qkey = f"_quality_{stable_hash(url)}"
-        ai_q = st.session_state.get(qkey, {})
-        ai_verdict = ai_q.get("verdict", "") if ai_q else ""
-        ai_score = ai_q.get("score", "") if ai_q else ""
 
         rows.append({
             "URL": url,
             "Path": path,
             "Depth": depth,
-            "Page Type": audit.get("page_type", "unknown"),
+            "Page Type": profile["page_type"],
             "Parent URL": parent_url,
             "Cluster(s)": " | ".join(cluster_names) if cluster_names else "",
-            "Primary Keyword": audit.get("target_keywords", [""])[0] if audit.get("target_keywords") else "",
-            "Impressions": impressions,
-            "Clicks": clicks,
+            "Primary Keyword": profile["primary_query"],
+            "Impressions": profile["total_impressions"],
+            "Clicks": profile["total_clicks"],
             "Avg Position": avg_pos,
-            "Backlinks (domains)": audit.get("referring_domains", 0),
+            "Backlinks (domains)": profile["referring_domains"],
             "Meta Score": audit.get("meta_score", ""),
             "Content Score": audit.get("content_score", ""),
-            "AI Quality": f"{ai_score}/10 {ai_verdict}" if ai_verdict else "",
-            "Word Count": audit.get("word_count", 0),
-            "Links Out": links_out,
-            "Links In": links_in,
-            "Title": (audit.get("title") or "")[:80],
-            "H1": (audit.get("h1") or "")[:80],
+            "AI Quality": f"{profile['quality_score']}/10 {profile['quality_verdict']}" if profile["quality_verdict"] else "",
+            "Word Count": profile["word_count"],
+            "Links Out": profile["internal_links_out_count"],
+            "Links In": profile["internal_links_in_count"],
+            "Title": profile["title"][:80],
+            "H1": profile["h1"][:80],
         })
 
     return pd.DataFrame(rows).sort_values(["Depth", "URL"])
@@ -132,13 +106,13 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
 
 def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
     """Build Sheet 2: Cluster Detail — every keyword-cluster-page combo."""
+    from utils.page_profile import build_page_profile
+
     rows = []
     tc = topic_clusters or {}
-    audit_by_url = {r["url"]: r for r in audit_results}
 
     for cluster in tc.get("clusters", []):
         topic = cluster.get("topic", "")
-        queries = cluster.get("queries", [])
         pages = cluster.get("pages", [])
 
         # Determine hub (shallowest URL)
@@ -150,31 +124,24 @@ def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
                 hub_depth = depth
                 hub_url = p["page"]
 
+        hub_norm = _norm_url(hub_url)
+        hub_profile = build_page_profile(hub_url)
+        hub_outlink_targets = {_norm_url(l["url"]) for l in hub_profile["internal_links_out"]}
+
         for p in pages:
             purl = p["page"]
-            role = "HUB" if _norm_url(purl) == _norm_url(hub_url) else "SPOKE"
-            audit = audit_by_url.get(_norm_url(purl), {})
+            role = "HUB" if _norm_url(purl) == hub_norm else "SPOKE"
+            profile = build_page_profile(purl)
 
             # Keywords this page covers
-            kw_cov = (audit.get("content_audit") or {}).get("keyword_coverage") or {}
+            kw_cov = profile["content_audit"].get("keyword_coverage") or {}
             covered = kw_cov.get("covered", 0)
             missing = kw_cov.get("missing", [])
 
             # Check hub-spoke links
-            il = audit.get("internal_links", [])
-            links_to_hub = False
-            links_from_hub = False
-            if isinstance(il, list):
-                for l in il:
-                    if _norm_url(l.get("url", "")) == _norm_url(hub_url):
-                        links_to_hub = True
-
-            hub_audit = audit_by_url.get(_norm_url(hub_url), {})
-            hub_links = hub_audit.get("internal_links", [])
-            if isinstance(hub_links, list):
-                for l in hub_links:
-                    if _norm_url(l.get("url", "")) == _norm_url(purl):
-                        links_from_hub = True
+            page_outlink_targets = {_norm_url(l["url"]) for l in profile["internal_links_out"]}
+            links_to_hub = hub_norm in page_outlink_targets
+            links_from_hub = _norm_url(purl) in hub_outlink_targets
 
             rows.append({
                 "Cluster": topic,
@@ -182,9 +149,9 @@ def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
                 "Cluster Impressions": cluster.get("total_impressions", 0),
                 "URL": purl,
                 "Role": role,
-                "Page Type": audit.get("page_type", "?"),
-                "Page Impressions": p.get("total_impressions", 0),
-                "Page Clicks": p.get("total_clicks", 0),
+                "Page Type": profile["page_type"],
+                "Page Impressions": profile["total_impressions"] or p.get("total_impressions", 0),
+                "Page Clicks": profile["total_clicks"] or p.get("total_clicks", 0),
                 "Keywords Covered": covered,
                 "Keywords Missing": ", ".join(missing[:5]),
                 "Links to Hub": "YES" if links_to_hub or role == "HUB" else "NO",

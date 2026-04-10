@@ -12,15 +12,12 @@ from utils.ui_helpers import stable_hash
 
 def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_link_map=None):
     """Gather all data for a single cluster for AI evaluation."""
+    from utils.page_profile import build_page_profile
+    from utils.ui_helpers import normalize_url as _nu
+
     pages = cluster.get("pages", [])
     if not pages:
         return None
-
-    # Index audit results by normalized URL for cross-source matching
-    from utils.ui_helpers import normalize_url as _nu
-    audit_by_url = {_nu(r["url"]): r for r in audit_results}
-    def _audit(url):
-        return audit_by_url.get(_nu(url), {})
 
     # Determine hub page (most impressions, or shallowest URL)
     page_urls = [p["page"] for p in pages]
@@ -32,72 +29,58 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
             hub_depth = depth
             hub_url = pu
 
-    hub_audit = _audit(hub_url)
-    hub_content = (hub_audit.get("body_text") or hub_audit.get("intro_text") or "")[:500]
+    hub_profile = build_page_profile(hub_url)
+    hub_content = (hub_profile["body_text"] or hub_profile["intro_text"] or "")[:500]
+    hub_outlink_targets = {_nu(l["url"]) for l in hub_profile["internal_links_out"]}
 
     # Build spoke data
     spokes = []
     spoke_keywords = {}
+    spoke_profiles = {}  # cache profiles for link checks
     for p in pages:
         purl = p["page"]
         if _nu(purl) == _nu(hub_url):
             continue
-        pa = _audit(purl)
+        profile = build_page_profile(purl)
+        spoke_profiles[purl] = profile
         spokes.append({
             "url": purl,
-            "title": (pa.get("title") or "")[:80],
-            "h1": (pa.get("h1") or "")[:80],
-            "word_count": pa.get("word_count", 0),
-            "page_type": pa.get("page_type", "unknown"),
-            "impressions": p.get("total_impressions", pa.get("impressions", 0)),
-            "clicks": p.get("total_clicks", pa.get("clicks", 0)),
-            "meta_score": pa.get("meta_score"),
-            "content_score": pa.get("content_score"),
+            "title": profile["title"][:80],
+            "h1": profile["h1"][:80],
+            "word_count": profile["word_count"],
+            "page_type": profile["page_type"],
+            "impressions": profile["total_impressions"] or p.get("total_impressions", 0),
+            "clicks": profile["total_clicks"] or p.get("total_clicks", 0),
+            "meta_score": profile["content_audit"].get("meta_score"),
+            "content_score": profile["content_audit"].get("content_score"),
         })
-        spoke_keywords[purl] = pa.get("target_keywords", [])[:8]
+        spoke_keywords[purl] = profile["content_audit"].get("target_keywords", [])[:8]
 
     # Build link map within cluster
     cluster_urls = set(page_urls)
 
-    def _get_outlinks(url):
-        """Get internal links from a page (from audit data or SF link map)."""
-        links = set()
-        pa = _audit(url)
-        il = pa.get("internal_links", [])
-        if isinstance(il, list):
-            for l in il:
-                u = l.get("url", "")
-                if u.startswith("/"):
-                    domain = urlparse(url).netloc
-                    u = f"https://{domain}{u}"
-                links.add(_nu(u))
-        if sf_link_map:
-            for sl in sf_link_map.get("links_from", {}).get(url, []):
-                links.add(_nu(sl.get("target", "")))
-        return links
-
-    hub_outlinks = _get_outlinks(hub_url)
-
     # Hub → Spoke links
     hub_to_spoke = []
     for s in spokes:
-        if _nu(s["url"]) in hub_outlinks:
+        if _nu(s["url"]) in hub_outlink_targets:
             hub_to_spoke.append(s["url"])
 
     # Spoke → Hub links
     spoke_to_hub = []
     for s in spokes:
-        spoke_links = _get_outlinks(s["url"])
-        if _nu(hub_url) in spoke_links:
+        sp = spoke_profiles[s["url"]]
+        spoke_outlink_targets = {_nu(l["url"]) for l in sp["internal_links_out"]}
+        if _nu(hub_url) in spoke_outlink_targets:
             spoke_to_hub.append(s["url"])
 
     # Horizontal links (spoke ↔ spoke)
     horizontal = []
     spoke_urls = [s["url"] for s in spokes]
     for s in spokes:
-        s_links = _get_outlinks(s["url"])
+        sp = spoke_profiles[s["url"]]
+        s_targets = {_nu(l["url"]) for l in sp["internal_links_out"]}
         for other in spoke_urls:
-            if other != s["url"] and _nu(other) in s_links:
+            if other != s["url"] and _nu(other) in s_targets:
                 horizontal.append({"from": s["url"], "to": other})
 
     # Cannibalization within cluster
@@ -159,12 +142,12 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
         "total_impressions": cluster.get("total_impressions", 0),
         "total_clicks": cluster.get("total_clicks", 0),
         "hub_url": hub_url,
-        "hub_title": (hub_audit.get("title") or "")[:80],
-        "hub_h1": (hub_audit.get("h1") or "")[:80],
-        "hub_word_count": hub_audit.get("word_count", 0),
-        "hub_outlinks": len(hub_outlinks),
+        "hub_title": hub_profile["title"][:80],
+        "hub_h1": hub_profile["h1"][:80],
+        "hub_word_count": hub_profile["word_count"],
+        "hub_outlinks": len(hub_outlink_targets),
         "hub_content": hub_content,
-        "hub_keywords": hub_audit.get("target_keywords", [])[:10],
+        "hub_keywords": hub_profile["content_audit"].get("target_keywords", [])[:10],
         "spokes": spokes,
         "spoke_keywords": spoke_keywords,
         "hub_to_spoke_links": hub_to_spoke,
