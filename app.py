@@ -258,21 +258,24 @@ section[data-testid="stSidebar"] .stMarkdown h3 {
 }
 
 /* ── Running indicator (top-right) — make visible on dark bg ── */
-[data-testid="stStatusWidget"],
-[data-testid="stStatusWidget"] * {
-    color: #5533ff !important;
+[data-testid="stStatusWidget"] {
+    background: #1a1a2e !important;
+    border: 2px solid #5533ff !important;
+    border-radius: 8px !important;
+    padding: 4px 8px !important;
 }
-[data-testid="stStatusWidget"] svg {
-    fill: #5533ff !important;
-    stroke: #5533ff !important;
+[data-testid="stStatusWidget"] * {
+    color: #c8b4ff !important;
+}
+[data-testid="stStatusWidget"] svg,
+[data-testid="stStatusWidget"] img,
+header [data-testid="stStatusWidget"] svg {
+    filter: invert(1) brightness(2) !important;
 }
 [data-testid="stStatusWidget"] button {
     color: #c8b4ff !important;
     border-color: #5533ff !important;
-}
-/* The animated running figure */
-[data-testid="stStatusWidget"] [data-testid="stLogoSvg"] {
-    filter: brightness(3) !important;
+    background: #12121f !important;
 }
 
 /* ── Tooltip / help icons ───────────────────────────────── */
