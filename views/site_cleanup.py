@@ -604,8 +604,15 @@ def render():
         if cannibal_df is None or cannibal_df.empty:
             st.info("No cannibalization data — run Step 5 in Run Pipeline.")
         else:
-            work = cannibal_df[cannibal_df["severity"].isin(["severe", "moderate"])].copy()
-            work = work[~work["merge_action"].str.contains("DIFFERENT INTENTS|Homepage involved", na=False)]
+            all_work = cannibal_df[cannibal_df["severity"].isin(["severe", "moderate", "handled"])].copy()
+            all_work = all_work[~all_work["merge_action"].str.contains("DIFFERENT INTENTS|Homepage involved", na=False)]
+
+            # Split: items needing action vs already handled
+            handled = all_work[all_work.get("already_differentiated", False) == True] if "already_differentiated" in all_work.columns else all_work.iloc[0:0]
+            work = all_work[all_work.get("already_differentiated", False) != True] if "already_differentiated" in all_work.columns else all_work
+
+            if len(handled) > 0:
+                st.success(f"✅ {len(handled)} conflicts already have differentiated meta titles — no action needed. Showing only items that need work.")
 
             # Group by cannibal_type
             grouped = {}

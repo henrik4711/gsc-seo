@@ -310,9 +310,42 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         page_intents = {p["page"]: _page_intent(p["page"]) for p in pages_detail}
         unique_intents = set(page_intents.values())
 
+        # ── Check if meta titles are already differentiated ───
+        # If pages already have unique, keyword-focused titles → "already handled"
+        page_titles = {}
+        for ar in audit_results:
+            page_titles[_nu(ar.get("url", ""))] = (ar.get("title") or "").lower().strip()
+
+        titles_in_conflict = [page_titles.get(_nu(p["page"]), "") for p in pages_detail]
+        titles_in_conflict = [t for t in titles_in_conflict if t]  # drop empty
+
+        already_differentiated = False
+        if len(titles_in_conflict) >= 2:
+            # Titles are differentiated if they share <50% of words
+            title_word_sets = [set(t.split()) for t in titles_in_conflict]
+            all_diffs = []
+            for i in range(len(title_word_sets)):
+                for j in range(i + 1, len(title_word_sets)):
+                    overlap = len(title_word_sets[i] & title_word_sets[j])
+                    total = max(len(title_word_sets[i] | title_word_sets[j]), 1)
+                    all_diffs.append(overlap / total)
+            avg_overlap = sum(all_diffs) / max(len(all_diffs), 1)
+            if avg_overlap < 0.5:
+                already_differentiated = True
+
         # ── Cannibalization type classification ───────────
         # Determines WHAT action to take, not just whether there's a problem.
         cannibal_type = _classify_cannibal_type(winner_page, loser_pages, pages_detail, audit_lookup=None)
+
+        if already_differentiated:
+            cannibal_type["already_differentiated"] = True
+            cannibal_type["action"] = (
+                "✅ **Meta titles are already differentiated** — no immediate action needed. "
+                "Monitor positions over the next 4-6 weeks.\n\n"
+                "Current titles:\n" +
+                "\n".join(f"- `{p['page'].split('/')[-1]}`: {page_titles.get(_nu(p['page']), '(unknown)')}"
+                          for p in pages_detail[:5])
+            )
 
         # Different intents → don't merge, differentiate
         if len(unique_intents) > 1:
@@ -359,6 +392,10 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         potential_clicks = best_ctr * row["total_impressions"]
         lost_clicks = max(0, int(potential_clicks - row["total_clicks"]))
 
+        # Lower severity if already differentiated
+        if already_differentiated and severity in ("severe", "moderate"):
+            severity = "handled"
+
         records.append({
             "query": query,
             "page_count": row["page_count"],
@@ -376,6 +413,7 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
             "cannibal_action": cannibal_type.get("action", ""),
             "cannibal_parent_url": cannibal_type.get("parent_url"),
             "cannibal_suggested_parent": cannibal_type.get("suggested_parent_path"),
+            "already_differentiated": cannibal_type.get("already_differentiated", False),
         })
 
     result = pd.DataFrame(records)
