@@ -1297,13 +1297,28 @@ def render():
 
                 status.empty()
                 progress.empty()
-                st.success(
-                    f"✅ All done! Editorial: {fixed_ed} fixed · "
-                    f"Re-classified: {changed} pages · "
-                    f"Quality: {len(keys_del)} reset + re-checked · "
-                    f"Cannibalization: refreshed"
-                )
+                import datetime
+                st.session_state["_refresh_all_result"] = {
+                    "editorial": fixed_ed,
+                    "reclassified": changed,
+                    "quality_reset": len(keys_del),
+                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                }
                 st.rerun()
+
+        # Show last refresh result (persists across reruns)
+        last_refresh = st.session_state.get("_refresh_all_result")
+        if last_refresh:
+            st.markdown(
+                f"<div style='background:#0d2210; border:1px solid #33dd88; border-radius:6px; padding:0.8rem; margin:0.5rem 0;'>"
+                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88;'>LAST REFRESH: {last_refresh['timestamp']}</div>"
+                f"<div style='font-size:0.85rem; color:#e8e8f0;'>"
+                f"Editorial: {last_refresh['editorial']} fixed · "
+                f"Re-classified: {last_refresh['reclassified']} pages · "
+                f"Quality: {last_refresh['quality_reset']} re-checked · "
+                f"Cannibalization: refreshed</div></div>",
+                unsafe_allow_html=True,
+            )
 
         st.markdown("---")
 

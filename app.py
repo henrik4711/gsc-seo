@@ -41,10 +41,18 @@ html, body, [class*="css"],
     color: #e8e8f0;
 }
 
-/* Hide default streamlit elements */
+/* Hide default streamlit elements — but KEEP the status widget (running indicator) */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-header {visibility: hidden;}
+header {
+    background: transparent !important;
+}
+header [data-testid="stToolbar"] {
+    visibility: hidden;
+}
+header [data-testid="stDecoration"] {
+    visibility: hidden;
+}
 
 /* Background */
 .stApp {

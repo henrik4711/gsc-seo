@@ -203,7 +203,7 @@ def build_page_profile(url: str) -> dict:
                 gaps_list = []
                 total_lost = 0.0
                 for _, gr in page_gaps.iterrows():
-                    lost = float(gr.get("lost_clicks", 0) or 0)
+                    lost = float(gr.get("lost_clicks_estimate", gr.get("lost_clicks", 0)) or 0)
                     gaps_list.append({
                         "query": gr.get("query", ""),
                         "lost_clicks": round(lost, 1),
