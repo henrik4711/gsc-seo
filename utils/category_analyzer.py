@@ -495,7 +495,7 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
                 text = p.get_text(strip=True)
                 if len(text) < 20:
                     continue
-                if p.find_parent(attrs={"class": re.compile(r"product|card|grid|item", re.I)}):
+                if p.find_parent(attrs={"class": re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide", re.I)}):
                     found_products = True
                     continue
                 if p.find_parent(["nav", "footer", "header"]):

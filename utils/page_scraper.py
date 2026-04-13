@@ -391,7 +391,7 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
             if len(text) < 15:
                 continue
             # Skip elements inside product cards/grid
-            if p_tag.find_parent(attrs={"class": re.compile(r"product|card|grid|item|price|swiper", re.I)}):
+            if p_tag.find_parent(attrs={"class": re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide", re.I)}):
                 found_products = True
                 continue
             # Skip navigation, menus, footer
@@ -551,7 +551,7 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
                 text = p_tag.get_text(strip=True)
                 if len(text) < 15:
                     continue
-                if p_tag.find_parent(attrs={"class": re.compile(r"product|card|grid|item|price|swiper", re.I)}):
+                if p_tag.find_parent(attrs={"class": re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide", re.I)}):
                     found_products = True
                     continue
                 if p_tag.find_parent(["nav", "footer", "header"]):
