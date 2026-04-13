@@ -1440,11 +1440,20 @@ def render():
                 status_text = st.empty()
                 cat_indices = [i for i, r in enumerate(results) if r.get("page_type") == "category"]
                 total_cats = len(cat_indices)
+                skipped = 0
                 for idx_num, i in enumerate(cat_indices):
                     r = results[i]
                     url = r.get("url", "")
                     short = url.split("/")[-1][:40] if "/" in url else url[:40]
-                    status_text.text(f"[{idx_num+1}/{total_cats}] {short}...")
+
+                    # Skip pages that already have full editorial text (from prior run)
+                    existing_bottom = len(r.get("bottom_text", "") or "")
+                    if existing_bottom > 500:
+                        skipped += 1
+                        progress.progress(min(1.0, (idx_num + 1) / max(1, total_cats)))
+                        continue
+
+                    status_text.text(f"[{idx_num+1}/{total_cats}] {short}... ({skipped} skipped)")
                     try:
                         page_data = scrape_page(url, timeout=12)
                         scraped += 1
@@ -1514,12 +1523,15 @@ def render():
                         if idx_num < 10:
                             log_lines.append(f"✗ {short}: error {str(e)[:60]}")
                     progress.progress(min(1.0, (idx_num + 1) / max(1, total_cats)))
+                    # Save every 25 pages so a crash doesn't lose progress
+                    if scraped > 0 and scraped % 25 == 0:
+                        save_key("audit_results")
                 save_key("audit_results")
                 status_text.empty()
                 progress.empty()
 
                 # Show results WITHOUT st.rerun() so user can see diagnostics
-                st.success(f"Re-scraped {scraped}/{total_cats} category pages → **{changed} reclassified** to product. {errors} errors.")
+                st.success(f"Re-scraped {scraped}/{total_cats} category pages → **{changed} reclassified** to product. {skipped} skipped (already had full text). {errors} errors.")
                 if log_lines:
                     with st.expander(f"Diagnostic log ({len(log_lines)} entries)", expanded=True):
                         st.code("\n".join(log_lines[:50]), language="text")
