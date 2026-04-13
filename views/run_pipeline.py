@@ -1232,9 +1232,9 @@ def render():
                     intro = ". ".join(intro_lines).strip()
                     bottom = ". ".join(bottom_lines).strip()
                     if intro or bottom:
-                        r["intro_text"] = intro[:3000]
+                        r["intro_text"] = intro[:5000]
                         r["intro_word_count"] = len(intro.split()) if intro else 0
-                        r["bottom_text"] = bottom[:3000]
+                        r["bottom_text"] = bottom[:15000]
                         r["bottom_word_count"] = len(bottom.split()) if bottom else 0
                         r["total_editorial_words"] = r["intro_word_count"] + r["bottom_word_count"]
                         fixed_ed += 1

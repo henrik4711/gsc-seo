@@ -505,9 +505,9 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
                 else:
                     bottom_parts.append(text)
 
-            result["intro_text"] = " ".join(intro_parts)[:3000]
+            result["intro_text"] = " ".join(intro_parts)[:5000]
             result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
-            result["bottom_text"] = " ".join(bottom_parts)[:3000]
+            result["bottom_text"] = " ".join(bottom_parts)[:15000]  # Category pages can have 2000+ words
             result["bottom_word_count"] = len(result["bottom_text"].split()) if result["bottom_text"] else 0
             result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
 

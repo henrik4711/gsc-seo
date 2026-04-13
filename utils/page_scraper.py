@@ -374,7 +374,7 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
     if main_content:
         raw_text = main_content.get_text(separator=" ", strip=True)
         body_text = re.sub(r'\s+', ' ', raw_text).strip()
-        result["body_text"] = body_text[:8000]
+        result["body_text"] = body_text[:20000]  # Full page text, not truncated
         result["word_count"] = len(body_text.split())
 
         # ── Editorial text separation (intro + bottom, excluding product grid)
@@ -402,9 +402,9 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
             else:
                 bottom_parts.append(text)
 
-        result["intro_text"] = " ".join(intro_parts)[:3000]
+        result["intro_text"] = " ".join(intro_parts)[:5000]
         result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
-        result["bottom_text"] = " ".join(bottom_parts)[:3000]
+        result["bottom_text"] = " ".join(bottom_parts)[:15000]  # Category pages can have 2000+ words
         result["bottom_word_count"] = len(result["bottom_text"].split()) if result["bottom_text"] else 0
         result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
 
