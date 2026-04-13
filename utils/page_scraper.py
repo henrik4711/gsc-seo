@@ -531,7 +531,7 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
         main = soup.find("div", class_="xmx-page-content") or soup.find("main") or soup.body
         if main:
             raw = re.sub(r'\s+', ' ', main.get_text(separator=" ", strip=True))
-            result["body_text"] = raw[:8000]
+            result["body_text"] = raw[:20000]
             result["word_count"] = len(raw.split())
 
         # Images

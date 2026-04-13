@@ -1462,9 +1462,16 @@ def render():
                         is_product_by_schema = any("product" in str(s).lower() for s in schemas) and not any("itemlist" in str(s).lower() for s in schemas)
 
                         if page_data.get("success") or page_data.get("title"):
+                            # Copy ALL useful fields from fresh scrape to audit_results
                             for key in ("template_type", "has_accordion_product",
                                         "has_breadcrumb_schema", "body_classes",
-                                        "schema_types", "product_count"):
+                                        "schema_types", "product_count",
+                                        "body_text", "word_count",
+                                        "intro_text", "intro_word_count",
+                                        "bottom_text", "bottom_word_count",
+                                        "total_editorial_words",
+                                        "title", "meta_description", "h1", "h2s",
+                                        "internal_links", "images_without_alt"):
                                 if key in page_data:
                                     r[key] = page_data[key]
 
