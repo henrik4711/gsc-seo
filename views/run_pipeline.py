@@ -1181,6 +1181,67 @@ def render():
     st.markdown("---")
     st.markdown("### Maintenance")
 
+    # ── NUCLEAR: Reset all analyses + AI cache ────────────
+    if "audit_results" in st.session_state:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(
+                "<div style='font-size:0.85rem; color:#ff4455; background:#1a0a0a; border:2px solid #ff4455; border-radius:6px; padding:0.8rem;'>"
+                "<strong>🗑 Reset all analyses + AI cache</strong><br>"
+                "Deletes: quality scores, AI plans, generated texts, cannibalization, "
+                "site validation, ideal structure, gap analysis, plan validation.<br>"
+                "<strong>KEEPS:</strong> GSC data, Ahrefs, Screaming Frog, topic clusters, CTR gaps, audit page data.<br>"
+                "After reset: re-scrape (force all) → step 7 → 8 → 9 → 10 → 11.</div>",
+                unsafe_allow_html=True,
+            )
+        with col2:
+            if st.button("🗑 Reset analyses", key="rp_reset_analyses", use_container_width=True):
+                import os
+                from utils.persistence import AI_CACHE_DIR
+
+                deleted = 0
+                # Delete from session state
+                prefixes_to_delete = (
+                    "_quality_", "_ai_plan_", "_bottom_text_", "_intro_text_",
+                    "_cannibal_meta_", "_cannibal_rewrite_",
+                    "_site_validation", "_ideal_structure", "_gap_analysis", "_plan_validation",
+                    "_refresh_all_result", "_cluster_health_",
+                )
+                keys_to_del = [k for k in st.session_state
+                               if any(k.startswith(p) for p in prefixes_to_delete)]
+                for k in keys_to_del:
+                    del st.session_state[k]
+                    deleted += 1
+
+                # Also delete cannibalization DataFrame
+                if "cannibalization" in st.session_state:
+                    del st.session_state["cannibalization"]
+                    deleted += 1
+
+                # Delete from disk
+                disk_deleted = 0
+                if os.path.isdir(AI_CACHE_DIR):
+                    for f in os.listdir(AI_CACHE_DIR):
+                        if any(f.startswith(p) for p in prefixes_to_delete):
+                            try:
+                                os.remove(os.path.join(AI_CACHE_DIR, f))
+                                disk_deleted += 1
+                            except Exception:
+                                pass
+                # Delete cannibalization from disk
+                cannibal_path = os.path.join("/data", "cannibalization.json")
+                if os.path.exists(cannibal_path):
+                    try:
+                        os.remove(cannibal_path)
+                        disk_deleted += 1
+                    except Exception:
+                        pass
+
+                st.success(f"🗑 Reset done: {deleted} session keys + {disk_deleted} disk files deleted. Now: re-scrape (force all) → step 7 → 8 → 9 → 10 → 11.")
+                st.rerun()
+
+        st.markdown("---")
+
     # ── ONE-CLICK: Refresh all analyses ────────────────────
     if "audit_results" in st.session_state:
         col1, col2 = st.columns([3, 1])
