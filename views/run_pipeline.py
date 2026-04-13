@@ -1424,6 +1424,7 @@ def render():
                 f"Products misclassified as categories will be corrected.</div>",
                 unsafe_allow_html=True,
             )
+        force_all = st.checkbox("Force re-scrape ALL (ignore cached text)", key="rp_force_rescrape")
         with col2:
             if st.button(f"Re-scrape {len(category_pages)}", key="rp_rescrape_cats", use_container_width=True):
                 from utils.page_scraper import scrape_page, reset_playwright
@@ -1448,7 +1449,7 @@ def render():
 
                     # Skip pages that already have full editorial text (from prior run)
                     existing_bottom = len(r.get("bottom_text", "") or "")
-                    if existing_bottom > 500:
+                    if existing_bottom > 500 and not force_all:
                         skipped += 1
                         progress.progress(min(1.0, (idx_num + 1) / max(1, total_cats)))
                         continue
