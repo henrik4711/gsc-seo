@@ -1193,6 +1193,12 @@ def render():
                 "No re-scrape needed. Takes 5-15 min depending on number of pages.</div>",
                 unsafe_allow_html=True,
             )
+        existing_q = sum(1 for k in st.session_state if k.startswith("_quality_"))
+        force_reset = st.checkbox("Force reset ALL quality scores (otherwise resumes from crash)", key="rp_force_quality_reset")
+        if force_reset:
+            st.session_state["_refresh_force_reset"] = True
+        if existing_q > 0 and not force_reset:
+            st.caption(f"ℹ {existing_q} quality scores exist — will resume, not restart")
         with col2:
             if st.button("🔄 Refresh all", key="rp_refresh_all", use_container_width=True, type="primary"):
                 import re as _re
@@ -1253,18 +1259,27 @@ def render():
                 save_key("audit_results")
                 progress.progress(0.2)
 
-                # Step 3: Reset quality scores
-                status.text("Step 3/5: Clearing old quality scores...")
-                keys_del = [k for k in st.session_state if k.startswith("_quality_")]
-                for k in keys_del:
-                    del st.session_state[k]
-                if os.path.isdir(AI_CACHE_DIR):
-                    for f in os.listdir(AI_CACHE_DIR):
-                        if f.startswith("_quality_"):
-                            try:
-                                os.remove(os.path.join(AI_CACHE_DIR, f))
-                            except Exception:
-                                pass
+                # Step 3: Reset quality scores — BUT only if not resuming from crash
+                # Check if we're resuming (some quality scores already exist from this session)
+                existing_quality = sum(1 for k in st.session_state if k.startswith("_quality_"))
+                force_reset = st.session_state.get("_refresh_force_reset", False)
+
+                if existing_quality == 0 or force_reset:
+                    status.text("Step 3/5: Clearing old quality scores...")
+                    keys_del = [k for k in st.session_state if k.startswith("_quality_")]
+                    for k in keys_del:
+                        del st.session_state[k]
+                    if os.path.isdir(AI_CACHE_DIR):
+                        for f in os.listdir(AI_CACHE_DIR):
+                            if f.startswith("_quality_"):
+                                try:
+                                    os.remove(os.path.join(AI_CACHE_DIR, f))
+                                except Exception:
+                                    pass
+                    st.session_state["_refresh_force_reset"] = False
+                else:
+                    status.text(f"Step 3/5: Resuming — keeping {existing_quality} existing quality scores...")
+                    keys_del = []  # Nothing deleted
                 progress.progress(0.3)
 
                 # Step 4: Re-run quality check (all pages, crash-safe)
