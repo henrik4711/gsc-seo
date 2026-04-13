@@ -1267,12 +1267,12 @@ def render():
                                 pass
                 progress.progress(0.3)
 
-                # Step 4: Re-run quality check (all pages)
+                # Step 4: Re-run quality check (all pages, crash-safe)
                 status.text("Step 4/5: AI quality check (this takes a few minutes)...")
                 try:
                     total_checked = 0
                     while True:
-                        _run_quality_check()
+                        _run_quality_check()  # Does 50 pages, saves each to disk
                         total_checked += 50
                         remaining = sum(1 for r in results
                                        if r.get("page_type") in ("category", "blog", "faq")
@@ -1284,13 +1284,17 @@ def render():
                         if remaining == 0:
                             break
                 except Exception as e:
-                    status.text(f"Quality check: {e}")
+                    # Quality check crashed — but all completed pages are already saved to disk.
+                    # User can click Refresh All again to continue from where it stopped.
+                    status.text(f"Quality check paused at {total_checked}: {e}")
+                    st.warning(f"⚠ Quality check stopped at {total_checked} pages ({e}). Already-checked pages are saved. Click Refresh All again to continue.")
                 progress.progress(0.85)
 
-                # Step 5: Re-run cannibalization
+                # Step 5: Re-run cannibalization (uses whatever quality data exists)
                 status.text("Step 5/5: Cannibalization detection...")
                 try:
                     _run_cannibalization()
+                    save_key("cannibalization")
                 except Exception as e:
                     status.text(f"Cannibalization: {e}")
                 progress.progress(1.0)
