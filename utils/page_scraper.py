@@ -540,6 +540,33 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
                 1 for img in main.find_all("img") if not img.get("alt", "").strip()
             )
 
+        # Editorial text separation (same as Playwright path)
+        if main:
+            all_paragraphs = main.find_all(["p", "div", "h2", "h3"], recursive=True)
+            intro_parts = []
+            bottom_parts = []
+            found_products = False
+
+            for p_tag in all_paragraphs:
+                text = p_tag.get_text(strip=True)
+                if len(text) < 15:
+                    continue
+                if p_tag.find_parent(attrs={"class": re.compile(r"product|card|grid|item|price|swiper", re.I)}):
+                    found_products = True
+                    continue
+                if p_tag.find_parent(["nav", "footer", "header"]):
+                    continue
+                if not found_products:
+                    intro_parts.append(text)
+                else:
+                    bottom_parts.append(text)
+
+            result["intro_text"] = " ".join(intro_parts)[:5000]
+            result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
+            result["bottom_text"] = " ".join(bottom_parts)[:15000]
+            result["bottom_word_count"] = len(result["bottom_text"].split()) if result["bottom_text"] else 0
+            result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
+
     except Exception as e:
         result["error"] = str(e)
 
