@@ -1494,14 +1494,16 @@ def render():
 
         # Re-scrape + re-classify category pages (picks up new HTML signals)
         col1, col2 = st.columns([3, 1])
-        category_pages = [r for r in st.session_state.get("audit_results", []) if r.get("page_type") == "category"]
+        # Re-scrape all CONTENT pages (not just categories — blogs, FAQ, guides also have editorial text)
+        _rescrape_types = ("category", "blog", "faq", "info")
+        category_pages = [r for r in st.session_state.get("audit_results", []) if r.get("page_type") in _rescrape_types]
         with col1:
             st.markdown(
                 f"<div style='font-size:0.85rem; color:#9b9bb8;'>"
-                f"<strong>Re-scrape all category pages ({len(category_pages)})</strong><br>"
-                f"Re-downloads HTML for all pages currently classified as 'category', then "
-                f"re-classifies them using the latest detection rules (accordion tabs, schema, etc.). "
-                f"Products misclassified as categories will be corrected.</div>",
+                f"<strong>Re-scrape all content pages ({len(category_pages)})</strong><br>"
+                f"Re-downloads HTML for all categories, blogs, FAQ, and guides. "
+                f"Re-extracts editorial text (intro + bottom) with latest parser. "
+                f"Saves every 25 pages. Skips pages with full text unless Force is checked.</div>",
                 unsafe_allow_html=True,
             )
         force_all = st.checkbox("Force re-scrape ALL (ignore cached text)", key="rp_force_rescrape")
