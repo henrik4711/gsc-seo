@@ -1614,13 +1614,15 @@ Site context: {site_context}
 {products_text}
 {images_instruction}
 
-## EXISTING IMAGES IN CURRENT TEXT
-If the current text contains <img> tags, KEEP them in the new text at appropriate
-positions. Do NOT remove existing images. You may add new product images from the
-list above, but preserve any that already exist.
+## EXISTING IMAGES IN CURRENT TEXT — CRITICAL
+If the current text contains <img> tags, you MUST:
+1. KEEP every existing image in the new text — do NOT remove any
+2. Use the EXACT same src URL — do NOT change or invent image URLs
+3. Place them at natural positions (after relevant H2, not clustered)
+4. You may add product images from the PRODUCT IMAGES list above, but NEVER invent image URLs
 
 ## CURRENT TEXT (this is what needs rewriting)
-{current_body[:3000]}
+{current_body[:15000]}
 
 ## PAGE STRUCTURE (Magento category page)
 A category page has TWO text areas separated by a product grid:
