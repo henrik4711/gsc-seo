@@ -167,9 +167,15 @@ def render():
     st.markdown("---")
 
     # ── Generate / Clear buttons ─────────────────────────────────
+    # Count pages that still need a plan
+    _uncached = [p for p in pages if f"_ai_plan_{stable_hash(p['url'])}" not in st.session_state]
+    _uncached_count = len(_uncached)
+    _batch_size = 10
+
     col_gen, col_clear, col_info = st.columns([1, 1, 2])
     with col_gen:
-        gen_top = st.button("Generate plans for top 10 pages", type="primary")
+        gen_label = f"Generate next {min(_batch_size, _uncached_count)} plans" if _uncached_count > 0 else "All pages have plans"
+        gen_top = st.button(gen_label, type="primary", disabled=_uncached_count == 0)
     with col_clear:
         if st.button("Clear all cached plans"):
             keys_to_del = [k for k in st.session_state if k.startswith("_ai_plan_") or k.startswith("_kw_filter_") or k.startswith("impl_ai_")]
@@ -178,8 +184,8 @@ def render():
             st.rerun()
     with col_info:
         st.markdown(
-            "<span style='font-size:0.75rem; color:#6b6b8a;'>"
-            "~20 seconds per page. Plans are cached — you only pay once per page.</span>",
+            f"<span style='font-size:0.75rem; color:#6b6b8a;'>"
+            f"~20 sec/page. {_uncached_count} pages remaining. Plans are cached — you only pay once per page.</span>",
             unsafe_allow_html=True,
         )
 
@@ -187,19 +193,15 @@ def render():
         from utils.ai_generator import get_client, generate_page_implementation_plan
         client = get_client(get_anthropic_key())
 
-        with st.status(f"Generating AI plans for top 10 pages...", expanded=True) as status:
+        batch = _uncached[:_batch_size]
+        with st.status(f"Generating AI plans for {len(batch)} pages...", expanded=True) as status:
             progress = st.progress(0)
             log = st.empty()
 
-            top_pages = pages[:10]
-            for i, p in enumerate(top_pages):
+            for i, p in enumerate(batch):
                 plan_key = f"_ai_plan_{stable_hash(p['url'])}"
-                if plan_key in st.session_state:
-                    log.write(f"[{i+1}/10] {p['url']} — already cached")
-                    progress.progress((i + 1) / 10)
-                    continue
-
-                log.write(f"[{i+1}/10] {p['url']}...")
+                short = p['url'].split('/')[-1][:50] if '/' in p['url'] else p['url'][:50]
+                log.write(f"[{i+1}/{len(batch)}] {short}...")
                 try:
                     page_r = _find_audit(p["url"]) or None
                     if not page_r:
@@ -221,9 +223,9 @@ def render():
                 # Save after EACH page — never lose results
                 from utils.persistence import save_ai_cache
                 save_ai_cache()
-                progress.progress((i + 1) / 10)
+                progress.progress((i + 1) / len(batch))
 
-            status.update(label="Plans generated", state="complete", expanded=False)
+            status.update(label=f"{len(batch)} plans generated", state="complete", expanded=False)
         st.rerun()
 
     # ── Pagination ────────────────────────────────────────────────
