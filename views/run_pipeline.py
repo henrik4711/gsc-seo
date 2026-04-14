@@ -1521,7 +1521,7 @@ def render():
                 scraped = 0
                 log_lines = []
                 status_text = st.empty()
-                cat_indices = [i for i, r in enumerate(results) if r.get("page_type") == "category"]
+                cat_indices = [i for i, r in enumerate(results) if r.get("page_type") in _rescrape_types]
                 total_cats = len(cat_indices)
                 skipped = 0
                 for idx_num, i in enumerate(cat_indices):
