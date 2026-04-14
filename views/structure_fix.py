@@ -196,14 +196,18 @@ def _render_unclustered(unclustered, cluster_names):
         "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
         "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600;'>What is this?</div>"
         "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
-        "A 'cluster' is a group of pages about the same topic. Google rewards sites where related pages "
-        "are clearly connected. These pages below are 'orphans' — they don't belong to any topic group yet.</div>"
-        "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>What to do:</div>"
+        "A 'cluster' is a group of pages about the same topic (e.g. all dildo pages, all vibrator pages). "
+        "Google rewards sites where related pages are clearly connected. "
+        "These pages below don't belong to any topic group yet — they're invisible to Google's topic understanding.</div>"
+        "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>How to pick the right cluster:</div>"
         "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
-        "1. Start with the high-traffic pages at the top (most impressions first)<br>"
-        "2. Pick the cluster that best matches what the page is about<br>"
-        "3. If no cluster fits, leave it blank for now<br>"
-        "4. Click 'Save cluster assignments' when done with a batch</div>"
+        "Look at the page URL — it usually tells you what the page is about. Then pick the cluster "
+        "name that matches. Examples:<br>"
+        "• <code>/bondage-bdsm/handklovar</code> → pick a cluster like 'bondage' or 'bdsm'<br>"
+        "• <code>/sexleksaker/vibratorer/bullet</code> → pick a 'vibratorer' cluster<br>"
+        "• <code>/blogg/guide-till-dildos</code> → pick a 'dildos' cluster<br><br>"
+        "<strong>If no cluster fits:</strong> leave it blank. That's OK.<br>"
+        "<strong>You don't need to do all at once:</strong> do 25, click Save, come back later for the next batch.</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -311,14 +315,18 @@ def _render_cluster_balance(clusters, audit_lookup):
         "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
         "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600;'>What is this?</div>"
         "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
-        "Each topic cluster should have 3-14 pages. Too few pages means Google doesn't see you as an authority "
-        "on that topic. Too many pages means they compete against each other (cannibalization).</div>"
-        "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Color guide:</div>"
+        "Each topic cluster should ideally have 3-14 pages. Think of it like a bookshelf: "
+        "a topic with only 1 book looks weak, but 20 books about the same thing is confusing.</div>"
+        "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Color guide — what to do:</div>"
         "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
-        "<span style='color:#ff4455;'>RED</span> = Needs more pages (high traffic but only 1-2 pages — big opportunity)<br>"
-        "<span style='color:#ffaa33;'>YELLOW</span> = Too many pages (15+ pages competing — consider merging some)<br>"
-        "<span style='color:#33dd88;'>GREEN</span> = Healthy size (3-14 pages — no action needed)<br>"
-        "<span style='color:#6b6b8a;'>GREY</span> = Low priority (few pages AND low traffic — fix later)</div>"
+        "<span style='color:#ff4455;'>RED — Needs more pages</span>: High traffic but only 1-2 pages. "
+        "This is a big opportunity! Create 3-5 new pages: a guide, a comparison, a FAQ, or blog posts about subtopics. "
+        "Use the Content Generator to write them.<br><br>"
+        "<span style='color:#ffaa33;'>YELLOW — Too many pages</span>: 15+ pages competing for the same topic. "
+        "Look at the page list below — are some pages very similar? Those should be merged (combine content into one page, "
+        "redirect the other). Check the Structure Actions tab for specific merge suggestions.<br><br>"
+        "<span style='color:#33dd88;'>GREEN — Healthy</span>: 3-14 pages. No action needed right now. Focus on red and yellow first.<br><br>"
+        "<span style='color:#6b6b8a;'>GREY — Low priority</span>: Few pages AND low traffic. Fix these last, or ignore them for now.</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -371,14 +379,27 @@ def _render_cluster_balance(clusters, audit_lookup):
         suggestion = ""
         if label == "NEEDS EXPANSION":
             suggestion = (
-                "<div style='color:#ffaa33; font-size:0.75rem; margin-top:0.3rem;'>"
-                f"This cluster has {impr:,} impressions but only {pc} pages. "
-                "Add 3-5 supporting pages: blog posts, guides, or comparison articles targeting subtopics.</div>"
+                "<div style='background:#1a1020; border-radius:4px; padding:0.5rem; margin-top:0.4rem;'>"
+                "<div style='color:#ffaa33; font-size:0.75rem; font-weight:600;'>ACTION NEEDED:</div>"
+                "<div style='color:#c8b4ff; font-size:0.75rem; margin-top:0.2rem;'>"
+                f"This topic gets {impr:,} searches but you only have {pc} page(s). Google doesn't see you as an expert here. "
+                "To fix this:<br>"
+                f"1. Go to the <strong>Unclustered Pages</strong> tab and assign relevant orphan pages to this cluster<br>"
+                f"2. Create 2-4 new pages: a buying guide, a comparison article ('best {topic}'), or FAQ page<br>"
+                f"3. Use the Content Generator in this tool to write them<br>"
+                f"4. Link all pages in this cluster to each other</div></div>"
             )
         elif label == "OVERSATURATED":
             suggestion = (
-                "<div style='color:#ffaa33; font-size:0.75rem; margin-top:0.3rem;'>"
-                f"{pc} pages compete for the same topic. Consider merging similar pages or splitting into sub-clusters.</div>"
+                "<div style='background:#1a1a10; border-radius:4px; padding:0.5rem; margin-top:0.4rem;'>"
+                "<div style='color:#ffaa33; font-size:0.75rem; font-weight:600;'>ACTION NEEDED:</div>"
+                "<div style='color:#c8b4ff; font-size:0.75rem; margin-top:0.2rem;'>"
+                f"With {pc} pages, these are likely competing in Google for the same keywords. "
+                "To fix this:<br>"
+                "1. Open the page list below and look for pages that are very similar<br>"
+                "2. Merge similar pages: combine content into the strongest one, 301 redirect the rest<br>"
+                "3. For pages that are different enough to keep: make sure each targets a DIFFERENT keyword<br>"
+                "4. Check the Cannibalization view to see which specific keywords conflict</div></div>"
             )
 
         # Page list for expander
@@ -410,9 +431,20 @@ def _render_cluster_balance(clusters, audit_lookup):
 def render():
     st.markdown("## Structure Fix")
     st.markdown(
-        "<p style='color:#9b9bb8; margin-bottom:1.5rem;'>"
-        "Fix site-wide structural issues before optimizing individual pages. "
-        "Work through the tabs left to right.</p>",
+        "<div style='background:#0d0d15; border:1px solid #5533ff; border-radius:8px; padding:1rem; margin-bottom:1.5rem;'>"
+        "<div style='font-size:1rem; color:#e8e8f0; font-weight:700; margin-bottom:0.5rem;'>How to work through this (do it in order)</div>"
+        "<div style='font-size:0.85rem; color:#c8b4ff;'>"
+        "<strong>Step A — Structure Actions tab:</strong> Review and approve merges, deletes, and new pages. "
+        "Then do the actual changes in Magento (redirects, delete pages, create pages). "
+        "This is typically 1-2 hours of work.<br><br>"
+        "<strong>Step B — Unclustered Pages tab:</strong> Assign orphan pages to topic clusters. "
+        "You don't need to do all 100+ at once — start with the top 25 (highest traffic) and save. "
+        "Come back and do more later. This is just picking from a dropdown.<br><br>"
+        "<strong>Step C — Cluster Balance tab:</strong> Review which clusters need more content (red) "
+        "or have too many pages (yellow). Use this to plan what content to create or merge next.<br><br>"
+        "<strong>When done:</strong> Go back to Run Pipeline and re-run Step 7 + 8. Then your individual "
+        "page plans (Quick Wins, Action Plan) will work much better because the foundation is fixed."
+        "</div></div>",
         unsafe_allow_html=True,
     )
 
