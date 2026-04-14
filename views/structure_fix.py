@@ -112,19 +112,23 @@ def _render_structure_actions(ideal, audit_lookup):
 
     # ── Deletes ──
     if deletes:
-        st.markdown("### Delete pages")
+        st.markdown("### Remove or hide pages from Google")
         st.markdown(
             "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
             "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600;'>What does this mean?</div>"
             "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
-            "These pages add no SEO value. They have little or no traffic, thin content, "
-            "and they dilute the site's overall quality signal to Google.</div>"
-            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>How to do it:</div>"
+            "These pages add no SEO value and dilute your site's quality signal to Google. "
+            "But you have <strong>two options</strong> — you don't have to delete them:</div>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Option 1 — Noindex (keep page, hide from Google):</div>"
             "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
-            "1. Find the nearest relevant page on the site (e.g. the parent category)<br>"
-            "2. Set up a <strong>301 redirect</strong> from this URL to that page<br>"
-            "3. Then delete or disable the page in Magento<br>"
-            "4. If impressions are high (red warning below), double-check before deleting!</div>"
+            "Best for pages you still need (like /b2b) but don't want Google to index.<br>"
+            "In Magento: open the page → Design tab → add <code>&lt;meta name=\"robots\" content=\"noindex,follow\"&gt;</code> "
+            "to Custom Layout Update. The page stays live for visitors but Google ignores it.</div>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Option 2 — Delete + redirect:</div>"
+            "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+            "Best for pages nobody needs anymore.<br>"
+            "1. Set up a 301 redirect to the nearest relevant page<br>"
+            "2. Then delete the page in Magento</div>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -136,7 +140,7 @@ def _render_structure_actions(ideal, audit_lookup):
             impr = da.get("impressions", 0) or 0
 
             border_color = "#ff4455" if impr > 100 else "#2a2a40"
-            warning = f"<div style='color:#ff4455; font-size:0.7rem;'>WARNING: {impr:,} impressions — verify before deleting</div>" if impr > 100 else ""
+            warning = f"<div style='color:#ffaa33; font-size:0.7rem;'>This page has {impr:,} impressions — consider <strong>noindex</strong> instead of deleting</div>" if impr > 100 else ""
 
             st.markdown(
                 f"<div style='background:#12121f; border-left:3px solid {border_color}; padding:0.8rem; margin-bottom:0.5rem; border-radius:0 6px 6px 0;'>"
@@ -146,7 +150,11 @@ def _render_structure_actions(ideal, audit_lookup):
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            st.checkbox("Approved", key=f"sf_delete_{stable_hash(url)}")
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.checkbox("Noindex (keep page, hide from Google)", key=f"sf_noindex_{stable_hash(url)}")
+            with col_d2:
+                st.checkbox("Delete + redirect", key=f"sf_delete_{stable_hash(url)}")
 
     # ── Creates ──
     if creates:
