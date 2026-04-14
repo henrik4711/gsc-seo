@@ -70,7 +70,21 @@ def _render_structure_actions(ideal, audit_lookup):
     # ── Merges ──
     if merges:
         st.markdown("### Merge pages")
-        st.markdown("<p style='color:#9b9bb8; font-size:0.85rem;'>Combine these pages to consolidate authority. Set up 301 redirects from the 'from' URLs to the 'to' URL.</p>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600;'>What does this mean?</div>"
+            "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+            "These pages cover the same topic and compete with each other in Google. "
+            "By merging them into one strong page, you consolidate all SEO authority in one place.</div>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>How to do it:</div>"
+            "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+            "1. Copy any unique content from the FROM pages into the TO page<br>"
+            "2. In Magento Admin: set up a <strong>301 redirect</strong> from each FROM URL to the TO URL "
+            "(Catalog &rarr; URL Rewrites &rarr; Add URL Rewrite)<br>"
+            "3. After verifying the redirects work, delete the old FROM pages</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
         for m in merges:
             to_url = m.get("to", "")
@@ -99,7 +113,21 @@ def _render_structure_actions(ideal, audit_lookup):
     # ── Deletes ──
     if deletes:
         st.markdown("### Delete pages")
-        st.markdown("<p style='color:#9b9bb8; font-size:0.85rem;'>Remove low-value pages that dilute site authority. Redirect to nearest relevant page.</p>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600;'>What does this mean?</div>"
+            "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+            "These pages add no SEO value. They have little or no traffic, thin content, "
+            "and they dilute the site's overall quality signal to Google.</div>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>How to do it:</div>"
+            "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+            "1. Find the nearest relevant page on the site (e.g. the parent category)<br>"
+            "2. Set up a <strong>301 redirect</strong> from this URL to that page<br>"
+            "3. Then delete or disable the page in Magento<br>"
+            "4. If impressions are high (red warning below), double-check before deleting!</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
         for d in deletes:
             url = d.get("url", "")
@@ -123,7 +151,21 @@ def _render_structure_actions(ideal, audit_lookup):
     # ── Creates ──
     if creates:
         st.markdown("### Create new pages")
-        st.markdown("<p style='color:#9b9bb8; font-size:0.85rem;'>New pages needed to fill content gaps and strengthen cluster coverage.</p>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600;'>What does this mean?</div>"
+            "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+            "Google searches show demand for these topics, but mshop.se has no page targeting them. "
+            "Creating these pages captures traffic that currently goes to competitors.</div>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>How to do it:</div>"
+            "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+            "1. Create the page in Magento (category or CMS page, depending on type)<br>"
+            "2. Write quality content targeting the keyword shown below<br>"
+            "3. Add internal links from related existing pages to the new page<br>"
+            "4. Use the Content Generator in this tool to get AI-written text</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
         for c in creates:
             url = c.get("url", "")
@@ -149,6 +191,22 @@ def _render_unclustered(unclustered, cluster_names):
     if total == 0:
         st.success("All non-product pages are assigned to clusters!")
         return
+
+    st.markdown(
+        "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
+        "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600;'>What is this?</div>"
+        "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+        "A 'cluster' is a group of pages about the same topic. Google rewards sites where related pages "
+        "are clearly connected. These pages below are 'orphans' — they don't belong to any topic group yet.</div>"
+        "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>What to do:</div>"
+        "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+        "1. Start with the high-traffic pages at the top (most impressions first)<br>"
+        "2. Pick the cluster that best matches what the page is about<br>"
+        "3. If no cluster fits, leave it blank for now<br>"
+        "4. Click 'Save cluster assignments' when done with a batch</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     # Count assigned
     assigned = sum(1 for p in unclustered if st.session_state.get(f"sf_assign_{stable_hash(p['url'])}", ""))
@@ -248,6 +306,22 @@ def _render_cluster_balance(clusters, audit_lookup):
     if not clusters:
         st.info("No clusters available. Run Step 5 (Topic Clusters) first.")
         return
+
+    st.markdown(
+        "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
+        "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600;'>What is this?</div>"
+        "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+        "Each topic cluster should have 3-14 pages. Too few pages means Google doesn't see you as an authority "
+        "on that topic. Too many pages means they compete against each other (cannibalization).</div>"
+        "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Color guide:</div>"
+        "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+        "<span style='color:#ff4455;'>RED</span> = Needs more pages (high traffic but only 1-2 pages — big opportunity)<br>"
+        "<span style='color:#ffaa33;'>YELLOW</span> = Too many pages (15+ pages competing — consider merging some)<br>"
+        "<span style='color:#33dd88;'>GREEN</span> = Healthy size (3-14 pages — no action needed)<br>"
+        "<span style='color:#6b6b8a;'>GREY</span> = Low priority (few pages AND low traffic — fix later)</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     # Classify clusters
     red = []  # 1-2 pages, high impressions
