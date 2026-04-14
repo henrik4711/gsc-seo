@@ -395,6 +395,8 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         # Same logic as deep_scrape_category: split text at product grid boundary.
         # Paragraphs BEFORE product elements = intro_text (top)
         # Paragraphs AFTER product elements = bottom_text (footer)
+        _PRODUCT_RE = re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide|category-product|xmx-category-product", re.I)
+        _SKIP_RE = re.compile(r"xmx-drawer|xmx-filter|xmx-breadcrumb|xmx-trust-point|xmx-carousel|xmx-glossary|xmx-category-grid-message|xmx-category-grid-banner", re.I)
         all_paragraphs = main_content.find_all(["p", "div", "h2", "h3"], recursive=True)
         intro_parts = []
         bottom_parts = []
@@ -404,9 +406,17 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
             text = p_tag.get_text(strip=True)
             if len(text) < 15:
                 continue
-            # Skip elements inside product cards/grid
-            if p_tag.find_parent(attrs={"class": re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide|category-product|xmx-category-product", re.I)}):
+            # Skip elements that ARE product cards (not just children of them)
+            own_classes = " ".join(p_tag.get("class", []))
+            if _PRODUCT_RE.search(own_classes):
                 found_products = True
+                continue
+            # Skip elements inside product cards/grid
+            if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
+                found_products = True
+                continue
+            # Skip filter UI, breadcrumbs, drawers, glossary links
+            if _SKIP_RE.search(own_classes) or p_tag.find_parent(attrs={"class": _SKIP_RE}):
                 continue
             # Skip navigation, menus, footer
             if p_tag.find_parent(["nav", "footer", "header"]):
@@ -575,6 +585,8 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
 
         # Editorial text separation (same as Playwright path)
         if main:
+            _PRODUCT_RE = re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide|category-product|xmx-category-product", re.I)
+            _SKIP_RE = re.compile(r"xmx-drawer|xmx-filter|xmx-breadcrumb|xmx-trust-point|xmx-carousel|xmx-glossary|xmx-category-grid-message|xmx-category-grid-banner", re.I)
             all_paragraphs = main.find_all(["p", "div", "h2", "h3"], recursive=True)
             intro_parts = []
             bottom_parts = []
@@ -584,8 +596,14 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
                 text = p_tag.get_text(strip=True)
                 if len(text) < 15:
                     continue
-                if p_tag.find_parent(attrs={"class": re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide|category-product|xmx-category-product", re.I)}):
+                own_classes = " ".join(p_tag.get("class", []))
+                if _PRODUCT_RE.search(own_classes):
                     found_products = True
+                    continue
+                if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
+                    found_products = True
+                    continue
+                if _SKIP_RE.search(own_classes) or p_tag.find_parent(attrs={"class": _SKIP_RE}):
                     continue
                 if p_tag.find_parent(["nav", "footer", "header"]):
                     continue
