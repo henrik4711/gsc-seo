@@ -349,6 +349,17 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
     # Work on a copy for text extraction
     text_soup = BeautifulSoup(html, "html.parser")
 
+    # Capture SEO footer BEFORE decomposing footer elements
+    seo_footer_pw = text_soup.find("div", class_=re.compile(r"seo-footer|seo-content|seo-text|category-seo|footer-seo", re.I))
+    seo_footer_text_pw = ""
+    seo_footer_parts_pw = []
+    if seo_footer_pw:
+        seo_footer_text_pw = seo_footer_pw.get_text(separator=" ", strip=True)
+        for p_tag in seo_footer_pw.find_all(["p", "h2", "h3", "div"], recursive=True):
+            text = p_tag.get_text(strip=True)
+            if len(text) >= 15:
+                seo_footer_parts_pw.append(text)
+
     # Remove non-content elements
     for tag in text_soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "svg"]):
         tag.decompose()
@@ -373,8 +384,11 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
 
     if main_content:
         raw_text = main_content.get_text(separator=" ", strip=True)
+        # Also include SEO footer text (captured before decompose)
+        if seo_footer_text_pw:
+            raw_text += " " + seo_footer_text_pw
         body_text = re.sub(r'\s+', ' ', raw_text).strip()
-        result["body_text"] = body_text[:20000]  # Full page text, not truncated
+        result["body_text"] = body_text[:20000]
         result["word_count"] = len(body_text.split())
 
         # ── Editorial text separation (intro + bottom, excluding product grid)
@@ -401,6 +415,12 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
                 intro_parts.append(text)
             else:
                 bottom_parts.append(text)
+
+        # Add SEO footer content (captured before decompose)
+        if seo_footer_parts_pw:
+            bottom_parts.extend(seo_footer_parts_pw)
+            if not found_products:
+                found_products = True
 
         result["intro_text"] = " ".join(intro_parts)[:5000]
         result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
@@ -526,11 +546,24 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
         result["internal_link_count"] = len(result["internal_links"])
 
         # Body text from content area
+        # Capture SEO footer BEFORE decomposing footer elements
+        seo_footer_req = soup.find("div", class_=re.compile(r"seo-footer|seo-content|seo-text|category-seo|footer-seo", re.I))
+        seo_footer_text_req = ""
+        seo_footer_parts_req = []
+        if seo_footer_req:
+            seo_footer_text_req = seo_footer_req.get_text(separator=" ", strip=True)
+            for p_tag in seo_footer_req.find_all(["p", "h2", "h3", "div"], recursive=True):
+                text = p_tag.get_text(strip=True)
+                if len(text) >= 15:
+                    seo_footer_parts_req.append(text)
+
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
             tag.decompose()
         main = soup.find("div", class_="xmx-page-content") or soup.find("main") or soup.body
         if main:
             raw = re.sub(r'\s+', ' ', main.get_text(separator=" ", strip=True))
+            if seo_footer_text_req:
+                raw += " " + seo_footer_text_req
             result["body_text"] = raw[:20000]
             result["word_count"] = len(raw.split())
 
@@ -560,6 +593,12 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
                     intro_parts.append(text)
                 else:
                     bottom_parts.append(text)
+
+            # Add SEO footer content to bottom parts
+            if seo_footer_parts_req:
+                bottom_parts.extend(seo_footer_parts_req)
+                if not found_products:
+                    found_products = True
 
             result["intro_text"] = " ".join(intro_parts)[:5000]
             result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
