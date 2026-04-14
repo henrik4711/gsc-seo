@@ -364,6 +364,7 @@ STEPS = [
     ("🎯 Action Center",       "action_center","_action_center_viewed", "All recommendations + AI generation"),
     ("⚡ Quick Wins",          "quick_wins",   "_quick_wins_viewed", "One page at a time, fully prepared"),
     ("🧹 Site Cleanup",        "site_cleanup", "_site_cleanup_viewed", "Pages to delete, merge, redirect, noindex"),
+    ("🏗 Structure Fix",       "structure_fix","_structure_fix_viewed", "Merge/delete/create + cluster unclustered pages"),
     ("1. Setup & Connect",    "setup",        "gsc_data",          "Connect GSC + API keys"),
     ("2. Upload Ahrefs",      "ahrefs",       "page_authority",    "Upload backlink data"),
     ("3. CTR Analysis",       "ctr",          "ctr_gaps",          "Find underperformers"),
@@ -489,6 +490,9 @@ elif "Quick Wins" in selected:
 elif "Site Cleanup" in selected:
     from views import site_cleanup
     site_cleanup.render()
+elif "Structure Fix" in selected:
+    from views import structure_fix
+    structure_fix.render()
 elif "Setup" in selected:
     from views import setup
     setup.render()
