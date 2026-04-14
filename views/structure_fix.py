@@ -119,12 +119,19 @@ def _render_structure_actions(ideal, audit_lookup):
             "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
             "These pages add no SEO value and dilute your site's quality signal to Google. "
             "But you have <strong>two options</strong> — you don't have to delete them:</div>"
-            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Option 1 — Noindex (keep page, hide from Google):</div>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Option 1 — Block in robots.txt (best for most cases):</div>"
             "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
-            "Best for pages you still need (like /b2b) but don't want Google to index.<br>"
-            "In Magento: open the page → Design tab → add <code>&lt;meta name=\"robots\" content=\"noindex,follow\"&gt;</code> "
-            "to Custom Layout Update. The page stays live for visitors but Google ignores it.</div>"
-            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Option 2 — Delete + redirect:</div>"
+            "Best for pages you still need (like /b2b) but don't want Google to crawl at all.<br>"
+            "Add <code>Disallow: /b2b</code> (or the page path) to your <code>robots.txt</code> file. "
+            "This saves crawl budget — Google won't even visit the page. "
+            "The page stays live for visitors who have the direct link.</div>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Option 2 — Noindex (if page is linked from external sites):</div>"
+            "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
+            "Use this if the page has backlinks from other websites that you want to preserve.<br>"
+            "robots.txt blocks Google from reading the page, so it can't see the noindex tag. "
+            "In that case: In Magento, open the page → Design tab → add <code>&lt;meta name=\"robots\" content=\"noindex,follow\"&gt;</code> "
+            "to Custom Layout Update. Google still crawls it but won't show it in search results.</div>"
+            "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>Option 3 — Delete + redirect:</div>"
             "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
             "Best for pages nobody needs anymore.<br>"
             "1. Set up a 301 redirect to the nearest relevant page<br>"
@@ -150,10 +157,12 @@ def _render_structure_actions(ideal, audit_lookup):
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            col_d1, col_d2 = st.columns(2)
+            col_d1, col_d2, col_d3 = st.columns(3)
             with col_d1:
-                st.checkbox("Noindex (keep page, hide from Google)", key=f"sf_noindex_{stable_hash(url)}")
+                st.checkbox("Block in robots.txt", key=f"sf_robots_{stable_hash(url)}")
             with col_d2:
+                st.checkbox("Noindex (has backlinks)", key=f"sf_noindex_{stable_hash(url)}")
+            with col_d3:
                 st.checkbox("Delete + redirect", key=f"sf_delete_{stable_hash(url)}")
 
     # ── Creates ──
