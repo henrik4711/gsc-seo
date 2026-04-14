@@ -495,7 +495,7 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
                 text = p.get_text(strip=True)
                 if len(text) < 20:
                     continue
-                if p.find_parent(attrs={"class": re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide", re.I)}):
+                if p.find_parent(attrs={"class": re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide|category-product|xmx-category-product", re.I)}):
                     found_products = True
                     continue
                 if p.find_parent(["nav", "footer", "header"]):
@@ -507,7 +507,7 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
 
             result["intro_text"] = " ".join(intro_parts)[:5000]
             result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
-            result["bottom_text"] = " ".join(bottom_parts)[:15000]  # Category pages can have 2000+ words
+            result["bottom_text"] = " ".join(bottom_parts)[:25000]  # Category pages can have 3000+ words
             result["bottom_word_count"] = len(result["bottom_text"].split()) if result["bottom_text"] else 0
             result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
 
