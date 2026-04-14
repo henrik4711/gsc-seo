@@ -10,28 +10,52 @@ from utils.ui_helpers import stable_hash, normalize_url
 
 
 def _get_page_actions(audit_results, top_n=100):
-    """Build action list per page, sorted by brand-filtered lost clicks."""
-    from utils.page_profile import build_page_profile
+    """Build action list per page, sorted by brand-filtered lost clicks.
+    Optimized: pre-builds lookup dicts instead of calling build_page_profile per page.
+    """
+    import pandas as pd
+
+    # ── Pre-build CTR gaps lookup by normalized URL ──
+    ctr_gaps_by_url = {}
+    ctr_gaps_df = st.session_state.get("ctr_gaps")
+    if ctr_gaps_df is not None and isinstance(ctr_gaps_df, pd.DataFrame) and not ctr_gaps_df.empty:
+        for _, row in ctr_gaps_df.iterrows():
+            norm = normalize_url(row.get("page", ""))
+            lost = float(row.get("lost_clicks_estimate", row.get("lost_clicks", 0)) or 0)
+            if norm not in ctr_gaps_by_url:
+                ctr_gaps_by_url[norm] = 0.0
+            ctr_gaps_by_url[norm] += lost
+
+    # ── Pre-build GSC impressions lookup ──
+    impressions_by_url = {}
+    gsc_data = st.session_state.get("gsc_data")
+    if gsc_data is not None and isinstance(gsc_data, pd.DataFrame) and not gsc_data.empty:
+        for norm_url, group in gsc_data.groupby(gsc_data["page"].apply(normalize_url)):
+            impressions_by_url[norm_url] = int(group["impressions"].sum())
+
     pages = []
     for r in audit_results:
         if not r.get("url"):
             continue
-        # Use brand-filtered lost_clicks from ctr_gaps (via page profile)
-        # instead of raw lost_clicks_estimate which includes brand queries
-        profile = build_page_profile(r["url"])
-        filtered_lost = sum(g.get("lost_clicks", 0) for g in profile.get("ctr_gaps", []))
+        norm = normalize_url(r["url"])
+        url_hash = stable_hash(r["url"])
+
+        # Quality verdict from cached session state (no expensive profile build)
+        quality = st.session_state.get(f"_quality_{url_hash}")
+        verdict = quality.get("verdict") if isinstance(quality, dict) else None
+
         pages.append({
             "url": r["url"],
             "page_type": r.get("page_type", "unknown"),
-            "impressions": profile.get("total_impressions", 0),
-            "lost_clicks": filtered_lost,
+            "impressions": impressions_by_url.get(norm, 0),
+            "lost_clicks": ctr_gaps_by_url.get(norm, 0.0),
             "meta_score": r.get("meta_score"),
             "content_score": r.get("content_score"),
             "title": r.get("title", ""),
             "word_count": r.get("word_count", 0),
             "audit": r,
-            "quality_verdict": profile.get("quality_verdict"),
-            "has_old_text": bool(st.session_state.get(f"_bottom_text_{stable_hash(r['url'])}")),
+            "quality_verdict": verdict,
+            "has_old_text": bool(st.session_state.get(f"_bottom_text_{url_hash}")),
         })
     # Sort: REWRITE pages boosted, then by lost clicks
     for p in pages:
