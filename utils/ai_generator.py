@@ -1614,8 +1614,13 @@ Site context: {site_context}
 {products_text}
 {images_instruction}
 
+## EXISTING IMAGES IN CURRENT TEXT
+If the current text contains <img> tags, KEEP them in the new text at appropriate
+positions. Do NOT remove existing images. You may add new product images from the
+list above, but preserve any that already exist.
+
 ## CURRENT TEXT (this is what needs rewriting)
-{current_body[:2000]}
+{current_body[:3000]}
 
 ## PAGE STRUCTURE (Magento category page)
 A category page has TWO text areas separated by a product grid:
@@ -1631,7 +1636,7 @@ A category page has TWO text areas separated by a product grid:
 2. **PRODUCT GRID** — we CANNOT change this (products with images, prices, names)
 
 3. **BOTTOM TEXT** (footer) — shown BELOW the product grid
-   - 600-1200 words — this is where the real SEO value lives
+   - 800-2000 words — this is where the real SEO value lives
    - Structure with 3-5 H2 headings covering:
      * Buying guide / how to choose (what to look for, materials, features)
      * Product types / variants (explain the differences)
