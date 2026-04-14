@@ -203,43 +203,8 @@ def _generate_all_fixes(page):
                 st.error(f"Plan generation failed: {e}")
                 st.session_state[plan_key] = {"error": str(e), "steps": []}
 
-    # ── Generate page text (only for category pages) — uses unified generator
-    text_key = f"_bottom_text_{url_hash}"
-    if page["page_type"] == "category" and text_key not in st.session_state:
-        with st.spinner("Generating page text with FAQ + E-E-A-T..."):
-            try:
-                result = generate_page_content(url)
-                st.session_state[text_key] = result
-            except Exception as e:
-                st.error(f"Text generation failed: {e}")
-                st.session_state[text_key] = {"error": str(e)}
-
-    # ── Generate intro text rewrite (only for category pages with thin/missing intro)
-    intro_key = f"_intro_text_{url_hash}"
-    intro_words = audit.get("intro_word_count", 0)
-    if (page["page_type"] == "category"
-            and intro_key not in st.session_state
-            and (intro_words < 50 or not audit.get("intro_text"))):
-        with st.spinner("Generating intro text..."):
-            try:
-                missing_kws = []
-                content_audit = audit.get("content_audit") or {}
-                kw_coverage = content_audit.get("keyword_coverage") or {}
-                missing_kws = (kw_coverage.get("missing", []) or [])[:8]
-
-                result = generate_intro_rewrite(
-                    client,
-                    missing_keywords=missing_kws,
-                    existing_intro=audit.get("intro_text", "") or "",
-                    page_type=page["page_type"],
-                    url=url,
-                    site_context=site_context,
-                    language=language,
-                )
-                st.session_state[intro_key] = result
-            except Exception as e:
-                st.error(f"Intro generation failed: {e}")
-                st.session_state[intro_key] = {"error": str(e)}
+    # ── Bottom text + intro text are generated on-demand (not auto) to keep page load fast
+    # They will be triggered by buttons in the page view below
 
     from utils.persistence import save_ai_cache
     save_ai_cache()
@@ -969,11 +934,12 @@ def render():
     # ── Generate / Show fixes ────────────────────────────────
     has_plan = bool(plan_data and not plan_data.get("error"))
     has_text = bool(text_data and not text_data.get("error"))
+    has_intro = bool(intro_data and not intro_data.get("error"))
 
-    if not has_plan or (page["page_type"] == "category" and not has_text):
+    if not has_plan:
         st.markdown("### AI fixes — not generated yet")
-        st.info("Click below to generate all AI fixes for this page (~30-60 seconds)")
-        if st.button("🤖 Generate all fixes", type="primary", use_container_width=True, key=f"gen_all_{url_hash}"):
+        st.info("Click below to generate implementation plan for this page (~20 seconds)")
+        if st.button("Generate plan", type="primary", use_container_width=True, key=f"gen_all_{url_hash}"):
             _generate_all_fixes(page)
             st.rerun()
     else:
@@ -1005,6 +971,22 @@ def render():
         plan = st.session_state.get(plan_key, {})
 
         # ── PRIMARY ACTION: Replace BOTTOM text with AI-generated ──
+        if not has_text and page["page_type"] == "category":
+            st.markdown("#### [PRIMARY] Bottom text — not generated yet")
+            if st.button("Generate bottom text", type="primary", key=f"gen_bottom_{url_hash}"):
+                with st.spinner("Generating page text with FAQ + E-E-A-T..."):
+                    try:
+                        from utils.ai_generator import generate_page_content
+                        result = generate_page_content(url)
+                        st.session_state[text_key] = result
+                    except Exception as e:
+                        st.error(f"Text generation failed: {e}")
+                        st.session_state[text_key] = {"error": str(e)}
+                    from utils.persistence import save_ai_cache
+                    save_ai_cache()
+                st.rerun()
+            st.markdown("---")
+
         if has_text:
             st.markdown("#### [PRIMARY] Replace BOTTOM TEXT (below product grid)")
             st.markdown(
@@ -1203,6 +1185,36 @@ def render():
                 f"Existing intro has {intro_words_current} words — sufficient, not regenerated</div>",
                 unsafe_allow_html=True,
             )
+            st.markdown("---")
+        elif page["page_type"] == "category" and not has_intro:
+            st.markdown(f"#### [INTRO] Intro text — not generated yet ({intro_words_current} words currently)")
+            if st.button("Generate intro text", key=f"gen_intro_{url_hash}"):
+                with st.spinner("Generating intro text..."):
+                    try:
+                        missing_kws = []
+                        content_audit = page["audit"].get("content_audit") or {}
+                        kw_coverage = content_audit.get("keyword_coverage") or {}
+                        missing_kws = (kw_coverage.get("missing", []) or [])[:8]
+                        from utils.ai_generator import get_client, generate_intro_rewrite
+                        client = get_client(get_anthropic_key())
+                        site_context = st.session_state.get("site_context", "")
+                        language = st.session_state.get("content_language", "Swedish")
+                        result = generate_intro_rewrite(
+                            client,
+                            missing_keywords=missing_kws,
+                            existing_intro=page["audit"].get("intro_text", "") or "",
+                            page_type=page["page_type"],
+                            url=url,
+                            site_context=site_context,
+                            language=language,
+                        )
+                        st.session_state[intro_key] = result
+                    except Exception as e:
+                        st.error(f"Intro generation failed: {e}")
+                        st.session_state[intro_key] = {"error": str(e)}
+                    from utils.persistence import save_ai_cache
+                    save_ai_cache()
+                st.rerun()
             st.markdown("---")
 
         # ── Action steps (only if NOT replacing text) ──
