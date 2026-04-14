@@ -1668,7 +1668,9 @@ Each anchor should help Google understand what the TARGET page is about.
    Instead say "priserna varierar beroende på funktioner och kvalitet".
 3. MUST be EVERGREEN — relevant regardless of which products are currently shown
 4. MUST be DIFFERENT from competing pages
-5. E-E-A-T: real product knowledge, material comparisons, honest recommendations
+5. E-E-A-T + TRUST: real product knowledge, material comparisons, honest recommendations.
+   Show EXPERIENCE (e.g. "Vi har sålt sexleksaker i 40 år"), build TRUST (return policy,
+   discreet shipping), and provide genuine VALUE to the customer (help them choose right)
 6. Language: {language}
 7. For /rea/ sale pages: describe the CATEGORY of products on sale and WHY
    they're good value, NOT specific sale items or rotating discounts
