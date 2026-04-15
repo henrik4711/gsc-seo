@@ -60,9 +60,11 @@ def _get_cluster_keywords(url: str) -> list:
 
 
 def render():
+    # Anchor at the absolute top so reruns scroll here, not to ### headings
+    st.markdown("<div id='page-auditor-top'></div>", unsafe_allow_html=True)
     st.markdown("## Page Auditor")
     st.markdown(
-        "<p style='color:#6b6b8a; margin-bottom:2rem;'>Analyze meta title, description and content - with deep analysis of category pages</p>",
+        "<p style='color:#6b6b8a; margin-bottom:1rem;'>Analyze meta title, description and content - with deep analysis of category pages</p>",
         unsafe_allow_html=True
     )
 
@@ -71,6 +73,35 @@ def render():
         return
 
     df = st.session_state["gsc_data"]
+
+    # ── PROMINENT Re-scrape button at the very top ──────────────
+    all_pages_top = df["page"].unique().tolist()
+    already_audited_top = set(r["url"] for r in st.session_state.get("audit_results", []) or [])
+    page_impr_top = df.groupby("page")["impressions"].sum().sort_values(ascending=False)
+
+    st.markdown(
+        f"<div style='background:#0d0d15; border:3px solid #5533ff; border-radius:10px; "
+        f"padding:1.2rem; margin-bottom:1.5rem;'>"
+        f"<div style='font-family:\"Syne\",sans-serif; font-size:1.2rem; font-weight:700; color:#c8b4ff; margin-bottom:0.4rem;'>"
+        f"🔄 Re-scrape all pages (START HERE)</div>"
+        f"<div style='font-size:0.85rem; color:#9b9bb8; margin-bottom:0.8rem;'>"
+        f"{len(all_pages_top)} pages in GSC · {len(already_audited_top)} already audited · "
+        f"{len(all_pages_top) - len(already_audited_top)} new. "
+        f"Re-scrape picks up the latest page_scraper fixes (editorial images, container diagnostics).</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    top_c1, top_c2, top_c3 = st.columns([1, 1, 1])
+    with top_c1:
+        if st.button("🔄 Re-scrape ALL pages (force)", type="primary", key="btn_top_rescrape_all", use_container_width=True):
+            st.session_state["_top_rescrape_trigger"] = "all"
+            st.rerun()
+    with top_c2:
+        if st.button("➕ Scrape NEW pages only", key="btn_top_rescrape_new", use_container_width=True):
+            st.session_state["_top_rescrape_trigger"] = "new"
+            st.rerun()
+    with top_c3:
+        st.caption(f"~{max(1, (len(all_pages_top)) // 60)} min for all · ~1 sec/page")
 
     # ── URL Input ─────────────────────────────────────────────────
     with st.form("audit_form"):
@@ -153,6 +184,18 @@ def render():
                 # Inject into urls and trigger audit
                 urls = pages_to_audit
                 run_audit = True
+
+    # Handle top re-scrape triggers (from prominent top buttons)
+    _top_trigger = st.session_state.pop("_top_rescrape_trigger", None)
+    if _top_trigger == "all":
+        urls = all_pages_top
+        run_audit = True
+    elif _top_trigger == "new":
+        urls = [p for p in all_pages_top if p not in already_audited_top]
+        if not urls:
+            st.success("All pages already audited — nothing new to scrape.")
+        else:
+            run_audit = True
 
     if not urls and not run_audit:
         # Don't block if there's existing audit data to show
@@ -475,8 +518,14 @@ def render():
         st.rerun()
 
     # ── AI Content Quality Check ─────────────────────────────────
+    # Render as HTML (not `###`) so Streamlit doesn't auto-generate an
+    # anchor that browsers scroll to on rerun.
     st.markdown("---")
-    st.markdown("### AI Content Quality Check")
+    st.markdown(
+        "<div style='font-size:1.2rem; font-weight:700; color:#e8e8f0; margin-top:0.5rem;'>"
+        "AI Content Quality Check</div>",
+        unsafe_allow_html=True,
+    )
     st.markdown(
         "<p style='color:#9b9bb8; font-size:0.85rem;'>"
         "AI evaluates text quality on category and blog pages — finds generic filler, "
