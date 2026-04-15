@@ -453,8 +453,17 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         intro_parts = _text_from_exact(_editor_soup, _INTRO_EXACT)
         bottom_parts = _text_from_exact(_editor_soup, _BOTTOM_EXACT)
 
-        # ── Intro fallback: category pages have no dedicated intro container.
-        # Walk paragraphs in main_content BEFORE the product grid.
+        # ── Known ID-based intro on category pages ──────────────
+        # mshop.se categories: <p class="xmx-short-description"
+        #                         id="category-description">Intro text...</p>
+        if not intro_parts:
+            for tag in _editor_soup.find_all(id="category-description"):
+                t = tag.get_text(separator=" ", strip=True)
+                if len(t) >= 15:
+                    intro_parts.append(t)
+
+        # ── Intro fallback: older/custom layouts. Walk paragraphs in
+        # main_content BEFORE the product grid.
         if not intro_parts and main_content:
             for p_tag in main_content.find_all(["p", "h1", "h2", "h3"], recursive=True):
                 # Stop as soon as we hit product grid
