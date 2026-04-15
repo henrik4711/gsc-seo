@@ -391,10 +391,9 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         result["body_text"] = body_text[:20000]
         result["word_count"] = len(body_text.split())
 
-        # ── Editorial text separation (intro + bottom, excluding product grid)
-        # Same logic as deep_scrape_category: split text at product grid boundary.
-        # Paragraphs BEFORE product elements = intro_text (top)
-        # Paragraphs AFTER product elements = bottom_text (footer)
+        # ── Editorial text separation — CONTAINER-BASED ────────────
+        # Find the dedicated intro and footer containers. If they exist,
+        # their text IS the intro/bottom. No complicated grid splitting.
         _PRODUCT_RE = re.compile(
             r"product-card|product-item|products-grid|product-list-item|"
             r"card-product|price-box|swiper-slide|category-product|"
@@ -402,41 +401,72 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
             r"xmx-products-list|xmx-product-list|xmx-product-tile",
             re.I,
         )
-        _SKIP_RE = re.compile(r"xmx-drawer|xmx-filter|xmx-breadcrumb|xmx-trust-point|xmx-carousel|xmx-glossary|xmx-category-grid-message|xmx-category-grid-banner", re.I)
-        all_paragraphs = main_content.find_all(["p", "div", "h2", "h3"], recursive=True)
-        intro_parts = []
-        bottom_parts = []
-        found_products = False
 
-        for p_tag in all_paragraphs:
-            text = p_tag.get_text(strip=True)
-            if len(text) < 15:
-                continue
-            # Skip elements that ARE product cards (not just children of them)
-            own_classes = " ".join(p_tag.get("class", []))
-            if _PRODUCT_RE.search(own_classes):
-                found_products = True
-                continue
-            # Skip elements inside product cards/grid
-            if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
-                found_products = True
-                continue
-            # Skip filter UI, breadcrumbs, drawers, glossary links
-            if _SKIP_RE.search(own_classes) or p_tag.find_parent(attrs={"class": _SKIP_RE}):
-                continue
-            # Skip navigation, menus, footer
-            if p_tag.find_parent(["nav", "footer", "header"]):
-                continue
-            if not found_products:
-                intro_parts.append(text)
-            else:
-                bottom_parts.append(text)
+        # Use a fresh soup (not text_soup — footer/nav already decomposed there)
+        _editor_soup = BeautifulSoup(html, "html.parser")
 
-        # Add SEO footer content (captured before decompose)
-        if seo_footer_parts_pw:
-            bottom_parts.extend(seo_footer_parts_pw)
-            if not found_products:
-                found_products = True
+        # Known container classes per page layout (mshop.se + generic fallbacks)
+        _BOTTOM_CONTAINER_RE = re.compile(
+            r"xmx-seo-footer-section|xmx-seo-footer|"
+            r"xmx-blog-post-content|"
+            r"xmx-product-details-section|xmx-description|"
+            r"seo-footer|seo-content|seo-text|category-seo|footer-seo|"
+            r"description-bottom|category-description-bottom",
+            re.I,
+        )
+        _INTRO_CONTAINER_RE = re.compile(
+            r"xmx-blog-post-head|"
+            r"category-description|category-intro|xmx-category-description|"
+            r"xmx-category-top|xmx-page-top-content|cms-block|"
+            r"category-header-content|description-top",
+            re.I,
+        )
+
+        def _text_from_containers(soup_obj, pattern):
+            """Extract text from all matching containers, skipping product grid."""
+            parts = []
+            for c in soup_obj.find_all(["div", "section", "article"], class_=pattern):
+                # Skip if this container is INSIDE a product grid (nested case)
+                if c.find_parent(attrs={"class": _PRODUCT_RE}):
+                    continue
+                # Get paragraphs + headings inside, but drop any that live
+                # inside a product card descendant
+                local = []
+                for p_tag in c.find_all(["p", "h1", "h2", "h3", "h4", "li"], recursive=True):
+                    if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
+                        continue
+                    t = p_tag.get_text(strip=True)
+                    if len(t) >= 15:
+                        local.append(t)
+                if local:
+                    parts.extend(local)
+                else:
+                    # Container has no paragraphs — take its raw text
+                    t = c.get_text(separator=" ", strip=True)
+                    if len(t) >= 50:
+                        parts.append(t)
+            return parts
+
+        intro_parts = _text_from_containers(_editor_soup, _INTRO_CONTAINER_RE)
+        bottom_parts = _text_from_containers(_editor_soup, _BOTTOM_CONTAINER_RE)
+
+        # ── Fallback: if NO container matched (unknown layout), do a simple
+        # pre-grid / post-grid split on the raw body text.
+        if not intro_parts and not bottom_parts and main_content:
+            found_products = False
+            for p_tag in main_content.find_all(["p", "h2", "h3"], recursive=True):
+                t = p_tag.get_text(strip=True)
+                if len(t) < 15:
+                    continue
+                if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
+                    found_products = True
+                    continue
+                if p_tag.find_parent(["nav", "footer", "header"]):
+                    continue
+                if not found_products:
+                    intro_parts.append(t)
+                else:
+                    bottom_parts.append(t)
 
         result["intro_text"] = " ".join(intro_parts)[:5000]
         result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
