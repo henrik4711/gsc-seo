@@ -405,32 +405,36 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         # Use a fresh soup (not text_soup — footer/nav already decomposed there)
         _editor_soup = BeautifulSoup(html, "html.parser")
 
-        # Known container classes per page layout (mshop.se + generic fallbacks)
-        _BOTTOM_CONTAINER_RE = re.compile(
-            r"xmx-seo-footer-section|xmx-seo-footer|"
-            r"xmx-blog-post-content|"
-            r"xmx-product-details-section|xmx-description|"
-            r"seo-footer|seo-content|seo-text|category-seo|footer-seo|"
-            r"description-bottom|category-description-bottom",
-            re.I,
-        )
-        _INTRO_CONTAINER_RE = re.compile(
-            r"xmx-blog-post-head|"
-            r"category-description|category-intro|xmx-category-description|"
-            r"xmx-category-top|xmx-page-top-content|cms-block|"
-            r"category-header-content|description-top",
-            re.I,
-        )
+        # EXACT class names (not regex substrings — a substring match on
+        # "xmx-description" would also grab xmx-short-description,
+        # xmx-footer-signup-description, xmx-info-popup-text etc.)
+        # Validated against 22 live mshop.se pages covering all page types.
+        _BOTTOM_EXACT = {
+            "xmx-seo-footer-section",   # category SEO footer (3/5 categories)
+            "xmx-blog-post-content",    # blog body (4/5 blogs)
+            "xmx-description",          # product body (5/5 products)
+            # xmx-product-details-section wraps xmx-description + reviews etc.
+            # We prefer xmx-description alone for cleaner output.
+        }
+        _INTRO_EXACT = {
+            "xmx-blog-post-head",       # blog lead paragraph (4/5 blogs)
+            # Categories have NO dedicated intro container on mshop.se —
+            # handled by the fallback splitter below.
+        }
 
-        def _text_from_containers(soup_obj, pattern):
-            """Extract text from all matching containers, skipping product grid."""
+        def _has_exact_class(tag, allowed_set):
+            return bool(set(tag.get("class") or []) & allowed_set)
+
+        def _text_from_exact(soup_obj, allowed_set):
+            """Extract text from all tags whose class list intersects allowed_set."""
             parts = []
-            for c in soup_obj.find_all(["div", "section", "article"], class_=pattern):
-                # Skip if this container is INSIDE a product grid (nested case)
+            for c in soup_obj.find_all(["div", "section", "article"]):
+                if not _has_exact_class(c, allowed_set):
+                    continue
+                # Skip if INSIDE a product grid (nested weird case)
                 if c.find_parent(attrs={"class": _PRODUCT_RE}):
                     continue
-                # Get paragraphs + headings inside, but drop any that live
-                # inside a product card descendant
+                # Collect paragraph-ish text, drop anything inside product cards
                 local = []
                 for p_tag in c.find_all(["p", "h1", "h2", "h3", "h4", "li"], recursive=True):
                     if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
@@ -441,31 +445,41 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
                 if local:
                     parts.extend(local)
                 else:
-                    # Container has no paragraphs — take its raw text
                     t = c.get_text(separator=" ", strip=True)
                     if len(t) >= 50:
                         parts.append(t)
             return parts
 
-        intro_parts = _text_from_containers(_editor_soup, _INTRO_CONTAINER_RE)
-        bottom_parts = _text_from_containers(_editor_soup, _BOTTOM_CONTAINER_RE)
+        intro_parts = _text_from_exact(_editor_soup, _INTRO_EXACT)
+        bottom_parts = _text_from_exact(_editor_soup, _BOTTOM_EXACT)
 
-        # ── Fallback: if NO container matched (unknown layout), do a simple
-        # pre-grid / post-grid split on the raw body text.
-        if not intro_parts and not bottom_parts and main_content:
+        # ── Intro fallback: category pages have no dedicated intro container.
+        # Walk paragraphs in main_content BEFORE the product grid.
+        if not intro_parts and main_content:
+            for p_tag in main_content.find_all(["p", "h1", "h2", "h3"], recursive=True):
+                # Stop as soon as we hit product grid
+                if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
+                    break
+                if p_tag.find_parent(["nav", "footer", "header"]):
+                    continue
+                t = p_tag.get_text(strip=True)
+                if len(t) >= 15:
+                    intro_parts.append(t)
+
+        # ── Bottom fallback: pages with unknown layout (no seo-footer etc.).
+        # Walk paragraphs AFTER the product grid.
+        if not bottom_parts and main_content:
             found_products = False
             for p_tag in main_content.find_all(["p", "h2", "h3"], recursive=True):
-                t = p_tag.get_text(strip=True)
-                if len(t) < 15:
-                    continue
                 if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
                     found_products = True
                     continue
                 if p_tag.find_parent(["nav", "footer", "header"]):
                     continue
-                if not found_products:
-                    intro_parts.append(t)
-                else:
+                t = p_tag.get_text(strip=True)
+                if len(t) < 15:
+                    continue
+                if found_products:
                     bottom_parts.append(t)
 
         result["intro_text"] = " ".join(intro_parts)[:5000]
