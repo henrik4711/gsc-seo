@@ -134,6 +134,27 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
         result["error"] = "beautifulsoup4 not installed"
         return result
 
+    # mshop.se (and most Magento shops) serve full server-rendered HTML.
+    # requests + BeautifulSoup is plenty — no JS execution needed.
+    # Playwright is only needed for SPAs / React / Vue apps that
+    # render content client-side. Starting with requests avoids the
+    # 3x playwright launch failures on Railway and the SEOBot UA trap.
+    try:
+        import streamlit as _st_pw
+        _force_playwright = _st_pw.session_state.get("_force_playwright", False)
+    except Exception:
+        _force_playwright = False
+
+    if not _force_playwright:
+        result["_scraper"] = "requests"
+        req_result = _scrape_with_requests(url, timeout, result)
+        # If requests got a parseable HTML response, use it.
+        if req_result.get("success"):
+            return req_result
+        # If requests failed outright (timeout / DNS / 5xx), try Playwright
+        # as a last resort for sites that might actively block requests.
+        print(f"[scraper] requests failed for {url}: {req_result.get('error')}. Trying Playwright.")
+
     browser = _get_browser()
     if not browser:
         result["_scraper"] = "requests (Playwright unavailable)"
@@ -700,12 +721,18 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
     return result
 
 
-def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
-    """Fallback scraper using requests (no JS rendering)."""
+def _scrape_with_requests(url: str, timeout: int = 30, result: dict = None) -> dict:
+    """Fetch HTML with requests and parse via shared _parse_html."""
+    if result is None:
+        result = {"url": url, "success": False, "error": None,
+                  "title": None, "meta_description": None, "h1": None,
+                  "h2s": [], "h3s": [], "body_text": "", "word_count": 0,
+                  "canonical": None, "schema_types": [],
+                  "internal_links": [], "internal_link_count": 0,
+                  "external_links": 0, "images_without_alt": 0,
+                  "title_length": 0, "description_length": 0}
     try:
         import requests
-        # Use a real-browser UA. "SEOBot/1.0" gets blocked by Cloudflare,
-        # mshop.se, and many other sites with basic bot protection.
         resp = requests.get(url, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                           "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -717,156 +744,23 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
             "Upgrade-Insecure-Requests": "1",
         }, timeout=max(timeout, 30), allow_redirects=True)
         if resp.status_code == 403:
-            result["error"] = f"HTTP 403 Forbidden (bot-blocked). UA may need tuning."
+            result["error"] = f"HTTP 403 Forbidden (bot-blocked)"
             return result
         if resp.status_code >= 400:
             result["error"] = f"HTTP {resp.status_code} from {url}"
             return result
-        soup = BeautifulSoup(resp.text, "html.parser")
+        html = resp.text
+        if not html or len(html) < 500:
+            result["error"] = f"Response too short ({len(html)} bytes)"
+            return result
         result["success"] = True
-
-        title_tag = soup.find("title")
-        if title_tag:
-            result["title"] = title_tag.get_text(strip=True)
-            result["title_length"] = len(result["title"])
-
-        meta_desc = soup.find("meta", attrs={"name": re.compile("description", re.I)})
-        if meta_desc:
-            result["meta_description"] = meta_desc.get("content", "").strip()
-            result["description_length"] = len(result["meta_description"])
-
-        h1 = soup.find("h1")
-        if h1:
-            result["h1"] = h1.get_text(strip=True)
-
-        result["h2s"] = [h.get_text(strip=True) for h in soup.find_all("h2")][:15]
-        result["h3s"] = [h.get_text(strip=True) for h in soup.find_all("h3")][:15]
-
-        # Canonical
-        canonical = soup.find("link", attrs={"rel": "canonical"})
-        if canonical:
-            result["canonical"] = canonical.get("href", "")
-
-        # Schema types
-        for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
-            try:
-                data = json.loads(tag.string or "{}")
-                if isinstance(data, list):
-                    for item in data:
-                        if isinstance(item, dict) and "@type" in item:
-                            result["schema_types"].append(item["@type"])
-                elif "@type" in data:
-                    result["schema_types"].append(data["@type"])
-                if isinstance(data, dict) and "@graph" in data:
-                    for item in data["@graph"]:
-                        if isinstance(item, dict) and "@type" in item:
-                            result["schema_types"].append(item["@type"])
-            except Exception:
-                pass
-
-        # Links from content area (before decomposing nav)
-        content_for_links = (
-            BeautifulSoup(resp.text, "html.parser").find("div", class_="xmx-page-content")
-            or soup.find("main")
-            or soup.body
-        )
-        domain = urlparse(url).netloc
-        seen_urls = set()
-        if content_for_links:
-            for a in content_for_links.find_all("a", href=True):
-                href = a["href"]
-                anchor = a.get_text(strip=True)[:80]
-                if href.startswith("/") and not href.startswith("//"):
-                    href = f"https://{domain}{href}"
-                if href.startswith("http") and domain in href:
-                    from utils.ui_helpers import normalize_url
-                    norm = normalize_url(href)
-                    if norm not in seen_urls:
-                        seen_urls.add(norm)
-                        result["internal_links"].append({"url": norm, "anchor": anchor})
-                elif href.startswith("http"):
-                    result["external_links"] += 1
-        result["internal_link_count"] = len(result["internal_links"])
-
-        # Body text from content area
-        # Capture SEO footer BEFORE decomposing footer elements
-        seo_footer_req = soup.find("div", class_=re.compile(r"seo-footer|seo-content|seo-text|category-seo|footer-seo", re.I))
-        seo_footer_text_req = ""
-        seo_footer_parts_req = []
-        if seo_footer_req:
-            seo_footer_text_req = seo_footer_req.get_text(separator=" ", strip=True)
-            for p_tag in seo_footer_req.find_all(["p", "h2", "h3", "div"], recursive=True):
-                text = p_tag.get_text(strip=True)
-                if len(text) >= 15:
-                    seo_footer_parts_req.append(text)
-
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
-            tag.decompose()
-        main = soup.find("div", class_="xmx-page-content") or soup.find("main") or soup.body
-        if main:
-            raw = re.sub(r'\s+', ' ', main.get_text(separator=" ", strip=True))
-            if seo_footer_text_req:
-                raw += " " + seo_footer_text_req
-            result["body_text"] = raw[:20000]
-            result["word_count"] = len(raw.split())
-
-        # Images
-        if main:
-            result["images_without_alt"] = sum(
-                1 for img in main.find_all("img") if not img.get("alt", "").strip()
-            )
-
-        # Editorial text separation (same as Playwright path)
-        if main:
-            _PRODUCT_RE = re.compile(
-            r"product-card|product-item|products-grid|product-list-item|"
-            r"card-product|price-box|swiper-slide|category-product|"
-            r"xmx-category-product|xmx-category-grid|xmx-product-grid|"
-            r"xmx-products-list|xmx-product-list|xmx-product-tile",
-            re.I,
-        )
-            _SKIP_RE = re.compile(r"xmx-drawer|xmx-filter|xmx-breadcrumb|xmx-trust-point|xmx-carousel|xmx-glossary|xmx-category-grid-message|xmx-category-grid-banner", re.I)
-            all_paragraphs = main.find_all(["p", "div", "h2", "h3"], recursive=True)
-            intro_parts = []
-            bottom_parts = []
-            found_products = False
-
-            for p_tag in all_paragraphs:
-                text = p_tag.get_text(strip=True)
-                if len(text) < 15:
-                    continue
-                own_classes = " ".join(p_tag.get("class", []))
-                if _PRODUCT_RE.search(own_classes):
-                    found_products = True
-                    continue
-                if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
-                    found_products = True
-                    continue
-                if _SKIP_RE.search(own_classes) or p_tag.find_parent(attrs={"class": _SKIP_RE}):
-                    continue
-                if p_tag.find_parent(["nav", "footer", "header"]):
-                    continue
-                if not found_products:
-                    intro_parts.append(text)
-                else:
-                    bottom_parts.append(text)
-
-            # Add SEO footer content to bottom parts
-            if seo_footer_parts_req:
-                bottom_parts.extend(seo_footer_parts_req)
-                if not found_products:
-                    found_products = True
-
-            result["intro_text"] = " ".join(intro_parts)[:5000]
-            result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
-            result["bottom_text"] = " ".join(bottom_parts)[:15000]
-            result["bottom_word_count"] = len(result["bottom_text"].split()) if result["bottom_text"] else 0
-            result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
-
+        # Delegate ALL parsing to shared _parse_html — same logic as
+        # the Playwright path: title, meta, editorial containers,
+        # editorial images, structural signals, container candidates.
+        return _parse_html(result, BeautifulSoup(html, "html.parser"), html, url)
     except Exception as e:
-        result["error"] = str(e)
-
-    return result
+        result["error"] = f"{type(e).__name__}: {e}"
+        return result
 
 
 def evaluate_meta(page_data: dict, target_keywords: list) -> dict:
