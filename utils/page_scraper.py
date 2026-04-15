@@ -444,16 +444,39 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         # these images in the new text with the exact same src.
         editorial_images = []
         _seen_img_src = set()
+        _img_diag = {"total": 0, "skipped_product": 0, "skipped_nav": 0,
+                     "skipped_no_src": 0, "skipped_dupe": 0, "kept": 0}
         for img in main_content.find_all("img"):
+            _img_diag["total"] += 1
             # Skip product-card images (they come from the grid, not editorial)
             if img.find_parent(attrs={"class": _PRODUCT_RE}):
+                _img_diag["skipped_product"] += 1
                 continue
             if img.find_parent(attrs={"class": _SKIP_RE}):
+                _img_diag["skipped_product"] += 1
                 continue
             if img.find_parent(["nav", "footer", "header"]):
+                _img_diag["skipped_nav"] += 1
                 continue
-            src = img.get("src") or img.get("data-src") or ""
-            if not src or src.startswith("data:"):
+
+            # Resolve src. Lazy-loaded images often have a data: placeholder
+            # in src and the real URL in data-src / data-lazy-src / data-original.
+            # Collect candidates in priority order and pick first non-data URL.
+            candidates = [
+                img.get("src") or "",
+                img.get("data-src") or "",
+                img.get("data-lazy-src") or "",
+                img.get("data-original") or "",
+                img.get("data-srcset", "").split(" ")[0] if img.get("data-srcset") else "",
+                img.get("srcset", "").split(" ")[0] if img.get("srcset") else "",
+            ]
+            src = ""
+            for cand in candidates:
+                if cand and not cand.startswith("data:"):
+                    src = cand
+                    break
+            if not src:
+                _img_diag["skipped_no_src"] += 1
                 continue
             # Resolve relative URLs
             if src.startswith("//"):
@@ -461,8 +484,10 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
             elif src.startswith("/"):
                 src = f"https://{urlparse(url).netloc}{src}"
             if src in _seen_img_src:
+                _img_diag["skipped_dupe"] += 1
                 continue
             _seen_img_src.add(src)
+            _img_diag["kept"] += 1
             # Decide section: if any bottom paragraph precedes, it's bottom;
             # otherwise intro. Use document-order heuristic via found_products flag.
             # Simpler: check if this img has a preceding sibling/ancestor with product class.
@@ -492,6 +517,7 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
             })
         result["editorial_images"] = editorial_images
         result["editorial_image_count"] = len(editorial_images)
+        result["editorial_image_diag"] = _img_diag
 
     # ── Links: extract from content area ──────────────────────
     link_soup = BeautifulSoup(html, "html.parser")

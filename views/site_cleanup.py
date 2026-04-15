@@ -846,7 +846,17 @@ def render():
             with st.spinner("Scraping page..."):
                 scraped = scrape_page(test_url)
             imgs = scraped.get("editorial_images", []) or []
+            diag = scraped.get("editorial_image_diag", {}) or {}
             st.markdown(f"**Step 1 · Scrape** — captured **{len(imgs)}** editorial image(s)")
+            if diag:
+                st.caption(
+                    f"Diagnostics: total <img> tags found in main_content = {diag.get('total',0)} · "
+                    f"skipped (product/filter) = {diag.get('skipped_product',0)} · "
+                    f"skipped (nav/footer) = {diag.get('skipped_nav',0)} · "
+                    f"skipped (no usable src / all data:) = {diag.get('skipped_no_src',0)} · "
+                    f"skipped (dupe) = {diag.get('skipped_dupe',0)} · "
+                    f"kept = {diag.get('kept',0)}"
+                )
             if imgs:
                 for i, im in enumerate(imgs, 1):
                     st.markdown(
@@ -858,7 +868,26 @@ def render():
                         unsafe_allow_html=True,
                     )
             else:
-                st.error("❌ No editorial images captured during scrape. Stop — bug is in page_scraper.py.")
+                st.error("❌ No editorial images captured during scrape.")
+                # Deep-dive: re-fetch raw HTML, dump every img tag's attributes
+                st.markdown("**Raw diagnostic — all `<img>` tags on page:**")
+                try:
+                    import requests as _rq
+                    from bs4 import BeautifulSoup as _BS
+                    _r = _rq.get(test_url, headers={"User-Agent": "Mozilla/5.0 SEOBot"}, timeout=20)
+                    _soup = _BS(_r.text, "html.parser")
+                    _all_imgs = _soup.find_all("img")
+                    st.caption(f"Raw HTML has {len(_all_imgs)} total <img> tags (any location)")
+                    for i, _img in enumerate(_all_imgs[:30], 1):
+                        _attrs = {k: v for k, v in _img.attrs.items() if k in (
+                            "src", "data-src", "data-lazy-src", "data-original",
+                            "srcset", "data-srcset", "alt", "class", "loading"
+                        )}
+                        st.code(f"{i}. {_attrs}", language="python")
+                    if len(_all_imgs) > 30:
+                        st.caption(f"...and {len(_all_imgs)-30} more")
+                except Exception as _e:
+                    st.error(f"Raw fetch failed: {_e}")
                 st.stop()
 
             # Step 2 — inject minimal audit entry so build_page_profile sees editorial_images
