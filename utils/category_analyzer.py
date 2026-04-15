@@ -96,6 +96,51 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
         result["signals"].append("Magento flat URL category pattern")
 
     if page_data:
+        # ── 0. STRUCTURAL SIGNALS (authoritative, CMS-rendered) ──
+        # If page has a specific template container / body class, trust it
+        # over URL patterns or text heuristics. Same signals the scraper
+        # uses for content extraction — single source of truth.
+        struct = page_data.get("structural_signals") or {}
+        intro_cls = set(struct.get("found_intro_classes") or [])
+        bottom_cls = set(struct.get("found_bottom_classes") or [])
+        body_cls = [str(b).lower() for b in (struct.get("body_classes") or [])]
+        has_cat_id = bool(struct.get("has_category_description_id"))
+
+        # Blog: xmx-blog-post-head/content OR nae-blog-index-post body class
+        if intro_cls & {"xmx-blog-post-head"} or bottom_cls & {"xmx-blog-post-content"}:
+            result["page_type"] = "blog"
+            result["confidence"] = "high"
+            result["signals"].append("Blog template container found")
+        elif any("nae-blog-index" in b for b in body_cls):
+            result["page_type"] = "blog"
+            result["confidence"] = "high"
+            result["signals"].append("Blog body class (nae-blog-index-*)")
+        # Guide: cms-guide-* body class
+        elif any(b.startswith("cms-guide-") for b in body_cls):
+            result["page_type"] = "blog"  # guides treated as blog for SEO
+            result["confidence"] = "high"
+            result["signals"].append("Guide body class (cms-guide-*)")
+        # FAQ: nae-faq-index-topic body class
+        elif any("nae-faq-index" in b for b in body_cls):
+            result["page_type"] = "faq"
+            result["confidence"] = "high"
+            result["signals"].append("FAQ body class (nae-faq-index-*)")
+        # Info/help: nae-help-index-* body class or xmx-help-layout-content container
+        elif any("nae-help-index" in b for b in body_cls) or bottom_cls & {"xmx-help-layout-content"}:
+            result["page_type"] = "info"
+            result["confidence"] = "high"
+            result["signals"].append("Help/info template container")
+        # Category: #category-description id OR xmx-seo-footer-section
+        elif has_cat_id or bottom_cls & {"xmx-seo-footer-section"}:
+            result["page_type"] = "category"
+            result["confidence"] = "high"
+            result["signals"].append("Category template container found")
+        # If structural signals settled the answer, return early.
+        if result["confidence"] == "high":
+            # Still populate word_count etc for downstream consumers that
+            # read these off the result dict.
+            pass
+
         schema_types = [str(s).lower() for s in page_data.get("schema_types", [])]
         h1 = (page_data.get("h1") or "").lower()
         h2s = [h.lower() for h in page_data.get("h2s", [])]

@@ -451,6 +451,33 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
                         parts.append(t)
             return parts
 
+        # ── Collect structural signals for downstream classifier ──
+        # Single source of truth: whichever containers exist on the page
+        # tell us what kind of page this is. Classifier reads these.
+        _struct_signals = {
+            "found_intro_classes": [],
+            "found_bottom_classes": [],
+            "has_category_description_id": False,
+            "body_classes": [],
+        }
+        # Body classes (authoritative layout hint from CMS)
+        if _editor_soup.body:
+            _struct_signals["body_classes"] = list(_editor_soup.body.get("class") or [])
+        # Note which specific containers matched
+        for c in _editor_soup.find_all(["div", "section", "article"]):
+            cls_set = set(c.get("class") or [])
+            hit_intro = cls_set & _INTRO_EXACT
+            hit_bottom = cls_set & _BOTTOM_EXACT
+            if hit_intro:
+                _struct_signals["found_intro_classes"].extend(sorted(hit_intro))
+            if hit_bottom:
+                _struct_signals["found_bottom_classes"].extend(sorted(hit_bottom))
+        _struct_signals["found_intro_classes"] = sorted(set(_struct_signals["found_intro_classes"]))
+        _struct_signals["found_bottom_classes"] = sorted(set(_struct_signals["found_bottom_classes"]))
+        if _editor_soup.find(id="category-description"):
+            _struct_signals["has_category_description_id"] = True
+        result["structural_signals"] = _struct_signals
+
         intro_parts = _text_from_exact(_editor_soup, _INTRO_EXACT)
         bottom_parts = _text_from_exact(_editor_soup, _BOTTOM_EXACT)
 
