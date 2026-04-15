@@ -382,24 +382,53 @@ def render():
         c3.metric("Plans generated", f"{with_plan}/{len(pages)}")
 
         # Bulk actions
-        col_a, col_b = st.columns(2)
+        col_a, col_b, col_c = st.columns([2, 1, 1])
         with col_a:
-            if st.button("Generate plans for top 10 (uncached)", type="primary"):
-                missing = [p for p in pages[:10] if f"_ai_plan_{stable_hash(p['url'])}" not in st.session_state]
+            n_to_generate = st.number_input(
+                "How many top pages to generate plans for",
+                min_value=1, max_value=len(pages), value=min(10, len(pages)),
+                key="ac_gen_n",
+                help="Generates plans for the top N pages by impact. Skips pages that already have a plan.",
+            )
+            if st.button(f"Generate plans for top {n_to_generate} (uncached)", type="primary", key="ac_gen_btn"):
+                missing = [p for p in pages[:n_to_generate] if f"_ai_plan_{stable_hash(p['url'])}" not in st.session_state]
                 if not missing:
-                    st.success("All top 10 already have plans")
+                    st.success(f"All top {n_to_generate} already have plans — use 'Clear all plans' first to regenerate with fresh data.")
                 else:
                     progress = st.progress(0)
+                    status_txt = st.empty()
                     for i, p in enumerate(missing):
+                        status_txt.text(f"[{i+1}/{len(missing)}] {p['url']}")
                         _generate_plan(p["url"], p["audit"])
                         progress.progress((i + 1) / len(missing))
+                    status_txt.empty()
+                    st.success(f"Generated {len(missing)} new plans")
                     st.rerun()
         with col_b:
-            if st.button("Clear all generated plans"):
-                keys = [k for k in st.session_state if k.startswith("_ai_plan_") or k.startswith("_bottom_text_")]
+            if st.button("🗑 Clear all plans", key="ac_clear_btn", use_container_width=True):
+                import os
+                try:
+                    from utils.persistence import AI_CACHE_DIR
+                except Exception:
+                    AI_CACHE_DIR = None
+                # Clear session state
+                keys = [k for k in st.session_state if k.startswith("_ai_plan_") or k.startswith("_bottom_text_") or k.startswith("_intro_text_")]
                 for k in keys:
                     del st.session_state[k]
+                # Clear disk cache so plans don't reload on refresh
+                disk_cleared = 0
+                if AI_CACHE_DIR and os.path.isdir(AI_CACHE_DIR):
+                    for f in os.listdir(AI_CACHE_DIR):
+                        if f.startswith("_ai_plan_") or f.startswith("_bottom_text_") or f.startswith("_intro_text_"):
+                            try:
+                                os.remove(os.path.join(AI_CACHE_DIR, f))
+                                disk_cleared += 1
+                            except Exception:
+                                pass
+                st.success(f"Cleared {len(keys)} session keys + {disk_cleared} disk files")
                 st.rerun()
+        with col_c:
+            st.caption(f"Existing: {with_plan} plans")
 
         st.markdown("---")
 
