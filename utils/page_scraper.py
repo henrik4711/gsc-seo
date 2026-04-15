@@ -450,6 +450,8 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
             re.I,
         )
         _BOTTOM_RE = re.compile(
+            r"xmx-seo-footer-section|xmx-seo-footer-group-content|"
+            r"xmx-seo-footer|"
             r"seo-footer|seo-content|seo-text|category-seo|footer-seo|"
             r"xmx-category-bottom|xmx-page-bottom-content|description-bottom|"
             r"category-description-bottom",
