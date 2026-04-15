@@ -401,10 +401,25 @@ def render():
                             print(f"[audit] SF lookup: url_norm={url_norm}, matches={len(sf_match)}, SF sample URLs: {sf_pages['url'].head(3).tolist()}")
                             if not sf_match.empty:
                                 sf_row = sf_match.iloc[0]
-                                result["title"] = sf_row.get("title") or result.get("title")
-                                result["meta_description"] = sf_row.get("meta_description") or result.get("meta_description")
-                                result["h1"] = sf_row.get("h1") or result.get("h1")
-                                result["word_count"] = int(sf_row.get("word_count", 0)) or result.get("word_count", 0)
+                                # Coerce to str — pandas cells can be NaN (float) not None
+                                def _s(v):
+                                    if v is None:
+                                        return ""
+                                    try:
+                                        import math
+                                        if isinstance(v, float) and math.isnan(v):
+                                            return ""
+                                    except Exception:
+                                        pass
+                                    return str(v)
+                                result["title"] = _s(sf_row.get("title")) or _s(result.get("title"))
+                                result["meta_description"] = _s(sf_row.get("meta_description")) or _s(result.get("meta_description"))
+                                result["h1"] = _s(sf_row.get("h1")) or _s(result.get("h1"))
+                                try:
+                                    _wc = int(sf_row.get("word_count", 0) or 0)
+                                except Exception:
+                                    _wc = 0
+                                result["word_count"] = _wc or result.get("word_count", 0)
                                 result["title_length"] = len(result.get("title") or "")
                                 result["description_length"] = len(result.get("meta_description") or "")
                                 result["success"] = True
