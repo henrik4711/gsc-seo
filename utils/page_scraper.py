@@ -704,10 +704,24 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
     """Fallback scraper using requests (no JS rendering)."""
     try:
         import requests
+        # Use a real-browser UA. "SEOBot/1.0" gets blocked by Cloudflare,
+        # mshop.se, and many other sites with basic bot protection.
         resp = requests.get(url, headers={
-            "User-Agent": "Mozilla/5.0 (compatible; SEOBot/1.0)"
-        }, timeout=timeout)
-        resp.raise_for_status()
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "sv-SE,sv;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        }, timeout=max(timeout, 30), allow_redirects=True)
+        if resp.status_code == 403:
+            result["error"] = f"HTTP 403 Forbidden (bot-blocked). UA may need tuning."
+            return result
+        if resp.status_code >= 400:
+            result["error"] = f"HTTP {resp.status_code} from {url}"
+            return result
         soup = BeautifulSoup(resp.text, "html.parser")
         result["success"] = True
 
