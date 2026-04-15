@@ -439,85 +439,98 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
 
         # ── Editorial images — preserve in AI rewrites ──────────
-        # Capture <img> tags that live in the editorial text (intro/bottom),
-        # NOT inside product cards or nav/footer/filters. The AI must keep
-        # these images in the new text with the exact same src.
+        # Only look inside dedicated editorial containers:
+        #   • Top / intro: category-description, cms-block, category-intro, etc.
+        #   • Bottom / SEO: seo-footer, seo-content, seo-text, category-seo, footer-seo
+        # This avoids the product grid entirely (which has 100+ product-card imgs).
+        _INTRO_RE = re.compile(
+            r"category-description|category-intro|xmx-category-description|"
+            r"xmx-category-top|xmx-page-top-content|cms-block|category-cms|"
+            r"category-header-content|description-top",
+            re.I,
+        )
+        _BOTTOM_RE = re.compile(
+            r"seo-footer|seo-content|seo-text|category-seo|footer-seo|"
+            r"xmx-category-bottom|xmx-page-bottom-content|description-bottom|"
+            r"category-description-bottom",
+            re.I,
+        )
+
+        # Work on the ORIGINAL html (not text_soup which has decomposed footer)
+        # so SEO-footer images survive.
+        _orig_soup = BeautifulSoup(html, "html.parser")
+        intro_containers = _orig_soup.find_all(["div", "section"], class_=_INTRO_RE)
+        bottom_containers = _orig_soup.find_all(["div", "section"], class_=_BOTTOM_RE)
+
         editorial_images = []
         _seen_img_src = set()
-        _img_diag = {"total": 0, "skipped_product": 0, "skipped_nav": 0,
-                     "skipped_no_src": 0, "skipped_dupe": 0, "kept": 0}
-        for img in main_content.find_all("img"):
-            _img_diag["total"] += 1
-            # Skip product-card images (they come from the grid, not editorial)
-            if img.find_parent(attrs={"class": _PRODUCT_RE}):
-                _img_diag["skipped_product"] += 1
-                continue
-            if img.find_parent(attrs={"class": _SKIP_RE}):
-                _img_diag["skipped_product"] += 1
-                continue
-            if img.find_parent(["nav", "footer", "header"]):
-                _img_diag["skipped_nav"] += 1
-                continue
+        _img_diag = {
+            "intro_containers": len(intro_containers),
+            "bottom_containers": len(bottom_containers),
+            "total": 0, "skipped_product": 0, "skipped_nav": 0,
+            "skipped_no_src": 0, "skipped_dupe": 0, "kept": 0,
+        }
 
-            # Resolve src. Lazy-loaded images often have a data: placeholder
-            # in src and the real URL in data-src / data-lazy-src / data-original.
-            # Collect candidates in priority order and pick first non-data URL.
-            candidates = [
-                img.get("src") or "",
-                img.get("data-src") or "",
-                img.get("data-lazy-src") or "",
-                img.get("data-original") or "",
-                img.get("data-srcset", "").split(" ")[0] if img.get("data-srcset") else "",
-                img.get("srcset", "").split(" ")[0] if img.get("srcset") else "",
-            ]
-            src = ""
-            for cand in candidates:
-                if cand and not cand.startswith("data:"):
-                    src = cand
-                    break
-            if not src:
-                _img_diag["skipped_no_src"] += 1
-                continue
-            # Resolve relative URLs
-            if src.startswith("//"):
-                src = "https:" + src
-            elif src.startswith("/"):
-                src = f"https://{urlparse(url).netloc}{src}"
-            if src in _seen_img_src:
-                _img_diag["skipped_dupe"] += 1
-                continue
-            _seen_img_src.add(src)
-            _img_diag["kept"] += 1
-            # Decide section: if any bottom paragraph precedes, it's bottom;
-            # otherwise intro. Use document-order heuristic via found_products flag.
-            # Simpler: check if this img has a preceding sibling/ancestor with product class.
-            prev_product = False
-            for prev in img.find_all_previous(["div", "section"]):
-                own = " ".join(prev.get("class", []))
-                if _PRODUCT_RE.search(own):
-                    prev_product = True
-                    break
-            section = "bottom" if prev_product else "intro"
-            # Capture wrapping <a> href + <figcaption> if present
-            wrap_a = img.find_parent("a")
-            link_href = wrap_a.get("href", "") if wrap_a else ""
-            fig = img.find_parent("figure")
-            caption = ""
-            if fig:
-                cap_tag = fig.find("figcaption")
-                if cap_tag:
-                    caption = cap_tag.get_text(strip=True)
-            editorial_images.append({
-                "src": src,
-                "alt": (img.get("alt") or "").strip(),
-                "width": img.get("width", ""),
-                "link_href": link_href,
-                "caption": caption,
-                "section": section,
-            })
+        def _extract_imgs_from(container, section_label):
+            for img in container.find_all("img"):
+                _img_diag["total"] += 1
+                if img.find_parent(attrs={"class": _PRODUCT_RE}):
+                    _img_diag["skipped_product"] += 1
+                    continue
+                if img.find_parent(["nav", "footer", "header"]) and section_label != "bottom":
+                    _img_diag["skipped_nav"] += 1
+                    continue
+                candidates = [
+                    img.get("src") or "",
+                    img.get("data-src") or "",
+                    img.get("data-lazy-src") or "",
+                    img.get("data-original") or "",
+                    img.get("data-srcset", "").split(" ")[0] if img.get("data-srcset") else "",
+                    img.get("srcset", "").split(" ")[0] if img.get("srcset") else "",
+                ]
+                src = ""
+                for cand in candidates:
+                    if cand and not cand.startswith("data:"):
+                        src = cand
+                        break
+                if not src:
+                    _img_diag["skipped_no_src"] += 1
+                    continue
+                if src.startswith("//"):
+                    src = "https:" + src
+                elif src.startswith("/"):
+                    src = f"https://{urlparse(url).netloc}{src}"
+                if src in _seen_img_src:
+                    _img_diag["skipped_dupe"] += 1
+                    continue
+                _seen_img_src.add(src)
+                _img_diag["kept"] += 1
+                wrap_a = img.find_parent("a")
+                link_href = wrap_a.get("href", "") if wrap_a else ""
+                fig = img.find_parent("figure")
+                caption = ""
+                if fig:
+                    cap_tag = fig.find("figcaption")
+                    if cap_tag:
+                        caption = cap_tag.get_text(strip=True)
+                editorial_images.append({
+                    "src": src,
+                    "alt": (img.get("alt") or "").strip(),
+                    "width": img.get("width", ""),
+                    "link_href": link_href,
+                    "caption": caption,
+                    "section": section_label,
+                })
+
+        for c in intro_containers:
+            _extract_imgs_from(c, "intro")
+        for c in bottom_containers:
+            _extract_imgs_from(c, "bottom")
+
         result["editorial_images"] = editorial_images
         result["editorial_image_count"] = len(editorial_images)
         result["editorial_image_diag"] = _img_diag
+
 
     # ── Links: extract from content area ──────────────────────
     link_soup = BeautifulSoup(html, "html.parser")

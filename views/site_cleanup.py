@@ -850,12 +850,14 @@ def render():
             st.markdown(f"**Step 1 · Scrape** — captured **{len(imgs)}** editorial image(s)")
             if diag:
                 st.caption(
-                    f"Diagnostics: total <img> tags found in main_content = {diag.get('total',0)} · "
-                    f"skipped (product/filter) = {diag.get('skipped_product',0)} · "
-                    f"skipped (nav/footer) = {diag.get('skipped_nav',0)} · "
-                    f"skipped (no usable src / all data:) = {diag.get('skipped_no_src',0)} · "
-                    f"skipped (dupe) = {diag.get('skipped_dupe',0)} · "
-                    f"kept = {diag.get('kept',0)}"
+                    f"Intro containers found: {diag.get('intro_containers',0)} · "
+                    f"Bottom/SEO containers found: {diag.get('bottom_containers',0)} · "
+                    f"<img> inside them: {diag.get('total',0)} · "
+                    f"kept: {diag.get('kept',0)} · "
+                    f"skipped (product-card) = {diag.get('skipped_product',0)} · "
+                    f"skipped (nav) = {diag.get('skipped_nav',0)} · "
+                    f"skipped (no usable src) = {diag.get('skipped_no_src',0)} · "
+                    f"skipped (dupe) = {diag.get('skipped_dupe',0)}"
                 )
             if imgs:
                 for i, im in enumerate(imgs, 1):
@@ -869,23 +871,52 @@ def render():
                     )
             else:
                 st.error("❌ No editorial images captured during scrape.")
-                # Deep-dive: re-fetch raw HTML, dump every img tag's attributes
-                st.markdown("**Raw diagnostic — all `<img>` tags on page:**")
+                # Deep-dive: dump div classes from the live page so we can
+                # identify the correct intro + bottom container class names.
+                st.markdown("**Raw diagnostic — divs that contain editorial text:**")
                 try:
                     import requests as _rq
                     from bs4 import BeautifulSoup as _BS
                     _r = _rq.get(test_url, headers={"User-Agent": "Mozilla/5.0 SEOBot"}, timeout=20)
                     _soup = _BS(_r.text, "html.parser")
-                    _all_imgs = _soup.find_all("img")
-                    st.caption(f"Raw HTML has {len(_all_imgs)} total <img> tags (any location)")
-                    for i, _img in enumerate(_all_imgs[:30], 1):
-                        _attrs = {k: v for k, v in _img.attrs.items() if k in (
-                            "src", "data-src", "data-lazy-src", "data-original",
-                            "srcset", "data-srcset", "alt", "class", "loading"
-                        )}
-                        st.code(f"{i}. {_attrs}", language="python")
-                    if len(_all_imgs) > 30:
-                        st.caption(f"...and {len(_all_imgs)-30} more")
+
+                    # Find divs that contain <p> or <h2> with substantial text AND at least one <img>
+                    candidates = []
+                    for d in _soup.find_all(["div", "section"]):
+                        cls = " ".join(d.get("class") or [])
+                        if not cls:
+                            continue
+                        if any(skip in cls.lower() for skip in ("product-card", "product-item", "card-product", "price-box", "swiper-slide", "category-product")):
+                            continue
+                        imgs_in = d.find_all("img", recursive=True)
+                        ps_in = d.find_all(["p", "h2", "h3"], recursive=True)
+                        text_len = sum(len(p.get_text(strip=True)) for p in ps_in)
+                        # Editorial-ish: substantial text AND at least 1 image AND not the whole page
+                        if imgs_in and text_len > 100 and text_len < 20000:
+                            candidates.append({
+                                "classes": cls,
+                                "tag": d.name,
+                                "text_chars": text_len,
+                                "imgs": len(imgs_in),
+                                "sample": d.get_text(strip=True)[:120],
+                            })
+                    # Dedupe by classes
+                    seen_cls = set()
+                    dedup = []
+                    for c in candidates:
+                        if c["classes"] not in seen_cls:
+                            seen_cls.add(c["classes"])
+                            dedup.append(c)
+                    dedup.sort(key=lambda x: -x["imgs"])
+                    st.caption(f"Found {len(dedup)} div/section candidates containing text + images:")
+                    for i, c in enumerate(dedup[:15], 1):
+                        st.code(
+                            f"{i}. <{c['tag']} class=\"{c['classes']}\">\n"
+                            f"   text_chars={c['text_chars']}, imgs={c['imgs']}\n"
+                            f"   sample: {c['sample']!r}",
+                            language="text",
+                        )
+                    st.info("Copy the class names of the editorial container(s) — paste them back and I'll add them to the intro/bottom regex.")
                 except Exception as _e:
                     st.error(f"Raw fetch failed: {_e}")
                 st.stop()
