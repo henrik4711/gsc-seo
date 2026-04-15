@@ -412,7 +412,8 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         _BOTTOM_EXACT = {
             "xmx-seo-footer-section",   # category SEO footer (3/5 categories)
             "xmx-blog-post-content",    # blog body (4/5 blogs)
-            "xmx-description",          # product body (5/5 products)
+            "xmx-description",          # product body (5/5 products) + guides + some info
+            "xmx-help-layout-content",  # /hjalp/ info pages (not caught by xmx-description)
             # xmx-product-details-section wraps xmx-description + reviews etc.
             # We prefer xmx-description alone for cleaner output.
         }
