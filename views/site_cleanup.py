@@ -826,6 +826,107 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # ── TEMP diagnostic: single-page image preservation test ──
+    with st.expander("🔬 TEMP TEST — check image preservation on ONE page (skip the 4h pipeline)", expanded=False):
+        st.caption(
+            "Tests the full flow on a single URL: scrape → capture editorial images → "
+            "run AI rewrite → verify each image src appears verbatim in the generated HTML."
+        )
+        test_url = st.text_input(
+            "URL to test",
+            value="https://www.mshop.se/sexleksaker/sexleksaker-for-honom/pocket-pussy",
+            key="_img_test_url",
+        )
+        test_query = st.text_input("Target keyword", value="pocket pussy", key="_img_test_kw")
+        if st.button("Run image-preservation test", type="primary", key="_img_test_btn"):
+            from utils.page_scraper import scrape_page
+            from utils.ai_generator import generate_page_content
+
+            # Step 1 — scrape
+            with st.spinner("Scraping page..."):
+                scraped = scrape_page(test_url)
+            imgs = scraped.get("editorial_images", []) or []
+            st.markdown(f"**Step 1 · Scrape** — captured **{len(imgs)}** editorial image(s)")
+            if imgs:
+                for i, im in enumerate(imgs, 1):
+                    st.markdown(
+                        f"`{i}.` section=`{im.get('section','?')}` · "
+                        f"alt=`{im.get('alt','') or '(none)'}`<br>"
+                        f"&nbsp;&nbsp;src=`{im.get('src','')}`" +
+                        (f"<br>&nbsp;&nbsp;link_href=`{im['link_href']}`" if im.get('link_href') else "") +
+                        (f"<br>&nbsp;&nbsp;caption=`{im['caption']}`" if im.get('caption') else ""),
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.error("❌ No editorial images captured during scrape. Stop — bug is in page_scraper.py.")
+                st.stop()
+
+            # Step 2 — inject minimal audit entry so build_page_profile sees editorial_images
+            from utils.ui_helpers import normalize_url as _nu
+            norm = _nu(test_url)
+            original_audit = list(st.session_state.get("audit_results", []) or [])
+            test_entry = {
+                "url": test_url,
+                "page_type": scraped.get("page_type") or "category",
+                "title": scraped.get("title", ""),
+                "meta_description": scraped.get("description") or scraped.get("meta_description", ""),
+                "h1": scraped.get("h1", ""),
+                "h2s": scraped.get("h2s", []) or [],
+                "word_count": scraped.get("word_count", 0),
+                "body_text": scraped.get("body_text", ""),
+                "intro_text": scraped.get("intro_text", ""),
+                "bottom_text": scraped.get("bottom_text", ""),
+                "editorial_images": imgs,
+                "total_editorial_words": scraped.get("total_editorial_words", 0),
+                "internal_links": scraped.get("internal_links", []) or [],
+                "schema_types": scraped.get("schema_types", []) or [],
+                "content_audit": {"products": []},
+                "products": [],
+            }
+            filtered = [r for r in original_audit if _nu(r.get("url", "")) != norm]
+            st.session_state["audit_results"] = filtered + [test_entry]
+            st.markdown(f"**Step 2 · Inject** — audit_results now has {len(filtered) + 1} entries (injected test entry with `editorial_images`)")
+
+            # Step 3 — run AI rewrite
+            st.markdown("**Step 3 · AI rewrite** — calling `generate_page_content`…")
+            try:
+                with st.spinner("AI generating rewrite (may take 30-60s)..."):
+                    result = generate_page_content(test_url, target_query=test_query)
+            except Exception as e:
+                st.error(f"❌ AI error: {e}")
+                # Restore audit
+                st.session_state["audit_results"] = original_audit
+                st.stop()
+
+            # Step 4 — verify each scraped image src appears in the generated HTML
+            top_html = result.get("top_html", "") or ""
+            bottom_html = result.get("bottom_html", "") or ""
+            combined = top_html + "\n" + bottom_html
+
+            st.markdown("**Step 4 · Verify image preservation**")
+            pass_count = 0
+            for i, im in enumerate(imgs, 1):
+                src = im.get("src", "")
+                found = src and (src in combined)
+                pass_count += 1 if found else 0
+                icon = "✅" if found else "❌"
+                section_hit = "top" if src in top_html else ("bottom" if src in bottom_html else "MISSING")
+                st.markdown(f"{icon} `{i}.` expected in `{im.get('section','?')}` · found in `{section_hit}`<br>&nbsp;&nbsp;`{src}`", unsafe_allow_html=True)
+
+            if pass_count == len(imgs):
+                st.success(f"🎉 ALL {len(imgs)} images preserved verbatim in AI output")
+            else:
+                st.error(f"⚠ Only {pass_count}/{len(imgs)} images preserved — AI is dropping images")
+
+            # Restore original audit_results so this test doesn't pollute other views
+            st.session_state["audit_results"] = original_audit
+
+            with st.expander("Show raw generated HTML"):
+                st.markdown("**TOP TEXT:**")
+                st.code(top_html or "(empty)", language="html")
+                st.markdown("**BOTTOM TEXT:**")
+                st.code(bottom_html or "(empty)", language="html")
+
     if "audit_results" not in st.session_state:
         st.warning("Run **⚡ Run Pipeline** first to get analysis data.")
         return
