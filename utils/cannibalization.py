@@ -412,12 +412,35 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                     )
 
                 # Check 3: keyword stuffing (same 2-3 word phrase >5 times)
+                # Filter out product-grid metadata tokens (prices, "kr", "rea",
+                # "pris", digits) so 36 products in the grid don't trigger a
+                # false-positive "stuffing" on "krreatid. pris:929".
                 if p_body and p_wc > 100:
                     from collections import Counter
-                    words = p_body.split()
+                    import re as _re_stuff
+                    _price_re = _re_stuff.compile(
+                        r"\b("
+                        r"\d+[\s:.-]*kr|\d+\s*:-|\d+\s*sek|"
+                        r"pris[:.]?\s*\d*|reatid|krretid|krreatid|"
+                        r"kolla\s*att|"
+                        r"\d{3,}"
+                        r")\b",
+                        _re_stuff.I,
+                    )
+                    _cleaned = _price_re.sub(" ", p_body)
+                    # Also drop pure-numeric or too-short tokens from the word list
+                    words = [
+                        w for w in _cleaned.split()
+                        if len(w) >= 3 and not w.isdigit()
+                        and w not in ("kr", "sek", "rea", "pris", "reatid")
+                    ]
                     bigrams = [f"{words[j]} {words[j+1]}" for j in range(len(words)-1)]
-                    bigram_counts = Counter(bigrams).most_common(3)
+                    bigram_counts = Counter(bigrams).most_common(5)
                     for phrase, count in bigram_counts:
+                        # Skip bigrams where either word is still noise
+                        tokens = phrase.split()
+                        if any(t in ("kr", "rea", "pris") or t.isdigit() for t in tokens):
+                            continue
                         if count >= 6 and len(phrase) > 5:
                             content_issues.append(
                                 f"`{short}`: **keyword stuffing** — '{phrase}' repeated {count} times"

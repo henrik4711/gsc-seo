@@ -838,14 +838,25 @@ def render():
         diag_rows = []
         for r in audit_results_all:
             cands = r.get("editorial_container_candidates") or []
-            if not cands:
+            intro = (r.get("intro_text") or "")[:600]
+            bottom = (r.get("bottom_text") or "")[:2000]
+            body = (r.get("body_text") or "")[:2000]
+            if not cands and not intro and not bottom:
                 continue
             diag_rows.append({
                 "url": r.get("url", ""),
                 "page_type": r.get("page_type", ""),
                 "title": r.get("title", ""),
                 "editorial_image_count": r.get("editorial_image_count", 0),
-                "candidates": cands,
+                "editorial_images": r.get("editorial_images", []) or [],
+                "intro_word_count": r.get("intro_word_count", 0),
+                "bottom_word_count": r.get("bottom_word_count", 0),
+                "total_editorial_words": r.get("total_editorial_words", 0),
+                "word_count": r.get("word_count", 0),
+                "intro_text_sample": intro,
+                "bottom_text_sample": bottom,
+                "body_text_sample": body,
+                "container_candidates": cands,
             })
 
         if not diag_rows:
