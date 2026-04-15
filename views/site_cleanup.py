@@ -1206,7 +1206,11 @@ def render():
                         st.markdown("**Pages competing for this query:**")
 
                         # For types with heterogeneous roles, render per-page classification cards
-                        show_per_page_roles = tk in ("duplicate_categories", "true_duplicate", "mixed", "products_no_category")
+                        show_per_page_roles = tk in (
+                            "duplicate_categories", "true_duplicate", "mixed",
+                            "products_no_category", "category_vs_products",
+                            "products_same_parent",
+                        )
                         audit_lookup_for_conflict = _audit_lookup() if show_per_page_roles else {}
 
                         for p in pages:
