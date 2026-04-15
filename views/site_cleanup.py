@@ -32,6 +32,158 @@ def _novice_box(what: str, why: str, how: str, border: str = "#5533ff"):
     )
 
 
+def _classify_conflict_page(page_url: str, winner_url: str, query: str,
+                             page_data: dict, audit_lookup: dict) -> dict:
+    """
+    Decide the specific role + action for one page in a cannibalization conflict.
+
+    Returns dict: {role, label, color, action_html}
+    """
+    from urllib.parse import urlparse
+    from utils.site_patterns import get_sale_patterns
+
+    norm = normalize_url(page_url)
+    winner_norm = normalize_url(winner_url)
+
+    # Winner
+    if norm == winner_norm:
+        return {
+            "role": "WINNER",
+            "label": "🏆 KEEP — strengthen this page",
+            "color": "#33dd88",
+            "action_html": (
+                f"This is the page Google already prefers. Make sure its meta title + H1 both "
+                f"contain <code>{query}</code>. Every other page in this conflict must either "
+                f"redirect here, link here, or clearly target a different variant."
+            ),
+        }
+
+    # Pull page type from audit_lookup (fast) — fall back to page_data
+    audit = audit_lookup.get(norm, {}) or {}
+    page_type = audit.get("page_type") or page_data.get("page_type", "") or ""
+
+    # SALE / REA page
+    try:
+        sale_patterns = get_sale_patterns()
+    except Exception:
+        sale_patterns = ["/rea/", "/sale/", "/udsalg/", "billig"]
+    if any(sp in page_url.lower() for sp in sale_patterns):
+        return {
+            "role": "SALE PAGE",
+            "label": "🏷 KEEP for UX — stop it competing on the keyword",
+            "color": "#ffaa33",
+            "action_html": (
+                "Customers use this page as a \"cheap/sale\" filter — don't delete or redirect it. "
+                "But it must stop competing on the main keyword. Pick ONE of:<br>"
+                "<strong>Option A (recommended): strip the SEO text.</strong> In Magento → Catalog → "
+                "Categories → open this page → remove the intro paragraph and the bottom editorial "
+                "text. Leave ONLY H1 + product grid. Page still works for shoppers, no longer "
+                "competes on the keyword.<br>"
+                "<strong>Option B: noindex.</strong> Open this page → Design tab → Custom Layout "
+                "Update → add <code>&lt;meta name=\"robots\" content=\"noindex,follow\"&gt;</code>. "
+                "Page stays live for direct visitors, Google drops it from results. Use this if "
+                "the intro text is important for conversions.<br>"
+                f"<strong>Also add</strong> a link in the H1 area to the winner: "
+                f"<code>&lt;a href=\"{winner_url}\"&gt;{query}&lt;/a&gt;</code>"
+            ),
+        }
+
+    # PRODUCT page
+    if page_type == "product":
+        return {
+            "role": "PRODUCT",
+            "label": "📦 KEEP as product — cannot be merged",
+            "color": "#5bb4d4",
+            "action_html": (
+                f"This is a product page, not a category. It can't be merged with a category. "
+                f"Three concrete fixes:<br>"
+                f"1. In Magento → Catalog → Products → open this product → <strong>Categories</strong> "
+                f"tab. Ensure it's assigned to the winner category "
+                f"(<code>{shorten_url(winner_url)}</code>) so visitors to the winner find it.<br>"
+                f"2. In the product's <strong>description</strong> field, add one contextual link "
+                f"back to the winner category with anchor text <code>{query}</code>: "
+                f"<code>&lt;a href=\"{winner_url}\"&gt;{query}&lt;/a&gt;</code> (this tells Google "
+                f"the winner is the authoritative page for the generic query).<br>"
+                f"3. Rewrite the product's meta title to include the <strong>brand or variant "
+                f"name</strong> instead of just the generic keyword "
+                f"(e.g. \"Pocket Pussy Mia — [Brand] · mshop\"). This makes the product target a "
+                f"long-tail query, not compete on <code>{query}</code>."
+            ),
+        }
+
+    # Path-based geometry
+    winner_path = urlparse(winner_norm).path.rstrip("/")
+    loser_path = urlparse(norm).path.rstrip("/")
+
+    # SUB-CATEGORY of winner
+    if winner_path and loser_path.startswith(winner_path + "/"):
+        return {
+            "role": "SUB-CATEGORY",
+            "label": "🌳 KEEP — sub-category of winner",
+            "color": "#33dd88",
+            "action_html": (
+                f"This lives UNDER the winner in the URL tree — it's a legitimate sub-category, "
+                f"not a duplicate. Action:<br>"
+                f"1. Differentiate the meta title: the parent targets generic <code>{query}</code>, "
+                f"this child targets the variant (look at the last URL segment for the variant term).<br>"
+                f"2. Make sure the winner page links TO this sub-category (category tree, breadcrumb, "
+                f"or a feature box on the winner)."
+            ),
+        }
+
+    # SIBLING (same parent directory)
+    winner_parent = "/".join(winner_path.split("/")[:-1]) if "/" in winner_path else ""
+    loser_parent = "/".join(loser_path.split("/")[:-1]) if "/" in loser_path else ""
+    if winner_parent and loser_parent == winner_parent:
+        return {
+            "role": "SIBLING",
+            "label": "🌳 KEEP — sibling category (different variant)",
+            "color": "#33dd88",
+            "action_html": (
+                f"Same parent folder as the winner — it's a sibling targeting a different variant. "
+                f"Don't merge. Action:<br>"
+                f"1. Differentiate the meta title to emphasize THIS page's variant term.<br>"
+                f"2. Add a cross-link from this page to the winner with anchor "
+                f"<code>{query}</code>, and a link on the winner to this sibling with anchor "
+                f"for its variant."
+            ),
+        }
+
+    # DIFFERENT TREE (different top-level section)
+    winner_segs = [s for s in winner_path.split("/") if s]
+    loser_segs = [s for s in loser_path.split("/") if s]
+    if winner_segs and loser_segs and winner_segs[0] != loser_segs[0]:
+        return {
+            "role": "DIFFERENT PURPOSE",
+            "label": "🔀 KEEP — different site section / intent",
+            "color": "#c8b4ff",
+            "action_html": (
+                f"This page lives in a different part of the site tree, so it likely serves a "
+                f"different intent. Don't merge. Action:<br>"
+                f"1. Differentiate the meta title so the intent difference is obvious.<br>"
+                f"2. Add an in-body link to the winner with anchor <code>{query}</code> — this "
+                f"tells Google the winner is the primary page for the generic query while this "
+                f"page keeps its own niche."
+            ),
+        }
+
+    # TRUE DUPLICATE — same level, same tree, similar structure
+    return {
+        "role": "TRUE DUPLICATE",
+        "label": "🗑 301 REDIRECT to winner",
+        "color": "#ff4455",
+        "action_html": (
+            f"Same-level duplicate of the winner. Action:<br>"
+            f"1. Copy any unique content from this page into the winner first.<br>"
+            f"2. Magento → Marketing → SEO &amp; Search → <strong>URL Rewrites</strong> → Add URL "
+            f"Rewrite. Request Path = <code>{urlparse(page_url).path}</code>, Target Path = "
+            f"<code>{urlparse(winner_url).path}</code>, Redirect Type = <strong>Permanent (301)</strong>.<br>"
+            f"3. Magento → Catalog → Categories → move all products from this category to the winner.<br>"
+            f"4. Delete this category."
+        ),
+    }
+
+
 def _pages_to_merge():
     """Combined from cannibalization + ideal structure + gap analysis."""
     merges = []
@@ -792,9 +944,14 @@ def render():
                 grouped.setdefault(t, []).append(row)
 
             type_ui = {
-                "duplicate_categories": ("⚠ Duplicate categories — MERGE", "#ff6644",
-                    "Two category pages target the same query. True cannibalization. "
-                    "**Fix:** pick ONE winner, 301 redirect the loser, move products, update meta."),
+                "duplicate_categories": ("⚠ Duplicate categories — MIXED fix", "#ff6644",
+                    "Multiple pages rank for the same category query — BUT each competing page "
+                    "usually has a different role (sale page, product, sibling category, sub-category, "
+                    "or true duplicate). Don't blindly 301 all of them. "
+                    "**Each page below shows its own classification + specific action.** "
+                    "Typical pattern: keep the winner, strip SEO text or noindex sale pages, "
+                    "add contextual links from products to the winner, differentiate meta on siblings, "
+                    "and 301 only the real duplicates."),
                 "category_vs_children": ("🌳 Category + sub-categories", "#33dd88",
                     "NORMAL. Parent category and its sub-categories both rank. "
                     "**Fix:** differentiate meta. Parent = generic, children = specific variant."),
@@ -845,17 +1002,48 @@ def render():
                     with st.expander(f"'{query}' — {len(pages)} pages · {lost:,} lost clicks"):
                         # Pages table
                         st.markdown("**Pages competing for this query:**")
+
+                        # For types with heterogeneous roles, render per-page classification cards
+                        show_per_page_roles = tk in ("duplicate_categories", "true_duplicate", "mixed", "products_no_category")
+                        audit_lookup_for_conflict = _audit_lookup() if show_per_page_roles else {}
+
                         for p in pages:
                             page_url = p.get("page", "")
                             is_winner = normalize_url(page_url) == normalize_url(winner)
                             marker = " 🏆" if is_winner else ""
-                            st.markdown(
-                                f"- `{shorten_url(page_url)}` · pos {p.get('position','?')} · "
-                                f"{p.get('clicks',0)} cl · {p.get('impressions',0):,} impr{marker}"
-                            )
 
-                        # Action instructions (rendered as markdown)
-                        if action_text:
+                            if show_per_page_roles:
+                                classification = _classify_conflict_page(
+                                    page_url, winner, query, p, audit_lookup_for_conflict
+                                )
+                                st.markdown(
+                                    f"<div style='background:#12121f; border-left:4px solid {classification['color']}; "
+                                    f"padding:0.8rem; margin:0.6rem 0; border-radius:0 6px 6px 0;'>"
+                                    f"<div style='display:flex; justify-content:space-between; align-items:start; gap:0.5rem;'>"
+                                    f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.8rem; color:#e8e8f0;'>"
+                                    f"{shorten_url(page_url)}{marker}</div>"
+                                    f"<span style='font-size:0.65rem; color:{classification['color']}; "
+                                    f"background:{classification['color']}22; padding:0.15rem 0.5rem; border-radius:3px; "
+                                    f"white-space:nowrap;'>{classification['role']}</span></div>"
+                                    f"<div style='font-size:0.7rem; color:#6b6b8a; margin-top:0.2rem;'>"
+                                    f"pos {p.get('position','?')} · {p.get('clicks',0)} clicks · "
+                                    f"{p.get('impressions',0):,} impressions</div>"
+                                    f"<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.6rem;'>"
+                                    f"{classification['label']}</div>"
+                                    f"<div style='font-size:0.8rem; color:#c8b4ff; margin-top:0.3rem; line-height:1.5;'>"
+                                    f"{classification['action_html']}</div>"
+                                    f"</div>",
+                                    unsafe_allow_html=True,
+                                )
+                            else:
+                                st.markdown(
+                                    f"- `{shorten_url(page_url)}` · pos {p.get('position','?')} · "
+                                    f"{p.get('clicks',0)} cl · {p.get('impressions',0):,} impr{marker}"
+                                )
+
+                        # Action instructions (rendered as markdown) — only for non-role types
+                        # (role types already have richer per-page instructions above)
+                        if action_text and not show_per_page_roles:
                             st.markdown("---")
                             st.markdown(action_text)
 
