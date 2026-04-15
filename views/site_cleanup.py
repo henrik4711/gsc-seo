@@ -1,10 +1,35 @@
 """
 Site Cleanup — Site-wide actions: pages to delete, merge, redirect, noindex.
 Different from Quick Wins which is per-page improvements.
+Also includes unclustered-page assignment + cluster balance (formerly Structure Fix).
 """
 
 import streamlit as st
 from utils.ui_helpers import normalize_url, stable_hash, shorten_url
+from views.structure_fix import (
+    _audit_lookup,
+    _get_unclustered,
+    _render_unclustered,
+    _render_cluster_balance,
+)
+
+
+def _novice_box(what: str, why: str, how: str, border: str = "#5533ff"):
+    """Render a standardized NOVICE explanation card: What / Why / How."""
+    st.markdown(
+        f"<div style='background:#0d0d15; border:1px solid {border}; border-radius:8px; "
+        f"padding:1rem; margin:0.5rem 0 1rem 0;'>"
+        f"<div style='font-size:0.7rem; color:{border}; font-family:\"IBM Plex Mono\",monospace; "
+        f"letter-spacing:0.05em; margin-bottom:0.4rem;'>NOVICE EXPLANATION</div>"
+        f"<div style='font-size:0.9rem; color:#e8e8f0; font-weight:700;'>What is this?</div>"
+        f"<div style='font-size:0.85rem; color:#c8b4ff; margin:0.3rem 0 0.8rem 0;'>{what}</div>"
+        f"<div style='font-size:0.9rem; color:#e8e8f0; font-weight:700;'>Why this matters</div>"
+        f"<div style='font-size:0.85rem; color:#c8b4ff; margin:0.3rem 0 0.8rem 0;'>{why}</div>"
+        f"<div style='font-size:0.9rem; color:#e8e8f0; font-weight:700;'>How to do it (step by step)</div>"
+        f"<div style='font-size:0.85rem; color:#c8b4ff; margin-top:0.3rem;'>{how}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _pages_to_merge():
@@ -621,8 +646,31 @@ def render():
     st.markdown("## 🧹 Site Cleanup")
     st.markdown(
         "<p style='color:#6b6b8a; margin-bottom:1rem;'>"
-        "Site-wide cleanup actions: pages to delete, merge, redirect, noindex. "
-        "These are decisions that affect site structure, not single-page improvements.</p>",
+        "Site-wide cleanup actions — all the structural decisions in one place: "
+        "merge duplicates, create missing pages, fix broken URLs, noindex junk, delete dead pages, "
+        "review blogs, fill topic gaps, assign unclustered pages, and balance topic clusters.</p>",
+        unsafe_allow_html=True,
+    )
+
+    # Overall novice-friendly how-to-work-through-this banner
+    st.markdown(
+        "<div style='background:#0d0d15; border:2px solid #5533ff; border-radius:10px; "
+        "padding:1.2rem; margin-bottom:1.5rem;'>"
+        "<div style='font-size:1.05rem; color:#e8e8f0; font-weight:700; margin-bottom:0.6rem;'>"
+        "🎓 New here? Do the tabs in this order</div>"
+        "<div style='font-size:0.85rem; color:#c8b4ff; line-height:1.6;'>"
+        "<strong>1. Merge</strong> — the biggest SEO win. Fix pages fighting each other for the same keyword.<br>"
+        "<strong>2. Delete</strong> — remove or hide dead weight pages that drag the whole site down.<br>"
+        "<strong>3. Redirect</strong> — fix broken URLs (404s) that still have links pointing at them.<br>"
+        "<strong>4. Noindex</strong> — tell Google to ignore junk URLs (filter pages, duplicates).<br>"
+        "<strong>5. Create</strong> — add the pages Google wants to see but your site is missing.<br>"
+        "<strong>6. Blogs review</strong> — rewrite, delete, or merge weak blog articles.<br>"
+        "<strong>7. Topic Gaps</strong> — where your site underperforms on whole subject areas.<br>"
+        "<strong>8. Unclustered Pages</strong> — assign orphan pages to the right topic group.<br>"
+        "<strong>9. Cluster Balance</strong> — see which topics need more pages or have too many.<br><br>"
+        "You don't have to finish everything today. Do each tab in chunks, save as you go, "
+        "and come back. Each tab below has its own <strong>NOVICE EXPLANATION</strong> card "
+        "with plain-English What / Why / How.</div></div>",
         unsafe_allow_html=True,
     )
 
@@ -659,7 +707,14 @@ def render():
     else:
         st.info("💡 Run **Generate Ideal Structure** in Site Map to get AI-recommended merges, deletes, and new pages.")
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    # Precompute for tab labels
+    audit_lookup = _audit_lookup()
+    topic_clusters_data = st.session_state.get("topic_clusters", {}) or {}
+    page_topics = topic_clusters_data.get("page_topics", {}) if isinstance(topic_clusters_data, dict) else {}
+    clusters_list = topic_clusters_data.get("clusters", []) if isinstance(topic_clusters_data, dict) else []
+    unclustered_pages = _get_unclustered(audit_lookup, page_topics)
+
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "🔀 Merge",
         "➕ Create",
         "↗ Redirect",
@@ -667,11 +722,45 @@ def render():
         "🗑 Delete",
         "📝 Blogs review",
         "🧩 Topic Gaps",
+        f"🧭 Unclustered ({len(unclustered_pages)})",
+        f"⚖ Cluster Balance ({len(clusters_list)})",
     ])
 
     # ── TAB 1: CANNIBALIZATION ACTIONS ──────────────────────
     with tab1:
         st.markdown("### Keyword conflicts — what to do")
+        _novice_box(
+            what=(
+                "Two or more of your own pages are showing up in Google for the SAME search word. "
+                "That means they are fighting each other — Google can't decide which one to rank, so "
+                "it usually pushes both down in the results. This is called <strong>keyword "
+                "cannibalization</strong>."
+            ),
+            why=(
+                "Every time two of your pages compete for the same keyword, you lose traffic that "
+                "should have gone to ONE strong page. The list below shows an estimate of \"lost "
+                "clicks\" per conflict — that is real money leaving to competitors. Fixing this is "
+                "usually the single biggest SEO win you can make without writing new content."
+            ),
+            how=(
+                "1. Open each conflict card below.<br>"
+                "2. The winner (🏆) is the page Google already prefers — keep it.<br>"
+                "3. Depending on the conflict type, the tool tells you exactly what to do:<br>"
+                "&nbsp;&nbsp;• <strong>Duplicate categories</strong>: 301-redirect the loser → the winner, "
+                "move its products to the winner in Magento → Catalog → Categories.<br>"
+                "&nbsp;&nbsp;• <strong>Category + sub-categories / Category + products</strong>: don't merge — "
+                "click <em>Generate differentiated meta titles</em> and paste the new titles/descriptions "
+                "into Magento (Stores → Attributes or directly on the category/product).<br>"
+                "&nbsp;&nbsp;• <strong>Products under same category</strong>: each product needs a UNIQUE meta "
+                "title with its brand/variant name.<br>"
+                "&nbsp;&nbsp;• <strong>Missing category page</strong>: create a new category in Magento and "
+                "assign the competing products to it.<br>"
+                "4. For 301 redirects: Magento Admin → Marketing → SEO &amp; Search → URL Rewrites → "
+                "Add URL Rewrite. Set Request Path = loser URL, Target Path = winner URL, Redirect Type "
+                "= Permanent (301)."
+            ),
+            border="#ff6644",
+        )
         st.markdown(
             "<p style='color:#9b9bb8; font-size:0.85rem;'>"
             "Pages competing for the same query. Each conflict is classified automatically with "
@@ -1026,6 +1115,34 @@ def render():
     with tab2:
         creates = _pages_to_create()
         st.markdown(f"### {len(creates)} new pages/articles to create")
+        _novice_box(
+            what=(
+                "People are searching Google for these topics right now — but your site has NO page "
+                "that targets those searches. So Google sends that traffic to your competitors instead. "
+                "Each item in the list is a missing page the AI has identified based on your GSC data, "
+                "topic clusters, and ideal site architecture."
+            ),
+            why=(
+                "You can't rank for a keyword if you don't have a page about it. Creating a missing "
+                "category, guide, or blog post is the most direct way to grow traffic. The AI only "
+                "lists pages where there is proven search demand AND a realistic chance for your "
+                "domain to rank — so this is not a wish list, it's a work list."
+            ),
+            how=(
+                "1. Pick an item from the list below. Look at its <strong>Target keyword</strong> — "
+                "that is what the new page must target.<br>"
+                "2. Create the page in Magento:<br>"
+                "&nbsp;&nbsp;• Category page → Catalog → Categories → Add Subcategory.<br>"
+                "&nbsp;&nbsp;• CMS page → Content → Pages → Add New Page.<br>"
+                "&nbsp;&nbsp;• Blog post → whatever blog module you use.<br>"
+                "3. Use the tool's <strong>Content Generator</strong> (left menu) to AI-write the body "
+                "text using the target keyword.<br>"
+                "4. Set the meta title and description (aim for the target keyword in both).<br>"
+                "5. Add internal links TO the new page from 2–3 related existing pages (otherwise "
+                "Google won't find it quickly)."
+            ),
+            border="#5bb4d4",
+        )
         st.markdown(
             "<p style='color:#9b9bb8; font-size:0.85rem;'>"
             "Combined from: AI ideal structure + content roadmap + per-page plans.</p>",
@@ -1061,6 +1178,33 @@ def render():
     with tab3:
         redirects = _pages_to_redirect()
         st.markdown(f"### {len(redirects)} broken pages to redirect")
+        _novice_box(
+            what=(
+                "These URLs used to exist on your site but now return an error (404 Not Found, 410 "
+                "Gone, etc.). Some of them still have <strong>backlinks</strong> — meaning other "
+                "websites are linking to them. Every broken link is a dead end for both Google and "
+                "human visitors."
+            ),
+            why=(
+                "Backlinks are like votes of trust from other websites to yours. When a URL is broken, "
+                "that vote is lost — the trust evaporates. A 301 redirect transfers most of that "
+                "trust to a new URL, so you keep the SEO value. URLs marked 🔴 HIGH below have "
+                "backlinks — fix those FIRST or you're throwing away free ranking power."
+            ),
+            how=(
+                "1. Start with the 🔴 HIGH priority items (they have backlinks).<br>"
+                "2. For each broken URL, find the closest still-alive page on your site that covers "
+                "the same topic. If no good match exists, redirect to the nearest category page "
+                "(never to the homepage — that's a soft signal Google penalizes).<br>"
+                "3. In Magento Admin → Marketing → SEO &amp; Search → URL Rewrites → Add URL Rewrite:<br>"
+                "&nbsp;&nbsp;• Store: your store<br>"
+                "&nbsp;&nbsp;• Request Path: the broken URL path (e.g. <code>/old-page</code>)<br>"
+                "&nbsp;&nbsp;• Target Path: the new destination path<br>"
+                "&nbsp;&nbsp;• Redirect Type: <strong>Permanent (301)</strong><br>"
+                "4. Test by visiting the old URL in an incognito window — it should land on the new page."
+            ),
+            border="#ffaa33",
+        )
         st.markdown(
             "<p style='color:#9b9bb8; font-size:0.85rem;'>"
             "These pages return 4xx errors. Redirect to closest matching page to preserve any link equity.</p>",
@@ -1077,6 +1221,35 @@ def render():
     with tab4:
         noindex = _pages_to_noindex()
         st.markdown(f"### {len(noindex)} pages to noindex / block in robots.txt")
+        _novice_box(
+            what=(
+                "Magento automatically creates URLs for filters, sort orders, pagination, session "
+                "IDs, and other technical things (e.g. <code>?dir=asc</code>, <code>?p=2</code>, "
+                "<code>?SID=abc123</code>). These are NOT real pages — they are just different views "
+                "of the same category. Thin pages and near-duplicates also show up here."
+            ),
+            why=(
+                "Google has a limited <strong>crawl budget</strong> for your site — a maximum number "
+                "of URLs it will visit each day. If 80% of your crawl budget is wasted on junk filter "
+                "URLs, Google never gets to your real important pages. Blocking the junk in robots.txt "
+                "or adding a <code>noindex</code> tag tells Google: \"don't bother with these, focus "
+                "on the good stuff.\""
+            ),
+            how=(
+                "<strong>For filter/parameter URLs (faceted):</strong> block in robots.txt — faster "
+                "than noindex because Google doesn't even have to visit the page. Open your "
+                "<code>robots.txt</code> file (in Magento root) and paste the rules shown below each "
+                "group.<br><br>"
+                "<strong>For thin / duplicate pages:</strong><br>"
+                "1. Open the page in Magento.<br>"
+                "2. Go to the <strong>Design</strong> tab (or \"Custom Layout Update\" field).<br>"
+                "3. Paste: <code>&lt;meta name=\"robots\" content=\"noindex,follow\"&gt;</code><br>"
+                "4. Save. Google will drop it from the index on its next crawl (1–4 weeks).<br><br>"
+                "Do NOT noindex pages that already rank or have backlinks — use Merge or Redirect "
+                "instead for those."
+            ),
+            border="#9b9bb8",
+        )
         st.markdown(
             "<p style='color:#9b9bb8; font-size:0.85rem;'>"
             "These pages waste crawl budget without SEO value. Add noindex meta or block in robots.txt.</p>",
@@ -1100,6 +1273,41 @@ def render():
 
     # ── TAB 5: DELETE ────────────────────────────────────────
     with tab5:
+        _novice_box(
+            what=(
+                "Pages that currently exist on your site but look dead: no visitors, no backlinks, "
+                "very little content, not part of any topic group. The tool also flags "
+                "<strong>orphan pages</strong> — pages that nothing on your site links to (customers "
+                "can only reach them by typing the URL directly)."
+            ),
+            why=(
+                "Every page on your site is evaluated by Google as part of the overall site quality. "
+                "A site with lots of weak, empty, useless pages is treated as a low-quality site. "
+                "Cleaning out dead weight literally lifts the ranking of your <em>remaining</em> pages. "
+                "BUT: be careful — some \"orphans\" have hidden value (backlinks, or they just lost "
+                "their link). The tool sorts them for you so you don't delete the wrong thing."
+            ),
+            how=(
+                "<strong>Go through the 5 buckets below in this order:</strong><br><br>"
+                "1. <strong>📝 Needs content (products)</strong> — NEVER delete. These are real "
+                "products you can sell. Add a description in Magento and assign to a category.<br>"
+                "2. <strong>🔗 Reconnect</strong> — NEVER delete. These pages have traffic or are in "
+                "topic clusters; they just lost their internal link. Add a link from the relevant "
+                "category or parent page.<br>"
+                "3. <strong>↗ Redirect</strong> — do NOT delete outright. These have backlinks. "
+                "Set up a 301 redirect to the closest matching page (Magento → Marketing → URL "
+                "Rewrites) so you keep the SEO value.<br>"
+                "4. <strong>🗑 True orphans</strong> — safe to delete in Magento (Catalog → Categories "
+                "/ Pages → select → Delete). Also set up a 301 redirect to the nearest relevant page "
+                "as a safety net.<br>"
+                "5. <strong>❓ Investigate</strong> — edge cases. Open each URL in your browser and "
+                "judge manually.<br><br>"
+                "<strong>Alternative to deleting:</strong> if unsure, just add the page to robots.txt "
+                "<code>Disallow:</code> — it stays live for the rare direct visitor, but Google stops "
+                "wasting crawl budget on it."
+            ),
+            border="#ff4455",
+        )
         # Smart orphan classification — distinguish real orphans from misclassified
         orphan_buckets = _classify_orphans()
         n_orphan_total = sum(len(v) for v in orphan_buckets.values())
@@ -1179,6 +1387,37 @@ def render():
     with tab6:
         blogs = _blogs_to_review()
         st.markdown(f"### {len(blogs)} blog/guide pages needing review")
+        _novice_box(
+            what=(
+                "Blog posts and guides that either (a) the AI quality scorer rated as weak — vague, "
+                "outdated, thin, or not really useful — or (b) have gotten ZERO traffic. Unlike a "
+                "category page, a blog post only exists to bring in readers; if nobody reads it, "
+                "it's pure dead weight."
+            ),
+            why=(
+                "Google uses a concept called \"site quality\" — the average quality of ALL pages on "
+                "your site. One great category page + fifty weak blog posts averages out to \"weak "
+                "site.\" Removing or rewriting bad blog posts physically raises your whole site's "
+                "ranking potential. This is one of the easiest wins on older sites with years of "
+                "blogging history."
+            ),
+            how=(
+                "Open each blog expander and pick one of four actions:<br><br>"
+                "<strong>1. Rewrite</strong> — if the topic is still relevant but the article is "
+                "weak. Go to Quick Wins → find the blog → click \"Generate content\" to get an "
+                "AI-written replacement. Paste into Magento over the old content.<br>"
+                "<strong>2. Delete</strong> — if the topic is irrelevant, outdated, or covered "
+                "elsewhere. Delete in Magento AND set up a 301 redirect to the closest remaining "
+                "relevant article (never to a product or homepage).<br>"
+                "<strong>3. Merge</strong> — if two blogs cover nearly the same topic, pick the "
+                "stronger one, copy any unique value from the weaker one into it, then 301 redirect "
+                "weaker → stronger.<br>"
+                "<strong>4. Redirect</strong> — if a newer/better page already exists for this topic, "
+                "just 301 the weak blog to that page.<br><br>"
+                "Start with the 🔴 REWRITE verdicts — those are the posts that actively hurt rankings."
+            ),
+            border="#ffaa33",
+        )
         st.markdown(
             "<p style='color:#9b9bb8; font-size:0.85rem;'>"
             "Blog posts with REWRITE verdict from AI quality check, or zero traffic. "
@@ -1202,6 +1441,38 @@ def render():
     with tab7:
         gaps = st.session_state.get("content_gaps", []) or []
         st.markdown(f"### {len(gaps)} topic clusters with content gaps")
+        _novice_box(
+            what=(
+                "A <strong>topic cluster</strong> is a group of pages on your site that all talk "
+                "about the same broad subject (e.g. all your dildo pages form the \"dildo\" cluster). "
+                "This tab shows clusters where something is going wrong at the <em>topic</em> level, "
+                "not the individual page level: low click-through rate despite many impressions, too "
+                "few pages for the demand, or not enough backlinks pointing to the topic."
+            ),
+            why=(
+                "Google ranks topics, not just pages. If your \"vibrator\" cluster only has 2 pages "
+                "but your competitor has 20, Google sees your competitor as the expert — and all "
+                "20 of their pages rank above your 2. Filling topic gaps means you compete at the "
+                "cluster level, which lifts ALL your pages in that topic at once."
+            ),
+            how=(
+                "<strong>For each 🔴 High priority gap:</strong><br>"
+                "1. Open the expander and read the specific issues listed.<br>"
+                "2. Based on the issues, take one of these actions:<br>"
+                "&nbsp;&nbsp;• <strong>Poor CTR but good impressions</strong>: rewrite the meta title "
+                "+ description on the top-ranking page in this cluster (use Quick Wins view).<br>"
+                "&nbsp;&nbsp;• <strong>Too few pages / thin coverage</strong>: go to the Create tab "
+                "above and create 2–4 new supporting pages (a buying guide, FAQ, comparison, "
+                "\"best of\" list) — all linking to each other and to the main category.<br>"
+                "&nbsp;&nbsp;• <strong>Pages split across too many pages</strong>: go to the Merge tab "
+                "— the same conflicts are flagged there with specific merge instructions.<br>"
+                "&nbsp;&nbsp;• <strong>Missing backlinks</strong>: this is an off-site task — do "
+                "outreach, guest posts, or product PR to get links pointing to the main cluster page.<br>"
+                "3. Then open the <strong>Cluster Balance</strong> tab to visually confirm the "
+                "cluster now looks healthy (green)."
+            ),
+            border="#c8b4ff",
+        )
         st.markdown(
             "<p style='color:#9b9bb8; font-size:0.85rem;'>"
             "Topics where the site underperforms: poor CTR despite impressions, "
@@ -1233,3 +1504,76 @@ def render():
                     with st.expander(f"{g.get('topic','?')} · {g.get('impressions',0):,} impressions · {g.get('queries',0)} queries"):
                         for issue in g.get("issues", []):
                             st.markdown(f"- {issue}")
+
+    # ── TAB 8: UNCLUSTERED PAGES ─────────────────────────────
+    with tab8:
+        st.markdown(f"### Unclustered pages — assign to a topic")
+        _novice_box(
+            what=(
+                "A <strong>topic cluster</strong> is a group of pages about the same subject. The "
+                "pages listed here are NOT part of any cluster — they exist, but the tool doesn't "
+                "know which topic they belong to. To Google's topical-authority algorithm, they are "
+                "effectively invisible: they contribute nothing to showing expertise in any subject."
+            ),
+            why=(
+                "Google rewards sites where related pages are clearly connected around a central "
+                "topic (think of it like a well-organized library with clear sections versus a "
+                "random pile of books). Every page you assign to a cluster makes that topic stronger. "
+                "Unclustered pages are wasted potential — usually just one dropdown-pick away from "
+                "becoming useful ranking fuel."
+            ),
+            how=(
+                "1. Use the dropdown next to each page to pick the cluster it belongs to.<br>"
+                "2. Look at the URL — it usually tells you the topic. Examples:<br>"
+                "&nbsp;&nbsp;• <code>/bondage-bdsm/handklovar</code> → pick \"bondage\" or \"bdsm\"<br>"
+                "&nbsp;&nbsp;• <code>/sexleksaker/vibratorer/bullet</code> → pick \"vibratorer\"<br>"
+                "&nbsp;&nbsp;• <code>/blogg/guide-till-dildos</code> → pick \"dildos\"<br>"
+                "3. If no cluster fits: leave it blank. That's fine — you're not forced to assign.<br>"
+                "4. You do NOT have to finish them all today. Do 25 at a time. Click <strong>Save "
+                "cluster assignments</strong>. Come back later for the next batch.<br>"
+                "5. Pages are sorted by traffic (highest first) so you fix the most impactful ones first."
+            ),
+            border="#5bb4d4",
+        )
+        cluster_names = sorted(set(c.get("topic", "") for c in clusters_list if c.get("topic")))
+        _render_unclustered(unclustered_pages, cluster_names)
+
+    # ── TAB 9: CLUSTER BALANCE ───────────────────────────────
+    with tab9:
+        st.markdown(f"### Cluster balance — are your topics the right size?")
+        _novice_box(
+            what=(
+                "Each topic cluster should ideally have between 3 and 14 pages. Think of it like a "
+                "bookshelf: a topic with just 1 book looks weak to Google, but 25 books about the "
+                "exact same thing is chaos. This tab color-codes your clusters so you can see at a "
+                "glance which topics need more pages and which need consolidation."
+            ),
+            why=(
+                "Google's topical authority model compares the depth of your coverage against "
+                "competitors'. If the \"dildo\" search universe has 20 main subtopics and you have "
+                "only 2 pages, you'll never out-rank a site with 15. And if you have 25 pages all "
+                "targeting the same narrow query, they cannibalize each other. Balancing your "
+                "clusters is the highest-leverage site-wide action available."
+            ),
+            how=(
+                "<strong>Color guide:</strong><br>"
+                "🔴 <strong>RED — Needs more pages</strong>: high traffic but only 1–2 pages. Big "
+                "opportunity. Go to the <strong>Create</strong> tab and add 3–5 supporting pages "
+                "(guide, FAQ, comparison, \"best of\" list). Use the Content Generator in the tool "
+                "to AI-write them.<br><br>"
+                "🟡 <strong>YELLOW — Too many pages</strong>: 15+ pages competing in the same topic. "
+                "Open the page list, look for near-duplicates, and go to the <strong>Merge</strong> "
+                "tab — the same conflicts are flagged there with concrete 301-redirect instructions. "
+                "For pages that are genuinely different, make sure each has a unique meta title "
+                "targeting a different keyword.<br><br>"
+                "🟢 <strong>GREEN — Healthy</strong>: 3–14 pages. No action needed. Focus on red + "
+                "yellow first.<br><br>"
+                "⚪ <strong>GREY — Low priority</strong>: few pages AND low traffic. Ignore for now "
+                "or come back after everything else is cleaned up."
+            ),
+            border="#33dd88",
+        )
+        _render_cluster_balance(clusters_list, audit_lookup)
+
+    st.session_state["_site_cleanup_viewed"] = True
+    st.session_state["_structure_fix_viewed"] = True  # legacy alias
