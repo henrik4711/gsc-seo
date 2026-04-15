@@ -395,7 +395,13 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         # Same logic as deep_scrape_category: split text at product grid boundary.
         # Paragraphs BEFORE product elements = intro_text (top)
         # Paragraphs AFTER product elements = bottom_text (footer)
-        _PRODUCT_RE = re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide|category-product|xmx-category-product", re.I)
+        _PRODUCT_RE = re.compile(
+            r"product-card|product-item|products-grid|product-list-item|"
+            r"card-product|price-box|swiper-slide|category-product|"
+            r"xmx-category-product|xmx-category-grid|xmx-product-grid|"
+            r"xmx-products-list|xmx-product-list|xmx-product-tile",
+            re.I,
+        )
         _SKIP_RE = re.compile(r"xmx-drawer|xmx-filter|xmx-breadcrumb|xmx-trust-point|xmx-carousel|xmx-glossary|xmx-category-grid-message|xmx-category-grid-banner", re.I)
         all_paragraphs = main_content.find_all(["p", "div", "h2", "h3"], recursive=True)
         intro_parts = []
@@ -717,7 +723,13 @@ def _scrape_with_requests(url: str, timeout: int, result: dict) -> dict:
 
         # Editorial text separation (same as Playwright path)
         if main:
-            _PRODUCT_RE = re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide|category-product|xmx-category-product", re.I)
+            _PRODUCT_RE = re.compile(
+            r"product-card|product-item|products-grid|product-list-item|"
+            r"card-product|price-box|swiper-slide|category-product|"
+            r"xmx-category-product|xmx-category-grid|xmx-product-grid|"
+            r"xmx-products-list|xmx-product-list|xmx-product-tile",
+            re.I,
+        )
             _SKIP_RE = re.compile(r"xmx-drawer|xmx-filter|xmx-breadcrumb|xmx-trust-point|xmx-carousel|xmx-glossary|xmx-category-grid-message|xmx-category-grid-banner", re.I)
             all_paragraphs = main.find_all(["p", "div", "h2", "h3"], recursive=True)
             intro_parts = []
