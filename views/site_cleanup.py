@@ -826,6 +826,47 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # ── TEMP diagnostic: download editorial-container diagnostics as JSON ──
+    with st.expander("📊 TEMP — download editorial container diagnostics (JSON)", expanded=False):
+        st.caption(
+            "Collected during Page Auditor scrape. One row per page with all div/section "
+            "class signatures that contain editorial text + images. Use offline (Claude, "
+            "Excel, etc.) to figure out which container classes to add to the regex — "
+            "no re-scrape needed."
+        )
+        audit_results_all = st.session_state.get("audit_results", []) or []
+        diag_rows = []
+        for r in audit_results_all:
+            cands = r.get("editorial_container_candidates") or []
+            if not cands:
+                continue
+            diag_rows.append({
+                "url": r.get("url", ""),
+                "page_type": r.get("page_type", ""),
+                "title": r.get("title", ""),
+                "editorial_image_count": r.get("editorial_image_count", 0),
+                "candidates": cands,
+            })
+
+        if not diag_rows:
+            st.info(
+                "No diagnostic data yet. Re-run **Step 6 (Page Auditor)** once — "
+                "every scrape now saves this automatically."
+            )
+        else:
+            import json
+            from datetime import datetime
+            st.success(f"Diagnostics available for {len(diag_rows)} page(s).")
+            json_blob = json.dumps(diag_rows, ensure_ascii=False, indent=2)
+            fname = f"editorial_container_diagnostics_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+            st.download_button(
+                label=f"⬇ Download {fname} ({len(json_blob)//1024} KB)",
+                data=json_blob,
+                file_name=fname,
+                mime="application/json",
+                type="primary",
+            )
+
     # ── TEMP diagnostic: single-page image preservation test ──
     with st.expander("🔬 TEMP TEST — check image preservation on ONE page (skip the 4h pipeline)", expanded=False):
         st.caption(

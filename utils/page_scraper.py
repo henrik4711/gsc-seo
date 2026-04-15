@@ -533,6 +533,42 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         result["editorial_image_count"] = len(editorial_images)
         result["editorial_image_diag"] = _img_diag
 
+        # ── Persisted diagnostic: all div/section candidates on page that ──
+        # contain editorial-looking content (text + images, not product cards).
+        # Saved so we can tune the _INTRO_RE / _BOTTOM_RE regexes without
+        # having to re-scrape every page (1-hour run).
+        _cand_list = []
+        _skip_cls_diag = re.compile(
+            r"product-card|product-item|card-product|price-box|swiper-slide|"
+            r"category-product|product-list-item",
+            re.I,
+        )
+        for d in _orig_soup.find_all(["div", "section"]):
+            cls = " ".join(d.get("class") or [])
+            if not cls:
+                continue
+            if _skip_cls_diag.search(cls):
+                continue
+            imgs_in = d.find_all("img", recursive=True)
+            ps_in = d.find_all(["p", "h2", "h3"], recursive=True)
+            text_len = sum(len(p.get_text(strip=True)) for p in ps_in)
+            # Editorial-ish: substantial text AND at least 1 image
+            if imgs_in and 100 < text_len < 20000:
+                _cand_list.append({
+                    "classes": cls[:200],
+                    "text_chars": text_len,
+                    "imgs": len(imgs_in),
+                })
+        # Dedupe by class signature, biggest img count first
+        _seen_cls = set()
+        _cand_dedup = []
+        for c in sorted(_cand_list, key=lambda x: -x["imgs"]):
+            if c["classes"] in _seen_cls:
+                continue
+            _seen_cls.add(c["classes"])
+            _cand_dedup.append(c)
+        result["editorial_container_candidates"] = _cand_dedup[:15]
+
 
     # ── Links: extract from content area ──────────────────────
     link_soup = BeautifulSoup(html, "html.parser")
