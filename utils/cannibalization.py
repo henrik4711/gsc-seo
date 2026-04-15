@@ -63,9 +63,24 @@ def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
 
     all_urls = [winner] + list(losers)
     page_types = {u: type_lookup.get(_nu(u), "unknown") for u in all_urls}
-    categories = [u for u in all_urls if page_types[u] == "category"]
+
+    # Sale/REA filter pages are stored as "category" in audit_results but
+    # serve a different purpose (price filter view, not a true category).
+    # Exclude them from the category count so they don't trigger
+    # false-positive "duplicate_categories" classifications.
+    try:
+        from utils.site_patterns import get_sale_patterns
+        _sale_patterns = get_sale_patterns()
+    except Exception:
+        _sale_patterns = ["/rea/", "/sale/", "/udsalg/", "billig"]
+
+    def _is_sale(u):
+        return any(sp in str(u).lower() for sp in _sale_patterns)
+
+    sale_pages = [u for u in all_urls if _is_sale(u)]
+    categories = [u for u in all_urls if page_types[u] == "category" and not _is_sale(u)]
     products = [u for u in all_urls if page_types[u] == "product"]
-    n_cat, n_prod = len(categories), len(products)
+    n_cat, n_prod, n_sale = len(categories), len(products), len(sale_pages)
 
     def _has_prefix(urls):
         paths = [_path_of(u) for u in urls]
