@@ -92,16 +92,21 @@ def render():
         unsafe_allow_html=True,
     )
     top_c1, top_c2, top_c3 = st.columns([1, 1, 1])
+    _top_rescrape_all = False
+    _top_rescrape_new = False
     with top_c1:
-        if st.button("🔄 Re-scrape ALL pages (force)", type="primary", key="btn_top_rescrape_all", use_container_width=True):
-            st.session_state["_top_rescrape_trigger"] = "all"
-            st.rerun()
+        _top_rescrape_all = st.button("🔄 Re-scrape ALL pages (force)", type="primary", key="btn_top_rescrape_all", use_container_width=True)
     with top_c2:
-        if st.button("➕ Scrape NEW pages only", key="btn_top_rescrape_new", use_container_width=True):
-            st.session_state["_top_rescrape_trigger"] = "new"
-            st.rerun()
+        _top_rescrape_new = st.button("➕ Scrape NEW pages only", key="btn_top_rescrape_new", use_container_width=True)
     with top_c3:
         st.caption(f"~{max(1, (len(all_pages_top)) // 60)} min for all · ~1 sec/page")
+
+    # Immediate feedback + execute (no rerun dance — run inline below)
+    if _top_rescrape_all:
+        st.success(f"✓ Button clicked — preparing to re-scrape ALL {len(all_pages_top)} pages…")
+    elif _top_rescrape_new:
+        _new_urls = [p for p in all_pages_top if p not in already_audited_top]
+        st.success(f"✓ Button clicked — preparing to scrape {len(_new_urls)} NEW page(s)…")
 
     # ── URL Input ─────────────────────────────────────────────────
     with st.form("audit_form"):
@@ -185,15 +190,14 @@ def render():
                 urls = pages_to_audit
                 run_audit = True
 
-    # Handle top re-scrape triggers (from prominent top buttons)
-    _top_trigger = st.session_state.pop("_top_rescrape_trigger", None)
-    if _top_trigger == "all":
+    # Handle top re-scrape buttons (set earlier this render)
+    if _top_rescrape_all:
         urls = all_pages_top
         run_audit = True
-    elif _top_trigger == "new":
+    elif _top_rescrape_new:
         urls = [p for p in all_pages_top if p not in already_audited_top]
         if not urls:
-            st.success("All pages already audited — nothing new to scrape.")
+            st.warning("All pages already audited — nothing new to scrape.")
         else:
             run_audit = True
 
