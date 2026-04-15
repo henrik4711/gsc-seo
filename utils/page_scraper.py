@@ -438,6 +438,61 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         result["bottom_word_count"] = len(result["bottom_text"].split()) if result["bottom_text"] else 0
         result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
 
+        # ── Editorial images — preserve in AI rewrites ──────────
+        # Capture <img> tags that live in the editorial text (intro/bottom),
+        # NOT inside product cards or nav/footer/filters. The AI must keep
+        # these images in the new text with the exact same src.
+        editorial_images = []
+        _seen_img_src = set()
+        for img in main_content.find_all("img"):
+            # Skip product-card images (they come from the grid, not editorial)
+            if img.find_parent(attrs={"class": _PRODUCT_RE}):
+                continue
+            if img.find_parent(attrs={"class": _SKIP_RE}):
+                continue
+            if img.find_parent(["nav", "footer", "header"]):
+                continue
+            src = img.get("src") or img.get("data-src") or ""
+            if not src or src.startswith("data:"):
+                continue
+            # Resolve relative URLs
+            if src.startswith("//"):
+                src = "https:" + src
+            elif src.startswith("/"):
+                src = f"https://{urlparse(url).netloc}{src}"
+            if src in _seen_img_src:
+                continue
+            _seen_img_src.add(src)
+            # Decide section: if any bottom paragraph precedes, it's bottom;
+            # otherwise intro. Use document-order heuristic via found_products flag.
+            # Simpler: check if this img has a preceding sibling/ancestor with product class.
+            prev_product = False
+            for prev in img.find_all_previous(["div", "section"]):
+                own = " ".join(prev.get("class", []))
+                if _PRODUCT_RE.search(own):
+                    prev_product = True
+                    break
+            section = "bottom" if prev_product else "intro"
+            # Capture wrapping <a> href + <figcaption> if present
+            wrap_a = img.find_parent("a")
+            link_href = wrap_a.get("href", "") if wrap_a else ""
+            fig = img.find_parent("figure")
+            caption = ""
+            if fig:
+                cap_tag = fig.find("figcaption")
+                if cap_tag:
+                    caption = cap_tag.get_text(strip=True)
+            editorial_images.append({
+                "src": src,
+                "alt": (img.get("alt") or "").strip(),
+                "width": img.get("width", ""),
+                "link_href": link_href,
+                "caption": caption,
+                "section": section,
+            })
+        result["editorial_images"] = editorial_images
+        result["editorial_image_count"] = len(editorial_images)
+
     # ── Links: extract from content area ──────────────────────
     link_soup = BeautifulSoup(html, "html.parser")
     content_for_links = (

@@ -416,6 +416,8 @@ def build_page_profile(url: str) -> dict:
     profile["intro_text"] = intro_text
     profile["bottom_text_content"] = bottom_text_raw
     profile["editorial_word_count"] = editorial_wc
+    # Preserve editorial <img> tags so AI rewrites keep them in place
+    profile["editorial_images"] = page_data.get("editorial_images", []) or []
 
     editorial = (intro_text + " " + bottom_text_raw).strip().lower()
     body = editorial if editorial and len(editorial) > 50 else profile["body_text"].lower()

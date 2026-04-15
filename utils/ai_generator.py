@@ -1569,6 +1569,20 @@ def generate_page_content(url: str, target_query: str = None) -> dict:
             "Use descriptive alt text with the product name. Add width='300' and loading='lazy'."
         )
 
+    # ── Build existing-images block (preserve images from current page) ──
+    existing_editorial_images = prof.get("editorial_images", []) or []
+    if existing_editorial_images:
+        _lines = [f"The current page has {len(existing_editorial_images)} editorial image(s) that MUST be kept:"]
+        for i, ei in enumerate(existing_editorial_images, 1):
+            _lines.append(
+                f"  {i}. section={ei.get('section','bottom')} | "
+                f"src={ei.get('src','')} | alt={ei.get('alt','')} | "
+                f"link_href={ei.get('link_href','')} | caption={ei.get('caption','')}"
+            )
+        existing_images_block = "\n".join(_lines)
+    else:
+        existing_images_block = "(No existing editorial images on this page — nothing to preserve.)"
+
     # ── Build the full prompt ──
     prompt = f"""{ANTI_HALLUCINATION_RULES}
 
@@ -1614,12 +1628,19 @@ Site context: {site_context}
 {products_text}
 {images_instruction}
 
-## EXISTING IMAGES IN CURRENT TEXT — CRITICAL
-If the current text contains <img> tags, you MUST:
-1. KEEP every existing image in the new text — do NOT remove any
-2. Use the EXACT same src URL — do NOT change or invent image URLs
-3. Place them at natural positions (after relevant H2, not clustered)
-4. You may add product images from the PRODUCT IMAGES list above, but NEVER invent image URLs
+## EXISTING IMAGES IN CURRENT TEXT — CRITICAL (DO NOT LOSE THESE)
+{existing_images_block}
+Rules for the images listed above:
+1. You MUST reproduce EVERY image above in the new text — do NOT remove any
+2. Use the EXACT same src URL and alt text — do NOT change, paraphrase, or invent image URLs
+3. Respect the "section" hint (intro = TOP TEXT, bottom = BOTTOM TEXT)
+4. Wrap each image exactly as given — if a link_href is shown, wrap with
+   <a href="LINK_HREF"><img src="SRC" alt="ALT" loading="lazy"></a>; if a
+   caption is shown, wrap in <figure>...<figcaption>CAPTION</figcaption></figure>
+5. Place each image at a NATURAL position (after a relevant H2 or paragraph),
+   not clustered at top/bottom
+6. You may also add NEW product images from the PRODUCT IMAGES list above, but
+   NEVER invent image URLs that aren't in either list
 
 ## CURRENT TEXT (this is what needs rewriting)
 {current_body[:15000]}
