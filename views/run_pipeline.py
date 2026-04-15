@@ -1190,8 +1190,9 @@ def render():
                 "<strong>🗑 Reset all analyses + AI cache</strong><br>"
                 "Deletes: quality scores, AI plans, generated texts, cannibalization, "
                 "site validation, ideal structure, gap analysis, plan validation.<br>"
-                "<strong>KEEPS:</strong> GSC data, Ahrefs, Screaming Frog, topic clusters, CTR gaps, audit page data.<br>"
-                "After reset: re-scrape (force all) → step 7 → 8 → 9 → 10 → 11.</div>",
+                "<strong>KEEPS:</strong> GSC data, Ahrefs, Screaming Frog, topic clusters, CTR gaps, "
+                "<strong>audit page data (no re-scrape needed).</strong><br>"
+                "After reset: just run step 7 → 8 → 9 → 10 → 11 → 12.</div>",
                 unsafe_allow_html=True,
             )
         with col2:
@@ -1237,7 +1238,7 @@ def render():
                     except Exception:
                         pass
 
-                st.success(f"🗑 Reset done: {deleted} session keys + {disk_deleted} disk files deleted. Now: re-scrape (force all) → step 7 → 8 → 9 → 10 → 11.")
+                st.success(f"🗑 Reset done: {deleted} session keys + {disk_deleted} disk files deleted. Audit data is kept — next: just run step 7 → 8 → 9 → 10 → 11 → 12.")
                 st.rerun()
 
         st.markdown("---")
