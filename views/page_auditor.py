@@ -342,10 +342,22 @@ def render():
                     if deep_category and is_likely_category:
                         page_data = deep_scrape_category(url)
                         result.update(page_data)
-                        result["body_text"] = page_data.get("full_body_text", "")
-                        result["word_count"] = len(result["body_text"].split()) if result["body_text"] else 0
-                        result["title_length"] = len(page_data.get("title") or "")
-                        result["description_length"] = len(page_data.get("meta_description") or "")
+                        # Coerce to str — pandas/numpy cells may be NaN (float)
+                        def _s2(v):
+                            if v is None:
+                                return ""
+                            try:
+                                import math
+                                if isinstance(v, float) and math.isnan(v):
+                                    return ""
+                            except Exception:
+                                pass
+                            return str(v)
+                        _body = _s2(page_data.get("full_body_text"))
+                        result["body_text"] = _body
+                        result["word_count"] = len(_body.split()) if _body else 0
+                        result["title_length"] = len(_s2(page_data.get("title")))
+                        result["description_length"] = len(_s2(page_data.get("meta_description")))
                         result["internal_links"] = page_data.get("internal_link_count", 0)
                         result["images_without_alt"] = page_data.get("images_without_alt", 0)
                     else:
