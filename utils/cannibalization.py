@@ -316,6 +316,58 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         page_intents = {p["page"]: _page_intent(p["page"]) for p in pages_detail}
         unique_intents = set(page_intents.values())
 
+        # ── QUERY INTENT detection (independent of which page wins) ─
+        # The "best" link target depends on what the SEARCHER wants,
+        # not on which page has the most backlinks. Informational
+        # queries ("how to", "best of", "guide") should link to a
+        # guide/blog page if one exists in the conflict, even if a
+        # category page has the higher score.
+        def _query_intent(q: str) -> str:
+            ql = (q or "").lower()
+            # Informational signals (Swedish + English)
+            if any(t in ql for t in [
+                "hur ", "vad ", "varför", "när ", "hur man",
+                "guide", "guide till", "tips", "lär", "förklar",
+                "how to", "what is", "why ", "when ", "tutorial",
+                "skillnad mellan", "difference between",
+            ]):
+                return "informational"
+            # Listicle / commercial-investigation signals
+            if any(t in ql for t in [
+                "bäst", "bästa", "topplista", "top ", "top-",
+                "best ", "best-", "vs ", " vs", "jämför", "compare",
+                "review", "recension", "test", "rating",
+            ]):
+                return "listicle"
+            # Transactional signals
+            if any(t in ql for t in [
+                "köp", "buy", "billig", "cheap", "rea", "sale",
+                "rabatt", "discount", "pris", "price",
+            ]):
+                return "transactional"
+            # Navigational signals
+            if any(t in ql for t in [
+                "logga in", "konto", "kontakt", "kundservice",
+                "login", "account", "contact",
+            ]):
+                return "navigational"
+            # Default: generic head terms = transactional (shop) on e-commerce
+            return "transactional"
+
+        query_intent = _query_intent(row.get("query", ""))
+
+        # ── Intent-matched LINK TARGET ──────────────────────────
+        # This is the page OTHER pages should link TO when this query
+        # appears. If query intent matches a page's intent, that page
+        # is the right target — even if it's not the score-winner.
+        link_target = winner_page  # default fallback
+        link_target_reason = "highest score (no intent match)"
+        for pi_url, pi_intent in page_intents.items():
+            if pi_intent == query_intent:
+                link_target = pi_url
+                link_target_reason = f"intent match: query='{query_intent}', page='{pi_intent}'"
+                break
+
         # ── Check if meta titles are already differentiated ───
         # If pages already have unique, keyword-focused titles → "already handled"
         page_titles = {}
@@ -667,6 +719,14 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
             "cannibal_parent_url": cannibal_type.get("parent_url"),
             "cannibal_suggested_parent": cannibal_type.get("suggested_parent_path"),
             "already_differentiated": cannibal_type.get("already_differentiated", False),
+            # NEW: query intent + intent-matched link target (separate from
+            # the score-based winner). When other pages link to this query,
+            # they should anchor to link_target — which is the page whose
+            # intent matches the query, not necessarily the highest-scoring page.
+            "query_intent": query_intent,
+            "link_target": link_target,
+            "link_target_reason": link_target_reason,
+            "page_intents": page_intents,
         })
 
     result = pd.DataFrame(records)
