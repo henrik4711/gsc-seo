@@ -1583,6 +1583,42 @@ def generate_page_content(url: str, target_query: str = None) -> dict:
     else:
         existing_images_block = "(No existing editorial images on this page — nothing to preserve.)"
 
+    # ── Cannibal link targets — pages this page should link TO ──
+    cannibal_targets = prof.get("cannibal_link_targets", []) or []
+    if cannibal_targets:
+        _lines = ["Pages this page CONFLICTS with — add a contextual link to the recommended target:"]
+        for i, ct in enumerate(cannibal_targets[:5], 1):
+            _lines.append(
+                f"  {i}. query='{ct['query']}' (intent={ct['query_intent']}) "
+                f"→ link to {ct['link_target']} (priority {ct['link_target_priority']}, "
+                f"reason: {ct['link_target_reason']})"
+            )
+        cannibal_targets_block = "\n".join(_lines)
+    else:
+        cannibal_targets_block = "(No cannibal link targets for this page.)"
+
+    # ── Cluster link recommendations involving this page ──
+    out_recs = prof.get("cluster_link_outgoing", []) or []
+    if out_recs:
+        _lines = [f"This page should add {len(out_recs)} new link(s) (cluster topology):"]
+        for i, r in enumerate(out_recs[:8], 1):
+            _lines.append(
+                f"  {i}. [{r['type'].upper()}] → {r['to_url']} "
+                f"with anchor '{r['anchor']}' (cluster: {r['cluster_topic']}) — {r['reason']}"
+            )
+        cluster_links_block = "\n".join(_lines)
+    else:
+        cluster_links_block = "(No new cluster links recommended for this page.)"
+
+    # ── Structural signals — tell AI what container layout to respect ──
+    struct = prof.get("structural_signals", {}) or {}
+    struct_block = (
+        f"Body classes: {struct.get('body_classes', [])}\n"
+        f"Intro container(s) found: {struct.get('found_intro_classes', [])}\n"
+        f"Bottom container(s) found: {struct.get('found_bottom_classes', [])}\n"
+        f"Has #category-description id: {struct.get('has_category_description_id', False)}"
+    )
+
     # ── Build the full prompt ──
     prompt = f"""{ANTI_HALLUCINATION_RULES}
 
@@ -1641,6 +1677,22 @@ Rules for the images listed above:
    not clustered at top/bottom
 6. You may also add NEW product images from the PRODUCT IMAGES list above, but
    NEVER invent image URLs that aren't in either list
+
+## CANNIBAL LINK TARGETS — add these contextual links to resolve conflicts
+{cannibal_targets_block}
+For EACH cannibal target above, add ONE in-body link to that URL with an
+anchor that matches the query intent. This breaks cannibalization without
+removing either page.
+
+## CLUSTER LINK RECOMMENDATIONS — strengthen topical authority
+{cluster_links_block}
+Add EACH link recommended above into the new text. Vertical-up links (spoke→pillar)
+go in the BOTTOM TEXT; horizontal links (sibling→sibling) go wherever they fit
+naturally. Use the EXACT anchor text shown — don't paraphrase.
+
+## STRUCTURAL SIGNALS — what containers exist on this page
+{struct_block}
+Use this to know what kind of page you are rewriting and where text lives.
 
 ## CURRENT TEXT (this is what needs rewriting)
 {current_body[:15000]}

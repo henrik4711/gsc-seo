@@ -418,6 +418,48 @@ def build_page_profile(url: str) -> dict:
     profile["editorial_word_count"] = editorial_wc
     # Preserve editorial <img> tags so AI rewrites keep them in place
     profile["editorial_images"] = page_data.get("editorial_images", []) or []
+    # CMS structural signals (which template containers exist on the page)
+    profile["structural_signals"] = page_data.get("structural_signals", {}) or {}
+
+    # ── Cannibal link guidance for THIS page ──
+    # For each conflict where THIS page competes, capture the
+    # cluster/intent-aware recommended link_target so AI rewrites
+    # add the correct cross-link.
+    cannibal_df = st.session_state.get("cannibalization")
+    cannibal_link_targets = []
+    if cannibal_df is not None and hasattr(cannibal_df, "iterrows"):
+        for _, row in cannibal_df.iterrows():
+            pages_detail = row.get("pages_detail", [])
+            if not isinstance(pages_detail, list):
+                continue
+            page_norms = {normalize_url(p.get("page", "")) for p in pages_detail}
+            if norm not in page_norms:
+                continue
+            link_target = row.get("link_target") or row.get("recommended_winner") or ""
+            if link_target and normalize_url(link_target) != norm:
+                cannibal_link_targets.append({
+                    "query": row.get("query", ""),
+                    "query_intent": row.get("query_intent", ""),
+                    "link_target": link_target,
+                    "link_target_reason": row.get("link_target_reason", ""),
+                    "link_target_priority": row.get("link_target_priority", 5),
+                    "cluster": row.get("query_clusters", []),
+                })
+    profile["cannibal_link_targets"] = cannibal_link_targets[:10]
+
+    # ── Cluster link recommendations involving THIS page ──
+    cluster_recs = st.session_state.get("cluster_link_recommendations") or []
+    out_recs = []
+    in_recs = []
+    for r in cluster_recs:
+        if not isinstance(r, dict):
+            continue
+        if normalize_url(r.get("from_url", "")) == norm:
+            out_recs.append(r)
+        elif normalize_url(r.get("to_url", "")) == norm:
+            in_recs.append(r)
+    profile["cluster_link_outgoing"] = out_recs[:10]
+    profile["cluster_link_incoming"] = in_recs[:10]
 
     editorial = (intro_text + " " + bottom_text_raw).strip().lower()
     body = editorial if editorial and len(editorial) > 50 else profile["body_text"].lower()
