@@ -493,47 +493,25 @@ def extract_editorial_content(html: str, url: str) -> dict:
 
 def _parse_html(result: dict, soup, html: str, url: str) -> dict:
     """Parse HTML into result dict. Shared by normal scrape and retry."""
-    # Title
-    title_tag = soup.find("title")
-    if title_tag:
-        result["title"] = title_tag.get_text(strip=True)
-        result["title_length"] = len(result["title"])
+    # Meta + headings + schema — all from utils.html_extractors (single source)
+    from utils.html_extractors import (
+        extract_meta, extract_headings, extract_schema_types,
+        extract_internal_links, count_images_without_alt,
+        find_main_content,
+    )
+    meta = extract_meta(soup)
+    result["title"] = meta["title"]
+    result["title_length"] = meta["title_length"]
+    result["meta_description"] = meta["meta_description"]
+    result["description_length"] = meta["description_length"]
+    result["canonical"] = meta["canonical"]
 
-    # Meta description
-    meta_desc = soup.find("meta", attrs={"name": re.compile("description", re.I)})
-    if meta_desc:
-        result["meta_description"] = meta_desc.get("content", "").strip()
-        result["description_length"] = len(result["meta_description"])
+    headings = extract_headings(soup)
+    result["h1"] = headings["h1"]
+    result["h2s"] = headings["h2s"]
+    result["h3s"] = headings["h3s"]
 
-    # Canonical
-    canonical = soup.find("link", attrs={"rel": "canonical"})
-    if canonical:
-        result["canonical"] = canonical.get("href", "")
-
-    # Headings
-    h1 = soup.find("h1")
-    if h1:
-        result["h1"] = h1.get_text(strip=True)
-
-    result["h2s"] = [h.get_text(strip=True) for h in soup.find_all("h2")][:15]
-    result["h3s"] = [h.get_text(strip=True) for h in soup.find_all("h3")][:15]
-
-    # Schema types
-    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
-        try:
-            data = json.loads(tag.string or "{}")
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and "@type" in item:
-                        result["schema_types"].append(item["@type"])
-            elif "@type" in data:
-                result["schema_types"].append(data["@type"])
-            if "@graph" in data:
-                for item in data["@graph"]:
-                    if isinstance(item, dict) and "@type" in item:
-                        result["schema_types"].append(item["@type"])
-        except Exception:
-            pass
+    result["schema_types"] = extract_schema_types(soup)
 
     # ── Template detection (Magento 1.9 + generic e-commerce) ──
     # Body class is the strongest signal — CMS platforms set it per page type
@@ -669,44 +647,17 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
             print(f"[scraper] editorial extraction failed: {_ed_err}")
 
     # ── Links: extract from content area ──────────────────────
+    # Internal/external links — single source of truth
     link_soup = BeautifulSoup(html, "html.parser")
-    content_for_links = (
-        link_soup.find("div", class_="xmx-page-content")
-        or link_soup.find("main")
-        or link_soup.body
-    )
+    links = extract_internal_links(link_soup, url)
+    result["internal_links"] = links["internal_links"]
+    result["internal_link_count"] = links["internal_link_count"]
+    result["external_links"] = links["external_link_count"]
 
-    domain = urlparse(url).netloc
-    internal_links = []
-    seen_urls = set()
-    ext_count = 0
-
-    if content_for_links:
-        for a in content_for_links.find_all("a", href=True):
-            href = a["href"]
-            anchor = a.get_text(strip=True)[:80]
-            if href.startswith("/") and not href.startswith("//"):
-                href = f"https://{domain}{href}"
-            if href.startswith("http"):
-                if domain in href:
-                    from utils.ui_helpers import normalize_url
-                    norm = normalize_url(href)
-                    if norm not in seen_urls:
-                        seen_urls.add(norm)
-                        internal_links.append({"url": norm, "anchor": anchor})
-                else:
-                    ext_count += 1
-
-    result["internal_links"] = internal_links
-    result["internal_link_count"] = len(internal_links)
-    result["external_links"] = ext_count
-
-    # Images without alt
+    # Images without alt — single source of truth
     if main_content:
-        result["images_without_alt"] = sum(
-            1 for img in main_content.find_all("img")
-            if not img.get("alt", "").strip()
-        )
+        img_stats = count_images_without_alt(main_content)
+        result["images_without_alt"] = img_stats["images_without_alt"]
 
     return result
 

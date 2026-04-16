@@ -349,90 +349,74 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
         result["success"] = True
         domain = urlparse(url).netloc
 
-        # ── Meta ──────────────────────────────────────────────
-        title_tag = soup.find("title")
-        if title_tag:
-            result["title"] = title_tag.get_text(strip=True)
+        # ── Meta + headings — single source of truth ──────────
+        from utils.html_extractors import (
+            extract_meta, extract_headings, extract_schema_raw,
+            extract_internal_links, count_images_without_alt,
+        )
+        meta = extract_meta(soup)
+        result["title"] = meta["title"]
+        result["meta_description"] = meta["meta_description"]
+        result["canonical"] = meta["canonical"]
 
-        meta_desc = soup.find("meta", attrs={"name": re.compile("description", re.I)})
-        if meta_desc:
-            result["meta_description"] = meta_desc.get("content", "").strip()
-
-        canonical = soup.find("link", attrs={"rel": "canonical"})
-        if canonical:
-            result["canonical"] = canonical.get("href", "")
-
-        # Last-modified
+        # Last-modified — header + meta tag
         last_mod = resp.headers.get("Last-Modified")
         if last_mod:
             result["has_last_modified"] = True
             result["last_modified"] = last_mod
             result["trust_signals"].append(f"Last-Modified header: {last_mod}")
-
-        meta_date = soup.find("meta", attrs={"property": re.compile("modified_time|updated_time", re.I)})
-        if meta_date:
+        if meta["last_modified_meta"]:
             result["has_last_modified"] = True
-            result["last_modified"] = meta_date.get("content", "")
-            result["trust_signals"].append(f"Article modified: {result['last_modified']}")
+            result["last_modified"] = meta["last_modified_meta"]
+            result["trust_signals"].append(f"Article modified: {meta['last_modified_meta']}")
 
-        # ── Structured Data (thorough) ────────────────────────
-        for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
-            try:
-                data = json.loads(tag.string or "{}")
-                items = data if isinstance(data, list) else [data]
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    stype = item.get("@type", "")
-                    if stype:
-                        result["schema_types"].append(stype)
-                    result["schema_raw"].append(item)
+        # ── Structured data — get raw blocks from helper, then walk ──
+        # (the deeper FAQ/review/breadcrumb logic stays here because it's
+        # category-specific; the raw fetch is shared.)
+        result["schema_raw"] = extract_schema_raw(soup)
+        for item in result["schema_raw"]:
+            if not isinstance(item, dict):
+                continue
+            stype = item.get("@type", "")
+            if stype:
+                result["schema_types"].append(stype)
+            if stype == "FAQPage":
+                result["has_faq"] = True
+                entities = item.get("mainEntity", [])
+                result["faq_count"] = len(entities) if isinstance(entities, list) else 0
+                result["trust_signals"].append(f"FAQPage schema with {result['faq_count']} questions")
+            if stype in ("Review", "AggregateRating") or "aggregateRating" in item:
+                result["has_aggregate_rating"] = True
+                result["has_reviews"] = True
+                agg = item.get("aggregateRating", item)
+                rc = agg.get("reviewCount") or agg.get("ratingCount", 0)
+                result["review_count"] = max(result["review_count"], int(rc) if rc else 0)
+                result["trust_signals"].append(f"AggregateRating: {rc} reviews")
+            if stype == "BreadcrumbList":
+                result["has_breadcrumb"] = True
+                result["trust_signals"].append("BreadcrumbList schema")
+            if stype in ("Organization", "LocalBusiness", "Store"):
+                result["has_organization_schema"] = True
+                result["trust_signals"].append(f"{stype} schema")
+            if stype == "Product" and "aggregateRating" in item:
+                result["has_aggregate_rating"] = True
+                result["has_reviews"] = True
+            if stype == "ItemList":
+                items_in_list = item.get("itemListElement", [])
+                result["trust_signals"].append(f"ItemList schema with {len(items_in_list)} items")
+            # Also handle @graph nesting
+            if "@graph" in item:
+                for g_item in item["@graph"]:
+                    if isinstance(g_item, dict):
+                        gt = g_item.get("@type", "")
+                        if gt:
+                            result["schema_types"].append(gt)
 
-                    # FAQ schema
-                    if stype == "FAQPage":
-                        result["has_faq"] = True
-                        entities = item.get("mainEntity", [])
-                        result["faq_count"] = len(entities) if isinstance(entities, list) else 0
-                        result["trust_signals"].append(f"FAQPage schema with {result['faq_count']} questions")
-
-                    # Review / Rating
-                    if stype in ("Review", "AggregateRating") or "aggregateRating" in item:
-                        result["has_aggregate_rating"] = True
-                        result["has_reviews"] = True
-                        agg = item.get("aggregateRating", item)
-                        rc = agg.get("reviewCount") or agg.get("ratingCount", 0)
-                        result["review_count"] = max(result["review_count"], int(rc) if rc else 0)
-                        result["trust_signals"].append(f"AggregateRating: {rc} reviews")
-
-                    # Breadcrumb
-                    if stype == "BreadcrumbList":
-                        result["has_breadcrumb"] = True
-                        result["trust_signals"].append("BreadcrumbList schema")
-
-                    # Organization
-                    if stype in ("Organization", "LocalBusiness", "Store"):
-                        result["has_organization_schema"] = True
-                        result["trust_signals"].append(f"{stype} schema")
-
-                    # Product with review
-                    if stype == "Product" and "aggregateRating" in item:
-                        result["has_aggregate_rating"] = True
-                        result["has_reviews"] = True
-
-                    # ItemList (category signal)
-                    if stype == "ItemList":
-                        items_in_list = item.get("itemListElement", [])
-                        result["trust_signals"].append(f"ItemList schema with {len(items_in_list)} items")
-
-            except Exception:
-                pass
-
-        # ── Headings ──────────────────────────────────────────
-        h1 = soup.find("h1")
-        if h1:
-            result["h1"] = h1.get_text(strip=True)
-        result["h2s"] = [h.get_text(strip=True) for h in soup.find_all("h2")]
-        result["h3s"] = [h.get_text(strip=True) for h in soup.find_all("h3")]
+        # ── Headings — single source of truth ─────────────────
+        headings = extract_headings(soup, h2_limit=999, h3_limit=999)
+        result["h1"] = headings["h1"]
+        result["h2s"] = headings["h2s"]
+        result["h3s"] = headings["h3s"]
 
         # ── Review signals in HTML (not just schema) ──────────
         review_patterns = re.compile(
@@ -555,39 +539,25 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
                           if re.search(r"guide|k.pguide|v.lj|hur väljer|tips|råd", h, re.I)]
         result["has_buying_guide"] = bool(guide_headings)
 
-        # ── Link analysis — detailed with classification ──────
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            anchor = a.get_text(strip=True)[:100]
-            is_internal = False
+        # ── Internal/external links — single source of truth ──
+        link_data = extract_internal_links(soup, url)
+        result["internal_links"] = link_data["internal_links"]
+        result["internal_link_count"] = link_data["internal_link_count"]
+        result["external_link_count"] = link_data["external_link_count"]
+        # Category-specific: classify each internal link as category-like or product
+        for link_info in result["internal_links"]:
+            href = link_info["url"]
+            href_lower = href.lower()
+            if re.search(r"/products?/|/produkt/|/p/", href_lower):
+                result["product_links_on_page"].append(link_info)
+            elif (re.search(r"/kategori/|/category/|/collections?/", href_lower)
+                  or (href.count("/") <= 3 and not re.search(r"\.\w{2,4}$", href))):
+                result["category_links"].append(link_info)
 
-            if href.startswith("http"):
-                if domain in href:
-                    is_internal = True
-                else:
-                    result["external_link_count"] += 1
-            elif href.startswith("/") and not href.startswith("//"):
-                is_internal = True
-                href = f"https://{domain}{href}"  # Convert to absolute URL
-
-            if is_internal:
-                link_info = {"url": href, "anchor": anchor}
-                result["internal_links"].append(link_info)
-                result["internal_link_count"] += 1
-
-                # Classify: is this a category link or product link?
-                href_lower = href.lower()
-                if re.search(r"/products?/|/produkt/|/p/", href_lower):
-                    result["product_links_on_page"].append(link_info)
-                elif (re.search(r"/kategori/|/category/|/collections?/", href_lower)
-                      or (href.count("/") <= 3 and not re.search(r"\.\w{2,4}$", href))):
-                    # Category-like: short paths, no file extension
-                    result["category_links"].append(link_info)
-
-        # Images
-        all_imgs = soup.find_all("img")
-        result["images_total"] = len(all_imgs)
-        result["images_without_alt"] = sum(1 for img in all_imgs if not img.get("alt", "").strip())
+        # Images — single source of truth
+        img_stats = count_images_without_alt(soup)
+        result["images_total"] = img_stats["images_total"]
+        result["images_without_alt"] = img_stats["images_without_alt"]
 
         # Page type
         classification = classify_page_type(url, {
