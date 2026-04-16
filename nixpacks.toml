@@ -1,11 +1,2 @@
-[phases.setup]
-aptPkgs = [
-  "libnss3", "libatk-bridge2.0-0", "libdrm2", "libxcomposite1",
-  "libxdamage1", "libxrandr2", "libgbm1", "libasound2t64",
-  "libpango-1.0-0", "libcairo2", "libatspi2.0-0", "libxshmfence1",
-  "libx11-xcb1", "libxcb-dri3-0", "libxkbcommon0", "libcups2",
-  "libdbus-1-3", "libxfixes3", "fonts-liberation"
-]
-
-[phases.build]
-cmds = ["playwright install chromium"]
+# Playwright + chromium removed — scraper now uses requests + BeautifulSoup.
+# This file is kept empty so Railway uses default Python build.

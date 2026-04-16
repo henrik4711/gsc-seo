@@ -334,26 +334,15 @@ def render():
         else:
             st.markdown("<div style='color:#ff4455;'>Volume /data NOT available</div>", unsafe_allow_html=True)
 
-        # Playwright status
+        # Scraper status — requests + BeautifulSoup, no Playwright
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### Scraper Status")
         try:
-            from utils.page_scraper import _get_browser, _playwright_failed
-            if _playwright_failed:
-                pw_error = st.session_state.get("_playwright_error", "Unknown error")
-                status_row("Playwright (Chrome)", False, "FAILED — using requests fallback")
-                st.code(pw_error, language="text")
-            else:
-                browser = _get_browser()
-                if browser:
-                    status_row("Playwright (Chrome)", True, "Ready")
-                else:
-                    pw_error = st.session_state.get("_playwright_error", "Unknown error")
-                    status_row("Playwright (Chrome)", False, "Unavailable")
-                    st.code(pw_error, language="text")
+            import requests as _req  # noqa
+            from bs4 import BeautifulSoup as _bs  # noqa
+            status_row("Scraper (requests + BeautifulSoup)", True, "Ready — no JS rendering needed for Magento")
         except Exception as e:
-            status_row("Playwright (Chrome)", False, f"Import error: {str(e)[:80]}")
-            st.code(str(e), language="text")
+            status_row("Scraper", False, f"Missing dependency: {str(e)[:80]}")
 
         # ── RESET ALL DATA ─────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
