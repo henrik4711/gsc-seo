@@ -1136,8 +1136,75 @@ def render():
                         import traceback
                         st.code(traceback.format_exc())
 
-    # ── Diagnostics — download + summary ─────────────────────
+    # ── Maintenance — reset cache, etc. ─────────────────────
     st.markdown("---")
+    with st.expander("🔧 Maintenance — reset analyses, clear cache", expanded=False):
+        st.markdown(
+            "<div style='background:#1a0a0a; border:2px solid #ff4455; border-radius:6px; "
+            "padding:0.8rem; margin-bottom:0.8rem;'>"
+            "<strong style='color:#ff4455;'>🗑 Reset all analyses + AI cache</strong><br>"
+            "<span style='color:#e8e8f0; font-size:0.85rem;'>"
+            "Deletes: quality scores, AI plans, generated texts, cannibalization, "
+            "site validation, ideal structure, gap analysis, plan validation, cluster_link_recommendations.<br>"
+            "<strong>KEEPS:</strong> GSC data, Ahrefs, Screaming Frog, topic clusters, CTR gaps, "
+            "<strong>audit page data (no re-scrape needed unless you also want fresh scrape).</strong></span></div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("🗑 Reset all analyses", key="rp_maint_reset", type="secondary"):
+            import os as _os
+            from utils.persistence import AI_CACHE_DIR as _AID
+            prefixes = (
+                "_quality_", "_ai_plan_", "_bottom_text_", "_intro_text_",
+                "_cannibal_meta_", "_cannibal_rewrite_",
+                "_site_validation", "_ideal_structure", "_gap_analysis", "_plan_validation",
+                "_refresh_all_result", "_cluster_health_",
+            )
+            deleted = 0
+            keys_to_del = [k for k in st.session_state if any(k.startswith(p) for p in prefixes)]
+            for k in keys_to_del:
+                del st.session_state[k]
+                deleted += 1
+            for k in ("cannibalization", "cannibal_page_summary", "cannibal_clusters",
+                      "cluster_link_recommendations"):
+                if k in st.session_state:
+                    del st.session_state[k]
+                    deleted += 1
+            disk_deleted = 0
+            if _os.path.isdir(_AID):
+                for f in _os.listdir(_AID):
+                    if any(f.startswith(p) for p in prefixes):
+                        try:
+                            _os.remove(_os.path.join(_AID, f))
+                            disk_deleted += 1
+                        except Exception:
+                            pass
+            for fname in ("cannibalization.json", "cluster_link_recommendations.json"):
+                p = _os.path.join("/data", fname)
+                if _os.path.exists(p):
+                    try:
+                        _os.remove(p)
+                        disk_deleted += 1
+                    except Exception:
+                        pass
+            st.success(
+                f"🗑 Reset done: {deleted} session keys + {disk_deleted} disk files deleted. "
+                f"Audit data kept — go scrape if you want fresh, otherwise click 🚀 Run all."
+            )
+            st.rerun()
+
+        st.markdown(
+            "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; "
+            "padding:0.8rem; margin-top:1rem;'>"
+            "<strong style='color:#c8b4ff;'>🔄 Re-scrape audit data</strong><br>"
+            "<span style='color:#9b9bb8; font-size:0.85rem;'>"
+            "Audit data is the input to most other steps. If scraper logic has changed "
+            "(image extraction, container parsing) you need a fresh scrape.</span><br>"
+            "<a href='#' style='color:#5bb4d4;'>→ Go to <strong>6. Page Auditor</strong> "
+            "in left menu and click the lilla \"Re-scrape ALL pages (force)\" button.</a></div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Diagnostics — download + summary ─────────────────────
     with st.expander("🔬 Diagnostics — download run logs (errors, timing, inputs/outputs)", expanded=False):
         from utils.diagnostics import get_summary, export_all_as_json, get_logs, clear_logs
         summary = get_summary()
