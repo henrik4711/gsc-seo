@@ -247,6 +247,250 @@ def scrape_page(url: str, timeout: int = 15) -> dict:
     return _parse_html(result, BeautifulSoup(html, "html.parser"), html, url)
 
 
+def extract_editorial_content(html: str, url: str) -> dict:
+    """
+    SINGLE SOURCE OF TRUTH for editorial-content extraction across the codebase.
+
+    Used by both _parse_html (scrape_page path, all non-category pages)
+    and deep_scrape_category (the category-specific deep-scrape path).
+    Eliminates the prior fragmentation where each path had its own
+    editorial parser with different rules.
+
+    Returns dict with:
+      - intro_text, intro_word_count
+      - bottom_text, bottom_word_count, total_editorial_words
+      - editorial_images (list of dicts), editorial_image_count, editorial_image_diag
+      - editorial_container_candidates (diagnostic)
+      - structural_signals (used by classify_page_type)
+    """
+    out = {
+        "intro_text": "", "intro_word_count": 0,
+        "bottom_text": "", "bottom_word_count": 0, "total_editorial_words": 0,
+        "editorial_images": [], "editorial_image_count": 0,
+        "editorial_image_diag": {},
+        "editorial_container_candidates": [],
+        "structural_signals": {
+            "found_intro_classes": [], "found_bottom_classes": [],
+            "has_category_description_id": False, "body_classes": [],
+        },
+    }
+
+    soup = BeautifulSoup(html, "html.parser")
+    main_content = (
+        soup.find("div", class_="xmx-page-content")
+        or soup.find("main")
+        or soup.find("article")
+        or soup.find("div", role="main")
+        or soup.find("div", class_=re.compile(r"^(main|page-content|content-area)", re.I))
+        or soup.body
+    )
+
+    _PRODUCT_RE = re.compile(
+        r"product-card|product-item|products-grid|product-list-item|"
+        r"card-product|price-box|swiper-slide|category-product|"
+        r"xmx-category-product|xmx-category-grid|xmx-product-grid|"
+        r"xmx-products-list|xmx-product-list|xmx-product-tile",
+        re.I,
+    )
+
+    # EXACT class names — substring match would catch unrelated classes
+    # like xmx-short-description, xmx-info-popup-text etc.
+    _BOTTOM_EXACT = {
+        "xmx-seo-footer-section",
+        "xmx-blog-post-content",
+        "xmx-description",
+        "xmx-help-layout-content",
+    }
+    _INTRO_EXACT = {
+        "xmx-blog-post-head",
+    }
+
+    def _has_exact(tag, allowed):
+        return bool(set(tag.get("class") or []) & allowed)
+
+    def _text_from_exact(allowed):
+        parts = []
+        for c in soup.find_all(["div", "section", "article"]):
+            if not _has_exact(c, allowed):
+                continue
+            if c.find_parent(attrs={"class": _PRODUCT_RE}):
+                continue
+            local = []
+            for p_tag in c.find_all(["p", "h1", "h2", "h3", "h4", "li"], recursive=True):
+                if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
+                    continue
+                t = p_tag.get_text(strip=True)
+                if len(t) >= 15:
+                    local.append(t)
+            if local:
+                parts.extend(local)
+            else:
+                t = c.get_text(separator=" ", strip=True)
+                if len(t) >= 50:
+                    parts.append(t)
+        return parts
+
+    # Structural signals (used by classify_page_type — single source of truth)
+    if soup.body:
+        out["structural_signals"]["body_classes"] = list(soup.body.get("class") or [])
+    for c in soup.find_all(["div", "section", "article"]):
+        cls_set = set(c.get("class") or [])
+        hit_intro = cls_set & _INTRO_EXACT
+        hit_bottom = cls_set & _BOTTOM_EXACT
+        if hit_intro:
+            out["structural_signals"]["found_intro_classes"].extend(sorted(hit_intro))
+        if hit_bottom:
+            out["structural_signals"]["found_bottom_classes"].extend(sorted(hit_bottom))
+    out["structural_signals"]["found_intro_classes"] = sorted(set(out["structural_signals"]["found_intro_classes"]))
+    out["structural_signals"]["found_bottom_classes"] = sorted(set(out["structural_signals"]["found_bottom_classes"]))
+    if soup.find(id="category-description"):
+        out["structural_signals"]["has_category_description_id"] = True
+
+    # Container-based editorial extraction
+    intro_parts = _text_from_exact(_INTRO_EXACT)
+    bottom_parts = _text_from_exact(_BOTTOM_EXACT)
+
+    # Category intro: <p id="category-description">
+    if not intro_parts:
+        for tag in soup.find_all(id="category-description"):
+            t = tag.get_text(separator=" ", strip=True)
+            if len(t) >= 15:
+                intro_parts.append(t)
+
+    # Fallback intro: pre-grid paragraphs in main_content
+    if not intro_parts and main_content:
+        for p_tag in main_content.find_all(["p", "h1", "h2", "h3"], recursive=True):
+            if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
+                break
+            if p_tag.find_parent(["nav", "footer", "header"]):
+                continue
+            t = p_tag.get_text(strip=True)
+            if len(t) >= 15:
+                intro_parts.append(t)
+
+    # Fallback bottom: post-grid paragraphs
+    if not bottom_parts and main_content:
+        found_products = False
+        for p_tag in main_content.find_all(["p", "h2", "h3"], recursive=True):
+            if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
+                found_products = True
+                continue
+            if p_tag.find_parent(["nav", "footer", "header"]):
+                continue
+            t = p_tag.get_text(strip=True)
+            if len(t) < 15:
+                continue
+            if found_products:
+                bottom_parts.append(t)
+
+    out["intro_text"] = " ".join(intro_parts)[:5000]
+    out["intro_word_count"] = len(out["intro_text"].split()) if out["intro_text"] else 0
+    out["bottom_text"] = " ".join(bottom_parts)[:25000]
+    out["bottom_word_count"] = len(out["bottom_text"].split()) if out["bottom_text"] else 0
+    out["total_editorial_words"] = out["intro_word_count"] + out["bottom_word_count"]
+
+    # Editorial images — only from dedicated containers (not product grid)
+    _BOTTOM_IMG_RE = re.compile(
+        r"xmx-seo-footer-section|xmx-seo-footer-group-content|xmx-seo-footer|"
+        r"xmx-blog-post-content|xmx-description|xmx-help-layout-content|"
+        r"seo-footer|seo-content|seo-text|category-seo|footer-seo",
+        re.I,
+    )
+    _INTRO_IMG_RE = re.compile(
+        r"xmx-blog-post-head|"
+        r"category-description|category-intro|xmx-category-description|"
+        r"xmx-category-top|xmx-page-top-content|cms-block",
+        re.I,
+    )
+    intro_containers = soup.find_all(["div", "section"], class_=_INTRO_IMG_RE)
+    bottom_containers = soup.find_all(["div", "section"], class_=_BOTTOM_IMG_RE)
+    # Also try id="category-description" container for intro
+    cat_id = soup.find(id="category-description")
+    if cat_id and cat_id not in intro_containers:
+        intro_containers = list(intro_containers) + [cat_id]
+
+    editorial_images = []
+    seen_src = set()
+    diag = {"intro_containers": len(intro_containers), "bottom_containers": len(bottom_containers),
+            "total": 0, "skipped_product": 0, "skipped_nav": 0,
+            "skipped_no_src": 0, "skipped_dupe": 0, "kept": 0}
+
+    def _capture(container, section):
+        for img in container.find_all("img"):
+            diag["total"] += 1
+            if img.find_parent(attrs={"class": _PRODUCT_RE}):
+                diag["skipped_product"] += 1; continue
+            if img.find_parent(["nav", "header"]):
+                diag["skipped_nav"] += 1; continue
+            cands = [
+                img.get("src") or "", img.get("data-src") or "",
+                img.get("data-lazy-src") or "", img.get("data-original") or "",
+                (img.get("data-srcset", "") or "").split(" ")[0],
+                (img.get("srcset", "") or "").split(" ")[0],
+            ]
+            src = next((c for c in cands if c and not c.startswith("data:")), "")
+            if not src:
+                diag["skipped_no_src"] += 1; continue
+            if src.startswith("//"):
+                src = "https:" + src
+            elif src.startswith("/"):
+                src = f"https://{urlparse(url).netloc}{src}"
+            if src in seen_src:
+                diag["skipped_dupe"] += 1; continue
+            seen_src.add(src)
+            diag["kept"] += 1
+            wrap = img.find_parent("a")
+            fig = img.find_parent("figure")
+            cap = ""
+            if fig:
+                ct = fig.find("figcaption")
+                if ct:
+                    cap = ct.get_text(strip=True)
+            editorial_images.append({
+                "src": src,
+                "alt": (img.get("alt") or "").strip(),
+                "width": img.get("width", ""),
+                "link_href": wrap.get("href", "") if wrap else "",
+                "caption": cap,
+                "section": section,
+            })
+
+    for c in intro_containers:
+        _capture(c, "intro")
+    for c in bottom_containers:
+        _capture(c, "bottom")
+
+    out["editorial_images"] = editorial_images
+    out["editorial_image_count"] = len(editorial_images)
+    out["editorial_image_diag"] = diag
+
+    # Container candidates diagnostic
+    cand = []
+    skip = re.compile(
+        r"product-card|product-item|card-product|price-box|swiper-slide|"
+        r"category-product|product-list-item",
+        re.I,
+    )
+    for d in soup.find_all(["div", "section"]):
+        cls = " ".join(d.get("class") or [])
+        if not cls or skip.search(cls):
+            continue
+        imgs = d.find_all("img", recursive=True)
+        ps = d.find_all(["p", "h2", "h3"], recursive=True)
+        tl = sum(len(p.get_text(strip=True)) for p in ps)
+        if imgs and 100 < tl < 20000:
+            cand.append({"classes": cls[:200], "text_chars": tl, "imgs": len(imgs)})
+    seen = set()
+    dedup = []
+    for c in sorted(cand, key=lambda x: -x["imgs"]):
+        if c["classes"] in seen: continue
+        seen.add(c["classes"])
+        dedup.append(c)
+    out["editorial_container_candidates"] = dedup[:15]
+
+    return out
+
+
 def _parse_html(result: dict, soup, html: str, url: str) -> dict:
     """Parse HTML into result dict. Shared by normal scrape and retry."""
     # Title
@@ -412,271 +656,17 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
         result["body_text"] = body_text[:20000]
         result["word_count"] = len(body_text.split())
 
-        # ── Editorial text separation — CONTAINER-BASED ────────────
-        # Find the dedicated intro and footer containers. If they exist,
-        # their text IS the intro/bottom. No complicated grid splitting.
-        _PRODUCT_RE = re.compile(
-            r"product-card|product-item|products-grid|product-list-item|"
-            r"card-product|price-box|swiper-slide|category-product|"
-            r"xmx-category-product|xmx-category-grid|xmx-product-grid|"
-            r"xmx-products-list|xmx-product-list|xmx-product-tile",
-            re.I,
-        )
-
-        # Use a fresh soup (not text_soup — footer/nav already decomposed there)
-        _editor_soup = BeautifulSoup(html, "html.parser")
-
-        # EXACT class names (not regex substrings — a substring match on
-        # "xmx-description" would also grab xmx-short-description,
-        # xmx-footer-signup-description, xmx-info-popup-text etc.)
-        # Validated against 22 live mshop.se pages covering all page types.
-        _BOTTOM_EXACT = {
-            "xmx-seo-footer-section",   # category SEO footer (3/5 categories)
-            "xmx-blog-post-content",    # blog body (4/5 blogs)
-            "xmx-description",          # product body (5/5 products) + guides + some info
-            "xmx-help-layout-content",  # /hjalp/ info pages (not caught by xmx-description)
-            # xmx-product-details-section wraps xmx-description + reviews etc.
-            # We prefer xmx-description alone for cleaner output.
-        }
-        _INTRO_EXACT = {
-            "xmx-blog-post-head",       # blog lead paragraph (4/5 blogs)
-            # Categories have NO dedicated intro container on mshop.se —
-            # handled by the fallback splitter below.
-        }
-
-        def _has_exact_class(tag, allowed_set):
-            return bool(set(tag.get("class") or []) & allowed_set)
-
-        def _text_from_exact(soup_obj, allowed_set):
-            """Extract text from all tags whose class list intersects allowed_set."""
-            parts = []
-            for c in soup_obj.find_all(["div", "section", "article"]):
-                if not _has_exact_class(c, allowed_set):
-                    continue
-                # Skip if INSIDE a product grid (nested weird case)
-                if c.find_parent(attrs={"class": _PRODUCT_RE}):
-                    continue
-                # Collect paragraph-ish text, drop anything inside product cards
-                local = []
-                for p_tag in c.find_all(["p", "h1", "h2", "h3", "h4", "li"], recursive=True):
-                    if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
-                        continue
-                    t = p_tag.get_text(strip=True)
-                    if len(t) >= 15:
-                        local.append(t)
-                if local:
-                    parts.extend(local)
-                else:
-                    t = c.get_text(separator=" ", strip=True)
-                    if len(t) >= 50:
-                        parts.append(t)
-            return parts
-
-        # ── Collect structural signals for downstream classifier ──
-        # Single source of truth: whichever containers exist on the page
-        # tell us what kind of page this is. Classifier reads these.
-        _struct_signals = {
-            "found_intro_classes": [],
-            "found_bottom_classes": [],
-            "has_category_description_id": False,
-            "body_classes": [],
-        }
-        # Body classes (authoritative layout hint from CMS)
-        if _editor_soup.body:
-            _struct_signals["body_classes"] = list(_editor_soup.body.get("class") or [])
-        # Note which specific containers matched
-        for c in _editor_soup.find_all(["div", "section", "article"]):
-            cls_set = set(c.get("class") or [])
-            hit_intro = cls_set & _INTRO_EXACT
-            hit_bottom = cls_set & _BOTTOM_EXACT
-            if hit_intro:
-                _struct_signals["found_intro_classes"].extend(sorted(hit_intro))
-            if hit_bottom:
-                _struct_signals["found_bottom_classes"].extend(sorted(hit_bottom))
-        _struct_signals["found_intro_classes"] = sorted(set(_struct_signals["found_intro_classes"]))
-        _struct_signals["found_bottom_classes"] = sorted(set(_struct_signals["found_bottom_classes"]))
-        if _editor_soup.find(id="category-description"):
-            _struct_signals["has_category_description_id"] = True
-        result["structural_signals"] = _struct_signals
-
-        intro_parts = _text_from_exact(_editor_soup, _INTRO_EXACT)
-        bottom_parts = _text_from_exact(_editor_soup, _BOTTOM_EXACT)
-
-        # ── Known ID-based intro on category pages ──────────────
-        # mshop.se categories: <p class="xmx-short-description"
-        #                         id="category-description">Intro text...</p>
-        if not intro_parts:
-            for tag in _editor_soup.find_all(id="category-description"):
-                t = tag.get_text(separator=" ", strip=True)
-                if len(t) >= 15:
-                    intro_parts.append(t)
-
-        # ── Intro fallback: older/custom layouts. Walk paragraphs in
-        # main_content BEFORE the product grid.
-        if not intro_parts and main_content:
-            for p_tag in main_content.find_all(["p", "h1", "h2", "h3"], recursive=True):
-                # Stop as soon as we hit product grid
-                if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
-                    break
-                if p_tag.find_parent(["nav", "footer", "header"]):
-                    continue
-                t = p_tag.get_text(strip=True)
-                if len(t) >= 15:
-                    intro_parts.append(t)
-
-        # ── Bottom fallback: pages with unknown layout (no seo-footer etc.).
-        # Walk paragraphs AFTER the product grid.
-        if not bottom_parts and main_content:
-            found_products = False
-            for p_tag in main_content.find_all(["p", "h2", "h3"], recursive=True):
-                if p_tag.find_parent(attrs={"class": _PRODUCT_RE}):
-                    found_products = True
-                    continue
-                if p_tag.find_parent(["nav", "footer", "header"]):
-                    continue
-                t = p_tag.get_text(strip=True)
-                if len(t) < 15:
-                    continue
-                if found_products:
-                    bottom_parts.append(t)
-
-        result["intro_text"] = " ".join(intro_parts)[:5000]
-        result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
-        result["bottom_text"] = " ".join(bottom_parts)[:25000]  # Category pages can have 3000+ words
-        result["bottom_word_count"] = len(result["bottom_text"].split()) if result["bottom_text"] else 0
-        result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
-
-        # ── Editorial images — preserve in AI rewrites ──────────
-        # Only look inside dedicated editorial containers:
-        #   • Top / intro: category-description, cms-block, category-intro, etc.
-        #   • Bottom / SEO: seo-footer, seo-content, seo-text, category-seo, footer-seo
-        # This avoids the product grid entirely (which has 100+ product-card imgs).
-        _INTRO_RE = re.compile(
-            r"category-description|category-intro|xmx-category-description|"
-            r"xmx-category-top|xmx-page-top-content|cms-block|category-cms|"
-            r"category-header-content|description-top",
-            re.I,
-        )
-        _BOTTOM_RE = re.compile(
-            r"xmx-seo-footer-section|xmx-seo-footer-group-content|"
-            r"xmx-seo-footer|"
-            r"seo-footer|seo-content|seo-text|category-seo|footer-seo|"
-            r"xmx-category-bottom|xmx-page-bottom-content|description-bottom|"
-            r"category-description-bottom",
-            re.I,
-        )
-
-        # Work on the ORIGINAL html (not text_soup which has decomposed footer)
-        # so SEO-footer images survive.
-        _orig_soup = BeautifulSoup(html, "html.parser")
-        intro_containers = _orig_soup.find_all(["div", "section"], class_=_INTRO_RE)
-        bottom_containers = _orig_soup.find_all(["div", "section"], class_=_BOTTOM_RE)
-
-        editorial_images = []
-        _seen_img_src = set()
-        _img_diag = {
-            "intro_containers": len(intro_containers),
-            "bottom_containers": len(bottom_containers),
-            "total": 0, "skipped_product": 0, "skipped_nav": 0,
-            "skipped_no_src": 0, "skipped_dupe": 0, "kept": 0,
-        }
-
-        def _extract_imgs_from(container, section_label):
-            for img in container.find_all("img"):
-                _img_diag["total"] += 1
-                if img.find_parent(attrs={"class": _PRODUCT_RE}):
-                    _img_diag["skipped_product"] += 1
-                    continue
-                if img.find_parent(["nav", "footer", "header"]) and section_label != "bottom":
-                    _img_diag["skipped_nav"] += 1
-                    continue
-                candidates = [
-                    img.get("src") or "",
-                    img.get("data-src") or "",
-                    img.get("data-lazy-src") or "",
-                    img.get("data-original") or "",
-                    img.get("data-srcset", "").split(" ")[0] if img.get("data-srcset") else "",
-                    img.get("srcset", "").split(" ")[0] if img.get("srcset") else "",
-                ]
-                src = ""
-                for cand in candidates:
-                    if cand and not cand.startswith("data:"):
-                        src = cand
-                        break
-                if not src:
-                    _img_diag["skipped_no_src"] += 1
-                    continue
-                if src.startswith("//"):
-                    src = "https:" + src
-                elif src.startswith("/"):
-                    src = f"https://{urlparse(url).netloc}{src}"
-                if src in _seen_img_src:
-                    _img_diag["skipped_dupe"] += 1
-                    continue
-                _seen_img_src.add(src)
-                _img_diag["kept"] += 1
-                wrap_a = img.find_parent("a")
-                link_href = wrap_a.get("href", "") if wrap_a else ""
-                fig = img.find_parent("figure")
-                caption = ""
-                if fig:
-                    cap_tag = fig.find("figcaption")
-                    if cap_tag:
-                        caption = cap_tag.get_text(strip=True)
-                editorial_images.append({
-                    "src": src,
-                    "alt": (img.get("alt") or "").strip(),
-                    "width": img.get("width", ""),
-                    "link_href": link_href,
-                    "caption": caption,
-                    "section": section_label,
-                })
-
-        for c in intro_containers:
-            _extract_imgs_from(c, "intro")
-        for c in bottom_containers:
-            _extract_imgs_from(c, "bottom")
-
-        result["editorial_images"] = editorial_images
-        result["editorial_image_count"] = len(editorial_images)
-        result["editorial_image_diag"] = _img_diag
-
-        # ── Persisted diagnostic: all div/section candidates on page that ──
-        # contain editorial-looking content (text + images, not product cards).
-        # Saved so we can tune the _INTRO_RE / _BOTTOM_RE regexes without
-        # having to re-scrape every page (1-hour run).
-        _cand_list = []
-        _skip_cls_diag = re.compile(
-            r"product-card|product-item|card-product|price-box|swiper-slide|"
-            r"category-product|product-list-item",
-            re.I,
-        )
-        for d in _orig_soup.find_all(["div", "section"]):
-            cls = " ".join(d.get("class") or [])
-            if not cls:
-                continue
-            if _skip_cls_diag.search(cls):
-                continue
-            imgs_in = d.find_all("img", recursive=True)
-            ps_in = d.find_all(["p", "h2", "h3"], recursive=True)
-            text_len = sum(len(p.get_text(strip=True)) for p in ps_in)
-            # Editorial-ish: substantial text AND at least 1 image
-            if imgs_in and 100 < text_len < 20000:
-                _cand_list.append({
-                    "classes": cls[:200],
-                    "text_chars": text_len,
-                    "imgs": len(imgs_in),
-                })
-        # Dedupe by class signature, biggest img count first
-        _seen_cls = set()
-        _cand_dedup = []
-        for c in sorted(_cand_list, key=lambda x: -x["imgs"]):
-            if c["classes"] in _seen_cls:
-                continue
-            _seen_cls.add(c["classes"])
-            _cand_dedup.append(c)
-        result["editorial_container_candidates"] = _cand_dedup[:15]
-
+        # ── Editorial extraction — DELEGATED to single source of truth ──
+        # All editorial fields (intro_text, bottom_text, editorial_images,
+        # structural_signals, container candidates) come from the shared
+        # extract_editorial_content() function used by both this path AND
+        # deep_scrape_category() — no parallel implementations to drift apart.
+        try:
+            ed = extract_editorial_content(html, url)
+            for k, v in ed.items():
+                result[k] = v
+        except Exception as _ed_err:
+            print(f"[scraper] editorial extraction failed: {_ed_err}")
 
     # ── Links: extract from content area ──────────────────────
     link_soup = BeautifulSoup(html, "html.parser")

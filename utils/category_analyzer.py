@@ -528,34 +528,20 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
             tag.decompose()
 
-        # ── Editorial text separation ─────────────────────────
+        # ── Editorial extraction — DELEGATED to single source of truth ──
+        # ALL editorial fields come from page_scraper.extract_editorial_content
+        # — same function used by the regular scrape_page path. No more
+        # parallel implementations that drift apart.
+        try:
+            from utils.page_scraper import extract_editorial_content
+            ed = extract_editorial_content(html, url)
+            for k, v in ed.items():
+                result[k] = v
+        except Exception as _ed_err:
+            print(f"[deep_scrape] editorial extraction failed: {_ed_err}")
+
         main = soup.find("div", class_="xmx-page-content") or soup.find("main") or soup.body
         if main:
-            all_paragraphs = main.find_all(["p", "div"], recursive=True)
-            intro_parts = []
-            bottom_parts = []
-            found_products = False
-
-            for p in all_paragraphs:
-                text = p.get_text(strip=True)
-                if len(text) < 20:
-                    continue
-                if p.find_parent(attrs={"class": re.compile(r"product-card|product-item|products-grid|product-list-item|card-product|price-box|swiper-slide|category-product|xmx-category-product", re.I)}):
-                    found_products = True
-                    continue
-                if p.find_parent(["nav", "footer", "header"]):
-                    continue
-                if not found_products:
-                    intro_parts.append(text)
-                else:
-                    bottom_parts.append(text)
-
-            result["intro_text"] = " ".join(intro_parts)[:5000]
-            result["intro_word_count"] = len(result["intro_text"].split()) if result["intro_text"] else 0
-            result["bottom_text"] = " ".join(bottom_parts)[:25000]  # Category pages can have 3000+ words
-            result["bottom_word_count"] = len(result["bottom_text"].split()) if result["bottom_text"] else 0
-            result["total_editorial_words"] = result["intro_word_count"] + result["bottom_word_count"]
-
             full_text = main.get_text(separator=" ", strip=True)
             result["full_body_text"] = re.sub(r'\s+', ' ', full_text)[:8000]
 
