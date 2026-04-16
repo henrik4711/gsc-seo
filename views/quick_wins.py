@@ -182,12 +182,9 @@ def _generate_all_fixes(page):
     all_site_urls = sorted(raw_urls)
 
     # ── Gather CTR gaps for this page ──
-    _ctr_gaps_for_page = []
-    _ctr_gaps_df = st.session_state.get("ctr_gaps")
-    if _ctr_gaps_df is not None and not _ctr_gaps_df.empty:
-        _page_gaps = _ctr_gaps_df[_ctr_gaps_df["page"].apply(normalize_url) == normalize_url(url)]
-        if not _page_gaps.empty:
-            _ctr_gaps_for_page = _page_gaps.to_dict("records")
+    # Build profile once — single source for all derived data
+    from utils.page_profile import build_page_profile
+    _profile = build_page_profile(url)
 
     # ── Generate implementation plan (includes meta, steps, links, articles)
     plan_key = f"_ai_plan_{url_hash}"
@@ -196,7 +193,11 @@ def _generate_all_fixes(page):
             try:
                 result = generate_page_implementation_plan(
                     client, audit, site_context, all_site_urls, language, topic_clusters,
-                    ctr_gaps_for_page=_ctr_gaps_for_page,
+                    ctr_gaps_for_page=_profile.get("ctr_gaps") or [],
+                    cannibal_link_targets=_profile.get("cannibal_link_targets") or [],
+                    cluster_link_outgoing=_profile.get("cluster_link_outgoing") or [],
+                    structural_signals=_profile.get("structural_signals") or {},
+                    editorial_images=_profile.get("editorial_images") or [],
                 )
                 st.session_state[plan_key] = result
             except Exception as e:

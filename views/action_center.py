@@ -214,14 +214,17 @@ def _generate_plan(url, audit_data):
             raw_urls.update(gsc["page"].unique().tolist())
         all_site_urls = sorted(raw_urls)
 
-        # Gather CTR gaps from profile
+        # Gather all derived signals from profile (single source of truth)
         profile = build_page_profile(url)
-        _ctr_gaps_for_page = profile["ctr_gaps"]
 
         with st.spinner("AI generating plan..."):
             result = generate_page_implementation_plan(
                 client, audit_data, site_context, all_site_urls, language, topic_clusters,
-                ctr_gaps_for_page=_ctr_gaps_for_page,
+                ctr_gaps_for_page=profile.get("ctr_gaps") or [],
+                cannibal_link_targets=profile.get("cannibal_link_targets") or [],
+                cluster_link_outgoing=profile.get("cluster_link_outgoing") or [],
+                structural_signals=profile.get("structural_signals") or {},
+                editorial_images=profile.get("editorial_images") or [],
             )
         st.session_state[f"_ai_plan_{stable_hash(url)}"] = result
         from utils.persistence import save_ai_cache

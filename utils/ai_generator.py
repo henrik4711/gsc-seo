@@ -1993,6 +1993,10 @@ def generate_page_implementation_plan(
     language: str = "Swedish",
     topic_clusters: dict = None,
     ctr_gaps_for_page: list = None,
+    cannibal_link_targets: list = None,
+    cluster_link_outgoing: list = None,
+    structural_signals: dict = None,
+    editorial_images: list = None,
 ) -> dict:
     """
     Generate a complete, verified implementation plan for a single page.
@@ -2090,6 +2094,48 @@ def generate_page_implementation_plan(
     if _profile["quality_verdict"]:
         quality_info = f"\nAI content quality verdict: {_profile['quality_verdict']} ({_profile['quality_score']}/10) — {_profile['quality_summary']}"
 
+    # ── Cannibal link targets (intent + cluster aware) ──
+    cannibal_link_info = ""
+    if cannibal_link_targets:
+        lines = []
+        for ct in cannibal_link_targets[:5]:
+            lines.append(
+                f"- query \"{ct.get('query','')}\" (intent={ct.get('query_intent','')}) "
+                f"→ link to {ct.get('link_target','')} "
+                f"[priority {ct.get('link_target_priority',5)}: {ct.get('link_target_reason','')}]"
+            )
+        if lines:
+            cannibal_link_info = "\nCANNIBAL link targets (add these contextual links to resolve conflicts):\n" + "\n".join(lines)
+
+    # ── Cluster-based linking recommendations for this page ──
+    cluster_link_info = ""
+    if cluster_link_outgoing:
+        lines = []
+        for r in cluster_link_outgoing[:8]:
+            lines.append(
+                f"- [{r.get('type','').upper()}] add link to {r.get('to_url','')} "
+                f"with anchor '{r.get('anchor','')}' (cluster: {r.get('cluster_topic','')}) — {r.get('reason','')}"
+            )
+        if lines:
+            cluster_link_info = "\nCLUSTER link recommendations (add these to strengthen topical authority):\n" + "\n".join(lines)
+
+    # ── Structural signals (CMS template containers) ──
+    structural_info = ""
+    if structural_signals:
+        structural_info = (
+            f"\nCMS template signals — body classes: {structural_signals.get('body_classes', [])}; "
+            f"intro container(s): {structural_signals.get('found_intro_classes', [])}; "
+            f"bottom container(s): {structural_signals.get('found_bottom_classes', [])}"
+        )
+
+    # ── Editorial images on the page (must be preserved in any rewrite) ──
+    editorial_image_info = ""
+    if editorial_images:
+        editorial_image_info = (
+            f"\nEditorial images currently on the page ({len(editorial_images)}) — "
+            f"any rewrite plan MUST preserve them (same src + alt)."
+        )
+
     # CTR gap opportunities for this page
     ctr_gap_info = ""
     if ctr_gaps_for_page:
@@ -2160,7 +2206,7 @@ Schema types present: {', '.join(schema_types) if schema_types else 'None'}
 {f"Products on page: {product_count}" if product_count else ""}
 {f"Has FAQ section: {'Yes' if has_faq else 'No'}" if page_type == "category" else ""}
 {f"Has buying guide: {'Yes' if has_buying_guide else 'No'}" if page_type == "category" else ""}
-{quality_info}{intent_info}{ctr_gap_info}
+{quality_info}{intent_info}{ctr_gap_info}{cannibal_link_info}{cluster_link_info}{structural_info}{editorial_image_info}
 
 ## EXISTING INTERNAL LINKS ON THIS PAGE (already present — do NOT suggest these again)
 {_format_existing_links(page_data)}
