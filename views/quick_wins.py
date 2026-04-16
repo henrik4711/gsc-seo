@@ -1371,6 +1371,17 @@ def render():
                 if isinstance(pages_detail, list):
                     for p in pages_detail:
                         if normalize_url(p.get("page", "")) == normalize_url(url):
+                            # Capture ALL competing URLs (excluding this page itself)
+                            competing = []
+                            for pp in pages_detail:
+                                pu = pp.get("page", "")
+                                if normalize_url(pu) != normalize_url(url):
+                                    competing.append({
+                                        "url": pu,
+                                        "position": pp.get("position", "?"),
+                                        "clicks": pp.get("clicks", 0),
+                                        "impressions": pp.get("impressions", 0),
+                                    })
                             page_cannibals.append({
                                 "query": row["query"],
                                 "severity": row["severity"],
@@ -1378,6 +1389,7 @@ def render():
                                 "winner": row.get("recommended_winner", ""),
                                 "merge_action": row.get("merge_action", ""),
                                 "page_count": row.get("page_count", 2),
+                                "competing_pages": competing,
                             })
                             break
             if page_cannibals:
@@ -1390,15 +1402,41 @@ def render():
                 for c in page_cannibals[:5]:
                     sev_color = {"severe": "#ff4455", "moderate": "#ffaa33", "mild": "#6b6b8a"}.get(c["severity"], "#6b6b8a")
                     is_winner = normalize_url(c["winner"]) == normalize_url(url)
-                    winner_label = "✓ This page is WINNER" if is_winner else f"✗ Winner: {c['winner']}"
+                    winner_label = "🏆 This page WINS" if is_winner else f"✗ Loses to: `{c['winner']}`"
+
+                    # Header line per conflict
                     st.markdown(
-                        f"- **{c['query']}** "
-                        f"<span style='color:{sev_color}; font-weight:600;'>[{c['severity'].upper()}]</span> · "
-                        f"{c['page_count']} pages · {c['lost_clicks']:,} lost clicks · {winner_label}",
+                        f"##### `{c['query']}` "
+                        f"<span style='color:{sev_color}; font-weight:600; font-size:0.7rem;'>"
+                        f"[{c['severity'].upper()}]</span> · "
+                        f"{c['lost_clicks']:,} lost clicks · {winner_label}",
                         unsafe_allow_html=True,
                     )
+
+                    # Show ALL competing URLs (not just the count)
+                    if c.get("competing_pages"):
+                        st.markdown("**Competing URLs:**")
+                        for cp in c["competing_pages"]:
+                            cp_url = cp["url"]
+                            cp_pos = cp.get("position", "?")
+                            cp_clicks = cp.get("clicks", 0)
+                            cp_impr = cp.get("impressions", 0)
+                            st.markdown(
+                                f"- `{cp_url}` — pos {cp_pos} · {cp_clicks} clicks · {cp_impr:,} impressions",
+                            )
+
+                    # Show FULL action text — was truncated to 200 chars before.
+                    # Render as native markdown so **bold**, lists, code render.
                     if c.get("merge_action"):
-                        st.markdown(f"  <div style='color:#c8b4ff; font-size:0.75rem; margin-left:1rem;'>{c['merge_action'][:200]}</div>", unsafe_allow_html=True)
+                        with st.container():
+                            st.markdown(
+                                f"<div style='border-left:3px solid {sev_color}; padding-left:0.8rem; "
+                                f"margin:0.4rem 0;'><strong>What to do:</strong></div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(c["merge_action"])
+                    st.markdown("---")
+
                 _approval_button("Cannibal", f"{url_hash}_cannibal")
                 st.markdown("---")
 
