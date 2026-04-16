@@ -555,14 +555,68 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
             cannibal_type["has_content_issues"] = len(content_issues) > 0
             cannibal_type["has_linking_issues"] = len(linking_issues) > 0
 
-        # Different intents → don't merge, differentiate
+        # Different intents → don't merge, differentiate with specific guidance
         if len(unique_intents) > 1:
-            intent_desc = ", ".join(f"{url.split('/')[-2] or url}: {intent}" for url, intent in page_intents.items())
+            # Build per-page role + concrete action
+            from urllib.parse import urlparse as _urp
+            intent_labels = {
+                "transactional": ("🛒 SHOP page", "buyers ready to purchase"),
+                "listicle":      ("📊 LISTICLE", "researchers comparing options"),
+                "informational": ("📖 GUIDE",    "people learning about the topic"),
+                "guide":         ("📖 GUIDE",    "people learning about the topic"),
+                "homepage":      ("🏠 HOMEPAGE", "general site visitors"),
+            }
+            role_lines = []
+            transactional_url = ""
+            listicle_url = ""
+            guide_url = ""
+            for u, intent in page_intents.items():
+                short = _urp(u).path.rstrip("/") or u
+                label, audience = intent_labels.get(intent, (intent.upper(), "varies"))
+                role_lines.append(f"  • `{short}` = **{label}** (targets {audience})")
+                if intent == "transactional":
+                    transactional_url = u
+                elif intent == "listicle":
+                    listicle_url = u
+                elif intent in ("informational", "guide"):
+                    guide_url = u
+
+            # Concrete action depending on intent mix
+            specific_steps = []
+            if transactional_url and listicle_url:
+                specific_steps = [
+                    f"**This is GOOD cannibalization** — both pages serve different parts of the buyer journey on the same keyword.",
+                    f"**WHAT to do:** strengthen the difference, don't merge.",
+                    f"**1. On the SHOP page** (`{_urp(transactional_url).path}`):",
+                    f"   - Top: focus on \"Shop {row.get('query','this category')}\" — emphasize stock, price, fast shipping, brands carried.",
+                    f"   - Add a prominent box: *\"Not sure which to pick? See our top picks → [link to listicle]\"*",
+                    f"**2. On the LISTICLE page** (`{_urp(listicle_url).path}`):",
+                    f"   - Frame as \"Best {row.get('query','X')} {2026}\" — comparisons, pros/cons, expert verdict.",
+                    f"   - End each top-pick with: *\"Buy on Mshop → [link to product] | Browse all → [link to shop page]\"*",
+                    f"**WHY:** Google may rank either for the same query depending on search modifier (\"buy\" vs \"best\"). Cross-links prevent users from leaving the site.",
+                    f"**HOW in Magento:** Open each page → Description → add the cross-link `<a href=\"OTHER_URL\">anchor text</a>` near top + bottom.",
+                ]
+            elif transactional_url and guide_url:
+                specific_steps = [
+                    f"**Shop page + Guide page on same keyword** — different funnel stages.",
+                    f"**WHAT to do:** make the guide a feeder to the shop page.",
+                    f"**1. On the GUIDE** (`{_urp(guide_url).path}`):",
+                    f"   - Add a top callout: *\"Ready to buy? → [Shop {row.get('query','this category')}]\"*",
+                    f"   - End with a product strip linking to the SHOP page.",
+                    f"**2. On the SHOP page** (`{_urp(transactional_url).path}`):",
+                    f"   - In bottom text, link back to the guide: *\"New to this? Read our [guide to {row.get('query','X')}]\"*",
+                    f"**WHY:** the guide attracts top-of-funnel traffic; the shop converts. Linking funnels users from research → purchase.",
+                ]
+            else:
+                specific_steps = [
+                    f"**Different intents** — mixed page types ranking for the same query.",
+                    f"**WHAT to do:** add cross-links so both pages help each other.",
+                    f"**HOW:** on each page, add a contextual link to the other with anchor `{row.get('query','this query')}`.",
+                ]
+
             merge_action = (
-                f"DIFFERENT INTENTS — don't merge, differentiate content instead. "
-                f"Intents: {intent_desc}. "
-                f"Make each page target its specific intent. Add canonical or noindex if needed. "
-                f"The blog/guide page should link to the category page and vice versa."
+                f"**Page roles:**\n" + "\n".join(role_lines) + "\n\n" +
+                "\n".join(specific_steps)
             )
         # Homepage involved → never merge into homepage
         elif "homepage" in unique_intents:
