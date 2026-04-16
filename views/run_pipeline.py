@@ -861,12 +861,109 @@ Identify:
 
 # ── Main render ────────────────────────────────────────────────
 
+def _run_quality_until_done():
+    """Run AI quality check repeatedly until all category+blog pages checked."""
+    audit = st.session_state.get("audit_results", []) or []
+    eligible = [r for r in audit
+                if r.get("page_type") in ("category", "blog", "faq")
+                and r.get("word_count", 0) > 50]
+    while True:
+        remaining = sum(1 for r in eligible
+                        if f"_quality_{stable_hash(r['url'])}" not in st.session_state)
+        if remaining == 0:
+            break
+        try:
+            _run_quality_check()  # processes 50 per call
+        except Exception as e:
+            print(f"[run_quality_until_done] Error: {e}")
+            break
+
+
+# Pipeline definition — single source of truth for "what to run, in what order"
+PIPELINE_STEPS = [
+    {"num": 1,  "title": "Fetch GSC data",         "key": "gsc_data",         "fn": _run_fetch_gsc,         "long": False, "estimate": "~30 sec"},
+    {"num": 2,  "title": "Build Page Authority",   "key": "page_authority",   "fn": _run_build_authority,   "long": False, "estimate": "~30 sec"},
+    {"num": 3,  "title": "Analyze Crawl Issues",   "key": "sf_crawl_issues",  "fn": _run_crawl_analysis,    "long": False, "estimate": "~1 min"},
+    {"num": 4,  "title": "CTR Gap Analysis",       "key": "ctr_gaps",         "fn": _run_ctr_analysis,      "long": False, "estimate": "~30 sec"},
+    {"num": 5,  "title": "Build Topic Clusters",   "key": "topic_clusters",   "fn": _run_topic_clusters,    "long": False, "estimate": "~1 min (AI)"},
+    {"num": 6,  "title": "Bulk Audit Pages",       "key": "audit_results",    "fn": _run_bulk_audit,        "long": True,  "estimate": "~18 min for 1000+ pages"},
+    {"num": 7,  "title": "AI Content Quality",     "key": None,               "fn": _run_quality_until_done,"long": True,  "estimate": "~15 min (AI)"},
+    {"num": 8,  "title": "Cannibalization",        "key": "cannibalization",  "fn": _run_cannibalization,   "long": False, "estimate": "~5 min"},
+    {"num": 9,  "title": "Site Validation",        "key": "_site_validation", "fn": _run_site_validation,   "long": False, "estimate": "~30 sec (AI)"},
+    {"num": 10, "title": "Generate Ideal Structure","key": "_ideal_structure","fn": _run_ideal_structure,   "long": False, "estimate": "~1 min (AI)"},
+    {"num": 11, "title": "Gap Analysis",           "key": "_gap_analysis",    "fn": _run_gap_analysis,      "long": False, "estimate": "~1 min (AI)"},
+    {"num": 12, "title": "Plan Validation",        "key": "_plan_validation", "fn": _run_plan_validation,   "long": False, "estimate": "~30 sec (AI)"},
+]
+
+
+def _step_done(step) -> bool:
+    """Has this step completed (data exists in session_state)?"""
+    if step["num"] == 7:
+        # Quality check has no single state key — check via _quality_* count
+        audit = st.session_state.get("audit_results", []) or []
+        eligible = [r for r in audit if r.get("page_type") in ("category", "blog", "faq") and r.get("word_count", 0) > 50]
+        if not eligible:
+            return False
+        checked = sum(1 for r in eligible if f"_quality_{stable_hash(r['url'])}" in st.session_state)
+        return checked >= len(eligible)
+    return step["key"] in st.session_state and st.session_state[step["key"]] is not None
+
+
+def _step_progress_text(step) -> str:
+    """Status string for a step — used in timeline."""
+    if step["num"] == 7:
+        audit = st.session_state.get("audit_results", []) or []
+        eligible = [r for r in audit if r.get("page_type") in ("category", "blog", "faq") and r.get("word_count", 0) > 50]
+        if not eligible:
+            return "waiting for audit"
+        checked = sum(1 for r in eligible if f"_quality_{stable_hash(r['url'])}" in st.session_state)
+        if checked >= len(eligible):
+            return f"✓ {checked}/{len(eligible)} checked"
+        elif checked > 0:
+            return f"⏳ {checked}/{len(eligible)} checked"
+        return "not started"
+    if _step_done(step):
+        data = st.session_state.get(step["key"])
+        if hasattr(data, "__len__"):
+            try:
+                return f"✓ done ({len(data)})"
+            except Exception:
+                pass
+        return "✓ done"
+    return "not started"
+
+
+def _render_timeline():
+    """Visual timeline of all 12 steps with status icons + estimates."""
+    st.markdown(
+        "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:8px; padding:1rem; margin:0.5rem 0;'>",
+        unsafe_allow_html=True,
+    )
+    cols = st.columns([1, 5, 3, 2])
+    cols[0].markdown("<div style='font-size:0.7rem; color:#6b6b8a; font-family:monospace;'>STEP</div>", unsafe_allow_html=True)
+    cols[1].markdown("<div style='font-size:0.7rem; color:#6b6b8a; font-family:monospace;'>NAME</div>", unsafe_allow_html=True)
+    cols[2].markdown("<div style='font-size:0.7rem; color:#6b6b8a; font-family:monospace;'>STATUS</div>", unsafe_allow_html=True)
+    cols[3].markdown("<div style='font-size:0.7rem; color:#6b6b8a; font-family:monospace;'>EST. TIME</div>", unsafe_allow_html=True)
+
+    for step in PIPELINE_STEPS:
+        done = _step_done(step)
+        icon = "✓" if done else "○"
+        color = "#33dd88" if done else "#6b6b8a"
+        c = st.columns([1, 5, 3, 2])
+        c[0].markdown(f"<div style='font-size:1.1rem; color:{color}; padding:0.3rem 0;'>{icon} {step['num']}</div>", unsafe_allow_html=True)
+        c[1].markdown(f"<div style='color:#e8e8f0; padding:0.3rem 0;'>{step['title']}</div>", unsafe_allow_html=True)
+        c[2].markdown(f"<div style='color:{color}; font-size:0.85rem; padding:0.3rem 0;'>{_step_progress_text(step)}</div>", unsafe_allow_html=True)
+        c[3].markdown(f"<div style='color:#9b9bb8; font-size:0.8rem; padding:0.3rem 0;'>{step['estimate']}</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def render():
     st.markdown("## ⚡ Run Pipeline")
     st.markdown(
-        "<p style='color:#6b6b8a; margin-bottom:1rem;'>"
-        "Run all SEO analysis steps from one page. Click each step's Run button, "
-        "or use Run All Remaining at the bottom.</p>",
+        "<p style='color:#6b6b8a; margin-bottom:0.5rem;'>"
+        "ONE place to run everything. Click <strong>🚀 Run All Remaining</strong> "
+        "and the system steps through every step in order, picking up where it left off.</p>",
         unsafe_allow_html=True,
     )
 
@@ -874,997 +971,71 @@ def render():
         st.warning("**First time?** Go to **1. Setup & Connect** in the menu and connect GSC. Then come back here.")
         return
 
-    # ── Freshness banner: warn if gsc_data is old ───────────────
-    age_str, stale = _data_age_str("gsc_data")
-    if age_str:
-        if stale:
-            col_a, col_b = st.columns([4, 1])
-            with col_a:
-                st.warning(f"⚠ GSC data is{age_str.replace(' · ','')} — re-fetch recommended (run Step 1 again).")
-            with col_b:
-                if st.button("Re-fetch GSC", key="rp_refetch_gsc", use_container_width=True, type="primary"):
+    # ── MEGA BUTTON: Run all remaining ──────────────────────
+    remaining_steps = [s for s in PIPELINE_STEPS if not _step_done(s)]
+    n_done = len(PIPELINE_STEPS) - len(remaining_steps)
+
+    if remaining_steps:
+        next_up = remaining_steps[0]
+        long_count = sum(1 for s in remaining_steps if s["long"])
+        button_label = f"🚀 Run all remaining ({len(remaining_steps)} steps)"
+        st.markdown(
+            f"<div style='background:#0d0d15; border:3px solid #5533ff; border-radius:10px; "
+            f"padding:1.2rem; margin-bottom:1rem;'>"
+            f"<div style='font-family:\"Syne\",sans-serif; font-size:1.1rem; color:#c8b4ff; font-weight:700;'>"
+            f"{n_done}/{len(PIPELINE_STEPS)} steps done · {len(remaining_steps)} remaining</div>"
+            f"<div style='color:#9b9bb8; font-size:0.9rem; margin-top:0.4rem;'>"
+            f"Next up: <strong>Step {next_up['num']} — {next_up['title']}</strong> "
+            f"({next_up['estimate']}). "
+            f"{'Total has ' + str(long_count) + ' long-running step(s) — total time approx 30-60 min.' if long_count else 'All remaining are quick.'}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(button_label, type="primary", key="rp_run_all", use_container_width=True):
+            progress = st.progress(0)
+            status = st.empty()
+            done_now = 0
+            for step in remaining_steps:
+                status.markdown(f"**Step {step['num']}/{step['num']} — {step['title']}** ({step['estimate']})...")
+                try:
+                    step["fn"]()
+                    done_now += 1
+                    progress.progress(done_now / len(remaining_steps))
+                except Exception as e:
+                    status.error(f"Step {step['num']} ({step['title']}) failed: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+                    break
+            status.success(f"Pipeline run complete — {done_now}/{len(remaining_steps)} steps finished")
+            st.rerun()
+    else:
+        st.success(f"🎉 All {len(PIPELINE_STEPS)} pipeline steps complete!")
+
+    # ── Visual timeline ─────────────────────────────────────
+    st.markdown("### Pipeline status")
+    _render_timeline()
+
+    # ── Per-step controls (collapsed by default) ────────────
+    with st.expander("⚙ Run a single step (advanced)", expanded=False):
+        st.caption("Use these only if you need to re-run one specific step. Normally just click the mega-button above.")
+        for step in PIPELINE_STEPS:
+            done = _step_done(step)
+            icon = "✓" if done else "○"
+            c = st.columns([1, 5, 2])
+            with c[0]:
+                st.markdown(f"<div style='color:{'#33dd88' if done else '#6b6b8a'};'>{icon} {step['num']}</div>", unsafe_allow_html=True)
+            with c[1]:
+                st.markdown(f"**{step['title']}** — {step['estimate']}")
+            with c[2]:
+                if st.button("Run", key=f"rp_solo_{step['num']}", use_container_width=True):
                     try:
-                        with st.spinner("Re-fetching fresh GSC data..."):
-                            _run_fetch_gsc()
-                        st.success("GSC data refreshed")
+                        with st.spinner(f"Running {step['title']}..."):
+                            step["fn"]()
+                        st.success("done")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
-        else:
-            st.caption(f"📅 GSC data{age_str}")
+                        import traceback
+                        st.code(traceback.format_exc())
+        return  # ← skip the LEGACY render below; the new flow is complete
 
-    st.markdown("---")
-
-    # ── Steps ───────────────────────────────────────────────
-    _run_step_card(
-        1, "Fetch GSC data",
-        "Pull queries, pages, clicks, impressions from Google Search Console (90 days)",
-        "gsc_data", _run_fetch_gsc, "rp_gsc"
-    )
-
-    _run_step_card(
-        2, "Build Page Authority",
-        "Combine Ahrefs Best by Links + Backlinks → per-page authority scores",
-        "page_authority", _run_build_authority, "rp_authority"
-    )
-
-    _run_step_card(
-        3, "Analyze Crawl Issues",
-        "Detect orphans, broken links, canonicals, faceted URLs, near-duplicates from SF data",
-        "sf_crawl_issues", _run_crawl_analysis, "rp_crawl"
-    )
-
-    _run_step_card(
-        4, "CTR Gap Analysis",
-        "Find pages where CTR underperforms vs position benchmarks",
-        "ctr_gaps", _run_ctr_analysis, "rp_ctr"
-    )
-
-    _run_step_card(
-        5, "Build Topic Clusters",
-        "AI groups GSC queries into 30-50 topic clusters (~30 sec)",
-        "topic_clusters", _run_topic_clusters, "rp_clusters"
-    )
-
-    # Bulk audit — special case (long running)
-    icon, status, color = _step_status("audit_results")
-    col1, col2, col3 = st.columns([1, 6, 2])
-    with col1:
-        st.markdown(
-            f"<div style='font-size:1.5rem; color:{color}; text-align:center; padding-top:0.5rem;'>{icon}</div>",
-            unsafe_allow_html=True,
-        )
-    with col2:
-        st.markdown(
-            f"<div style='font-weight:600; color:#e8e8f0;'>6. Bulk Audit Pages</div>"
-            f"<div style='font-size:0.8rem; color:#9b9bb8;'>Scrape + audit all pages from GSC (~20 min for 1000+ pages)</div>"
-            f"<div style='font-size:0.7rem; color:{color}; margin-top:0.2rem;'>{status}</div>",
-            unsafe_allow_html=True,
-        )
-    with col3:
-        if st.button("Open →", key="rp_audit_link", use_container_width=True):
-            st.session_state["selected_page"] = "6. Page Auditor"
-            st.rerun()
-    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
-
-    # AI Quality (only if audit is done)
-    if "audit_results" in st.session_state:
-        from utils.ui_helpers import stable_hash
-        audit_results = st.session_state.get("audit_results", [])
-        candidates = [r for r in audit_results
-                      if r.get("page_type") in ("category", "blog", "faq")
-                      and r.get("word_count", 0) > 50]
-        checked = sum(1 for r in candidates if f"_quality_{stable_hash(r['url'])}" in st.session_state)
-
-        col1, col2, col3 = st.columns([1, 6, 2])
-        with col1:
-            done = checked == len(candidates) and len(candidates) > 0
-            icon = "✓" if done else "⏳" if checked > 0 else "✗"
-            color = "#33dd88" if done else "#ffaa33" if checked > 0 else "#6b6b8a"
-            st.markdown(
-                f"<div style='font-size:1.5rem; color:{color}; text-align:center; padding-top:0.5rem;'>{icon}</div>",
-                unsafe_allow_html=True,
-            )
-        with col2:
-            st.markdown(
-                f"<div style='font-weight:600; color:#e8e8f0;'>7. AI Content Quality Check</div>"
-                f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI evaluates text quality on category + blog pages (50 per click)</div>"
-                f"<div style='font-size:0.7rem; color:{color}; margin-top:0.2rem;'>{checked}/{len(candidates)} checked</div>",
-                unsafe_allow_html=True,
-            )
-        with col3:
-            remaining = len(candidates) - checked
-            run_label = f"Run {min(50, remaining)}" if remaining > 0 else "Done"
-            if st.button(run_label, key="rp_quality", use_container_width=True, disabled=remaining == 0):
-                try:
-                    with st.spinner(f"AI checking quality of {min(50, remaining)} pages..."):
-                        _run_quality_check()
-                    st.success("Quality check done")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
-
-    # ── Step 8: Cannibalization (after quality check so it has E-E-A-T data)
-    _run_step_card(
-        8, "Cannibalization Detection",
-        "Find queries where multiple pages compete (with brand keyword filter + quality verdicts)",
-        "cannibalization", _run_cannibalization, "rp_cannibal"
-    )
-
-    # ── Site Validation (step 9) ────────────────────────────
-    icon, status, color = _step_status("_site_validation")
-    val_data = st.session_state.get("_site_validation", {})
-    if isinstance(val_data, dict) and val_data.get("overall_health_score") is not None:
-        score = val_data.get("overall_health_score", 0)
-        status = f"Done (health score: {score}/100)"
-        color = "#33dd88" if score >= 70 else "#ffaa33" if score >= 40 else "#ff4455"
-        icon = "✓"
-    col1, col2, col3 = st.columns([1, 6, 2])
-    with col1:
-        st.markdown(
-            f"<div style='font-size:1.5rem; color:{color}; text-align:center; padding-top:0.5rem;'>{icon}</div>",
-            unsafe_allow_html=True,
-        )
-    with col2:
-        st.markdown(
-            f"<div style='font-weight:600; color:#e8e8f0;'>9. Site Validation</div>"
-            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI evaluates entire site architecture and gives health score</div>"
-            f"<div style='font-size:0.7rem; color:{color}; margin-top:0.2rem;'>{status}</div>",
-            unsafe_allow_html=True,
-        )
-    with col3:
-        if st.button("Run", key="rp_validation", use_container_width=True):
-            try:
-                with st.spinner("AI evaluating site architecture..."):
-                    _run_site_validation()
-                st.success("Validation done")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-                import traceback
-                st.code(traceback.format_exc())
-    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
-
-    # ── Step 10: Ideal Structure ────────────────────────────
-    icon10, status10, color10 = _step_status("_ideal_structure")
-    ideal_data = st.session_state.get("_ideal_structure", {})
-    if isinstance(ideal_data, dict) and ideal_data.get("clusters"):
-        n_merge = len(ideal_data.get("merge", []))
-        n_delete = len(ideal_data.get("delete", []))
-        n_create = len(ideal_data.get("create", []))
-        status10 = f"Done ({len(ideal_data.get('clusters', []))} clusters, {n_merge} merges, {n_delete} deletes, {n_create} creates)"
-        color10 = "#33dd88"
-        icon10 = "✓"
-    col1, col2, col3 = st.columns([1, 6, 2])
-    with col1:
-        st.markdown(f"<div style='font-size:1.5rem; color:{color10}; text-align:center; padding-top:0.5rem;'>{icon10}</div>", unsafe_allow_html=True)
-    with col2:
-        st.markdown(
-            f"<div style='font-weight:600; color:#e8e8f0;'>10. Generate Ideal Structure</div>"
-            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI designs optimal site structure: new clusters, merges, deletes, new pages needed (3 AI calls)</div>"
-            f"<div style='font-size:0.7rem; color:{color10}; margin-top:0.2rem;'>{status10}</div>",
-            unsafe_allow_html=True,
-        )
-    with col3:
-        if st.button("Run", key="rp_ideal", use_container_width=True):
-            try:
-                with st.spinner("AI designing ideal structure (3 calls, ~90 sec)..."):
-                    _run_ideal_structure()
-                st.success("Ideal structure generated")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
-
-    # ── Step 11: Gap Analysis ────────────────────────────────
-    icon11, status11, color11 = _step_status("_gap_analysis")
-    gap_data = st.session_state.get("_gap_analysis", {})
-    if isinstance(gap_data, dict) and gap_data.get("phases"):
-        status11 = f"Done ({len(gap_data.get('phases', []))} phases, {gap_data.get('total_weeks', 0)} weeks total)"
-        color11 = "#33dd88"
-        icon11 = "✓"
-    col1, col2, col3 = st.columns([1, 6, 2])
-    with col1:
-        st.markdown(f"<div style='font-size:1.5rem; color:{color11}; text-align:center; padding-top:0.5rem;'>{icon11}</div>", unsafe_allow_html=True)
-    with col2:
-        st.markdown(
-            f"<div style='font-weight:600; color:#e8e8f0;'>11. Gap Analysis (Migration Plan)</div>"
-            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI creates 4-phase plan to go from current to ideal structure</div>"
-            f"<div style='font-size:0.7rem; color:{color11}; margin-top:0.2rem;'>{status11}</div>",
-            unsafe_allow_html=True,
-        )
-    with col3:
-        if st.button("Run", key="rp_gap", use_container_width=True):
-            try:
-                with st.spinner("AI creating migration plan..."):
-                    _run_gap_analysis()
-                st.success("Gap analysis done")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-    # Show gap analysis result inline if available
-    if isinstance(gap_data, dict) and gap_data.get("phases"):
-        with st.expander("View migration plan", expanded=False):
-            for phase in gap_data.get("phases", []):
-                risk_color = {"low": "#33dd88", "medium": "#ffaa33", "high": "#ff4455"}.get(
-                    str(phase.get("risk", "")).lower(), "#9b9bb8")
-                st.markdown(
-                    f"**Phase {phase.get('phase', '?')}: {phase.get('name', '')}** "
-                    f"({phase.get('duration_weeks', '?')} weeks, "
-                    f"<span style='color:{risk_color};'>{phase.get('risk', '?')} risk</span>)",
-                    unsafe_allow_html=True,
-                )
-                for action in phase.get("actions", []):
-                    st.markdown(f"- {action}")
-            risks = gap_data.get("risks", [])
-            if risks:
-                st.markdown("**Risks:**")
-                for r in risks:
-                    st.markdown(f"- {r}")
-            metrics = gap_data.get("success_metrics", [])
-            if metrics:
-                st.markdown("**Success metrics:**")
-                for m in metrics:
-                    st.markdown(f"- {m}")
-
-    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
-
-    # ── Step 12: Plan Validation ─────────────────────────────
-    icon12, status12, color12 = _step_status("_plan_validation")
-    pv_data = st.session_state.get("_plan_validation", {})
-    if isinstance(pv_data, dict) and pv_data.get("overall_verdict"):
-        cov = pv_data.get("coverage_score", "?")
-        conf = pv_data.get("confidence", "?")
-        status12 = f"Done (coverage {cov}/100, confidence {conf}/100)"
-        color12 = "#33dd88"
-        icon12 = "✓"
-    # Count plans available
-    plans_count = sum(1 for k, v in st.session_state.items()
-                      if k.startswith("_ai_plan_") and isinstance(v, dict) and not v.get("error"))
-    col1, col2, col3 = st.columns([1, 6, 2])
-    with col1:
-        st.markdown(f"<div style='font-size:1.5rem; color:{color12}; text-align:center; padding-top:0.5rem;'>{icon12}</div>", unsafe_allow_html=True)
-    with col2:
-        st.markdown(
-            f"<div style='font-weight:600; color:#e8e8f0;'>12. Plan Validation (Final Cross-Check)</div>"
-            f"<div style='font-size:0.8rem; color:#9b9bb8;'>AI reviews ALL generated page plans against site issues — checks coverage, conflicts, priority, missing actions ({plans_count} plans found)</div>"
-            f"<div style='font-size:0.7rem; color:{color12}; margin-top:0.2rem;'>{status12}</div>",
-            unsafe_allow_html=True,
-        )
-    with col3:
-        disabled = plans_count == 0
-        label = "Run" if not disabled else "No plans"
-        if st.button(label, key="rp_plan_val", use_container_width=True, disabled=disabled):
-            try:
-                with st.spinner("AI cross-checking all plans against site issues..."):
-                    _run_plan_validation()
-                st.success("Plan validation done")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-    # Show plan validation result inline if available
-    if isinstance(pv_data, dict) and pv_data.get("overall_verdict"):
-        with st.expander("View validation report", expanded=False):
-            st.markdown(f"**Verdict:** {pv_data.get('overall_verdict','')}")
-            uncovered = pv_data.get("uncovered_issues") or []
-            if uncovered:
-                st.markdown("**Uncovered issues:**")
-                for u in uncovered:
-                    st.markdown(f"- {u}")
-            missing = pv_data.get("missing_actions") or []
-            if missing:
-                st.markdown("**Missing actions:**")
-                for m in missing:
-                    st.markdown(f"- {m}")
-            conflicts = pv_data.get("conflicts") or []
-            if conflicts:
-                st.markdown("**Conflicts:**")
-                for c in conflicts:
-                    if isinstance(c, dict):
-                        st.markdown(f"- {c.get('plan_a','')} ↔ {c.get('plan_b','')}: {c.get('conflict','')}")
-            risks = pv_data.get("risks") or []
-            if risks:
-                st.markdown("**Risks:**")
-                for r in risks:
-                    st.markdown(f"- {r}")
-            seq = pv_data.get("recommended_sequence") or []
-            if seq:
-                st.markdown("**Recommended sequence:**")
-                for s in seq:
-                    if isinstance(s, dict):
-                        st.markdown(f"{s.get('order','?')}. **{s.get('action','')}** — {s.get('reason','')}")
-    st.markdown("<hr style='margin:0.5rem 0; border:none; border-top:1px solid #1e1e2e;'>", unsafe_allow_html=True)
-
-    st.markdown("---")
-    st.markdown("### Maintenance")
-
-    # ── NUCLEAR: Reset all analyses + AI cache ────────────
-    if "audit_results" in st.session_state:
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown(
-                "<div style='font-size:0.85rem; color:#ff4455; background:#1a0a0a; border:2px solid #ff4455; border-radius:6px; padding:0.8rem;'>"
-                "<strong>🗑 Reset all analyses + AI cache</strong><br>"
-                "Deletes: quality scores, AI plans, generated texts, cannibalization, "
-                "site validation, ideal structure, gap analysis, plan validation.<br>"
-                "<strong>KEEPS:</strong> GSC data, Ahrefs, Screaming Frog, topic clusters, CTR gaps, "
-                "<strong>audit page data (no re-scrape needed).</strong><br>"
-                "After reset: just run step 7 → 8 → 9 → 10 → 11 → 12.</div>",
-                unsafe_allow_html=True,
-            )
-        with col2:
-            if st.button("🗑 Reset analyses", key="rp_reset_analyses", use_container_width=True):
-                import os
-                from utils.persistence import AI_CACHE_DIR
-
-                deleted = 0
-                # Delete from session state
-                prefixes_to_delete = (
-                    "_quality_", "_ai_plan_", "_bottom_text_", "_intro_text_",
-                    "_cannibal_meta_", "_cannibal_rewrite_",
-                    "_site_validation", "_ideal_structure", "_gap_analysis", "_plan_validation",
-                    "_refresh_all_result", "_cluster_health_",
-                )
-                keys_to_del = [k for k in st.session_state
-                               if any(k.startswith(p) for p in prefixes_to_delete)]
-                for k in keys_to_del:
-                    del st.session_state[k]
-                    deleted += 1
-
-                # Also delete cannibalization DataFrame
-                if "cannibalization" in st.session_state:
-                    del st.session_state["cannibalization"]
-                    deleted += 1
-
-                # Delete from disk
-                disk_deleted = 0
-                if os.path.isdir(AI_CACHE_DIR):
-                    for f in os.listdir(AI_CACHE_DIR):
-                        if any(f.startswith(p) for p in prefixes_to_delete):
-                            try:
-                                os.remove(os.path.join(AI_CACHE_DIR, f))
-                                disk_deleted += 1
-                            except Exception:
-                                pass
-                # Delete cannibalization from disk
-                cannibal_path = os.path.join("/data", "cannibalization.json")
-                if os.path.exists(cannibal_path):
-                    try:
-                        os.remove(cannibal_path)
-                        disk_deleted += 1
-                    except Exception:
-                        pass
-
-                st.success(f"🗑 Reset done: {deleted} session keys + {disk_deleted} disk files deleted. Audit data is kept — next: just run step 7 → 8 → 9 → 10 → 11 → 12.")
-                st.rerun()
-
-        st.markdown("---")
-
-    # ── ONE-CLICK: Refresh all analyses ────────────────────
-    if "audit_results" in st.session_state:
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown(
-                "<div style='font-size:0.85rem; color:#c8b4ff; background:#12121f; border:2px solid #5533ff; border-radius:6px; padding:0.8rem;'>"
-                "<strong>🔄 Refresh ALL analyses (one click)</strong><br>"
-                "Runs everything in order: fix editorial text → re-classify pages → "
-                "reset quality scores → re-run quality check (all pages) → re-run cannibalization. "
-                "No re-scrape needed. Takes 5-15 min depending on number of pages.</div>",
-                unsafe_allow_html=True,
-            )
-        existing_q = sum(1 for k in st.session_state if k.startswith("_quality_"))
-        force_reset = st.checkbox("Force reset ALL quality scores (otherwise resumes from crash)", key="rp_force_quality_reset")
-        if force_reset:
-            st.session_state["_refresh_force_reset"] = True
-        if existing_q > 0 and not force_reset:
-            st.caption(f"ℹ {existing_q} quality scores exist — will resume, not restart")
-        with col2:
-            if st.button("🔄 Refresh all", key="rp_refresh_all", use_container_width=True, type="primary"):
-                import re as _re
-                import os
-                from utils.category_analyzer import classify_page_type
-                from utils.persistence import AI_CACHE_DIR
-
-                results = st.session_state["audit_results"]
-                progress = st.progress(0)
-                status = st.empty()
-
-                # Step 1: Fix editorial text
-                status.text("Step 1/5: Fixing editorial text separation...")
-                fixed_ed = 0
-                for r in results:
-                    if r.get("intro_text") or r.get("bottom_text"):
-                        continue
-                    body = r.get("body_text", "")
-                    if not body or len(body) < 100:
-                        continue
-                    lines = body.split(". ")
-                    intro_lines, bottom_lines = [], []
-                    found_grid = False
-                    for line in lines:
-                        ls = line.strip()
-                        if not ls:
-                            continue
-                        has_price = bool(_re.search(r'\d+\s*kr|\d+:-|rea\s|pris:', ls.lower()))
-                        is_short = len(ls.split()) < 8
-                        if has_price and is_short:
-                            found_grid = True
-                            continue
-                        if not found_grid:
-                            intro_lines.append(ls)
-                        elif len(ls.split()) >= 10 and not has_price:
-                            bottom_lines.append(ls)
-                    intro = ". ".join(intro_lines).strip()
-                    bottom = ". ".join(bottom_lines).strip()
-                    if intro or bottom:
-                        r["intro_text"] = intro[:5000]
-                        r["intro_word_count"] = len(intro.split()) if intro else 0
-                        r["bottom_text"] = bottom[:25000]
-                        r["bottom_word_count"] = len(bottom.split()) if bottom else 0
-                        r["total_editorial_words"] = r["intro_word_count"] + r["bottom_word_count"]
-                        fixed_ed += 1
-                progress.progress(0.1)
-
-                # Step 2: Re-classify
-                status.text("Step 2/5: Re-classifying pages...")
-                changed = 0
-                for r in results:
-                    old_type = r.get("page_type", "unknown")
-                    new_class = classify_page_type(r.get("url", ""), r)
-                    new_type = new_class.get("page_type", "unknown")
-                    if new_type != old_type:
-                        r["page_type"] = new_type
-                        changed += 1
-                save_key("audit_results")
-                progress.progress(0.2)
-
-                # Step 3: Reset quality scores — BUT only if not resuming from crash
-                # Check if we're resuming (some quality scores already exist from this session)
-                existing_quality = sum(1 for k in st.session_state if k.startswith("_quality_"))
-                force_reset = st.session_state.get("_refresh_force_reset", False)
-
-                if existing_quality == 0 or force_reset:
-                    status.text("Step 3/5: Clearing old quality scores...")
-                    keys_del = [k for k in st.session_state if k.startswith("_quality_")]
-                    for k in keys_del:
-                        del st.session_state[k]
-                    if os.path.isdir(AI_CACHE_DIR):
-                        for f in os.listdir(AI_CACHE_DIR):
-                            if f.startswith("_quality_"):
-                                try:
-                                    os.remove(os.path.join(AI_CACHE_DIR, f))
-                                except Exception:
-                                    pass
-                    st.session_state["_refresh_force_reset"] = False
-                else:
-                    status.text(f"Step 3/5: Resuming — keeping {existing_quality} existing quality scores...")
-                    keys_del = []  # Nothing deleted
-                progress.progress(0.3)
-
-                # Step 4: Re-run quality check (all pages, crash-safe)
-                status.text("Step 4/5: AI quality check (this takes a few minutes)...")
-                try:
-                    total_checked = 0
-                    while True:
-                        _run_quality_check()  # Does 50 pages, saves each to disk
-                        total_checked += 50
-                        remaining = sum(1 for r in results
-                                       if r.get("page_type") in ("category", "blog", "faq")
-                                       and r.get("word_count", 0) > 50
-                                       and f"_quality_{stable_hash(r['url'])}" not in st.session_state)
-                        pct = 0.3 + (0.5 * (1 - remaining / max(1, remaining + total_checked)))
-                        progress.progress(min(0.8, pct))
-                        status.text(f"Step 4/5: AI quality check... {total_checked} done, {remaining} remaining")
-                        if remaining == 0:
-                            break
-                except Exception as e:
-                    # Quality check crashed — but all completed pages are already saved to disk.
-                    # User can click Refresh All again to continue from where it stopped.
-                    status.text(f"Quality check paused at {total_checked}: {e}")
-                    st.warning(f"⚠ Quality check stopped at {total_checked} pages ({e}). Already-checked pages are saved. Click Refresh All again to continue.")
-                progress.progress(0.85)
-
-                # Step 5: Re-run cannibalization (uses whatever quality data exists)
-                status.text("Step 5/5: Cannibalization detection...")
-                try:
-                    _run_cannibalization()
-                    save_key("cannibalization")
-                except Exception as e:
-                    status.text(f"Cannibalization: {e}")
-                progress.progress(1.0)
-
-                status.empty()
-                progress.empty()
-                import datetime
-                st.session_state["_refresh_all_result"] = {
-                    "editorial": fixed_ed,
-                    "reclassified": changed,
-                    "quality_reset": len(keys_del),
-                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                }
-                st.rerun()
-
-        # Show last refresh result (persists across reruns)
-        last_refresh = st.session_state.get("_refresh_all_result")
-        if last_refresh:
-            st.markdown(
-                f"<div style='background:#0d2210; border:1px solid #33dd88; border-radius:6px; padding:0.8rem; margin:0.5rem 0;'>"
-                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88;'>LAST REFRESH: {last_refresh['timestamp']}</div>"
-                f"<div style='font-size:0.85rem; color:#e8e8f0;'>"
-                f"Editorial: {last_refresh['editorial']} fixed · "
-                f"Re-classified: {last_refresh['reclassified']} pages · "
-                f"Quality: {last_refresh['quality_reset']} re-checked · "
-                f"Cannibalization: refreshed</div></div>",
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("---")
-
-    # Re-classify all audit results without re-scraping
-    if "audit_results" in st.session_state:
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown(
-                "<div style='font-size:0.85rem; color:#9b9bb8;'>"
-                "<strong>Re-classify all pages</strong><br>"
-                "Run new page type classifier on existing audit data without re-scraping. "
-                "Use this after fixing classification rules.</div>",
-                unsafe_allow_html=True,
-            )
-        with col2:
-            if st.button("Re-classify", key="rp_reclassify", use_container_width=True):
-                from utils.category_analyzer import classify_page_type
-                results = st.session_state["audit_results"]
-                changed = 0
-                for r in results:
-                    old_type = r.get("page_type", "unknown")
-                    new_class = classify_page_type(r.get("url", ""), r)
-                    new_type = new_class.get("page_type", "unknown")
-                    if new_type != old_type:
-                        r["page_type"] = new_type
-                        changed += 1
-                save_key("audit_results")
-                st.success(f"Re-classified {changed}/{len(results)} pages")
-                st.rerun()
-
-        # Fix editorial text separation on existing data (no re-scrape needed)
-        col1, col2 = st.columns([3, 1])
-        missing_editorial = sum(1 for r in st.session_state.get("audit_results", [])
-                                if not r.get("intro_text") and not r.get("bottom_text") and r.get("word_count", 0) > 100)
-        with col1:
-            st.markdown(
-                f"<div style='font-size:0.85rem; color:#9b9bb8;'>"
-                f"<strong>Fix editorial text ({missing_editorial} pages missing)</strong><br>"
-                f"Separates intro + bottom text from product grid in existing audit data. "
-                f"No re-scrape needed — parses stored body_text to extract editorial content only.</div>",
-                unsafe_allow_html=True,
-            )
-        with col2:
-            if st.button("Fix editorial", key="rp_fix_editorial", use_container_width=True):
-                import re as _re
-                results = st.session_state["audit_results"]
-                fixed = 0
-                for r in results:
-                    if r.get("intro_text") or r.get("bottom_text"):
-                        continue  # already has editorial separation
-                    body = r.get("body_text", "")
-                    if not body or len(body) < 100:
-                        continue
-
-                    # Split body at price/product patterns
-                    # Product grid lines typically contain: "XXX kr", "Rea", "Köp", repeated price patterns
-                    lines = body.split(". ")
-                    intro_lines = []
-                    bottom_lines = []
-                    found_grid = False
-
-                    for line in lines:
-                        line_stripped = line.strip()
-                        if not line_stripped:
-                            continue
-                        # Detect product grid content: price patterns, short fragments
-                        has_price = bool(_re.search(r'\d+\s*kr|\d+:-|rea\s|pris:', line_stripped.lower()))
-                        is_short_fragment = len(line_stripped.split()) < 8
-                        if has_price and is_short_fragment:
-                            found_grid = True
-                            continue  # skip product grid content
-                        if not found_grid:
-                            intro_lines.append(line_stripped)
-                        else:
-                            # After grid: only keep substantial paragraphs (not more price fragments)
-                            if len(line_stripped.split()) >= 10 and not has_price:
-                                bottom_lines.append(line_stripped)
-
-                    intro = ". ".join(intro_lines).strip()
-                    bottom = ". ".join(bottom_lines).strip()
-
-                    if intro or bottom:
-                        r["intro_text"] = intro[:3000]
-                        r["intro_word_count"] = len(intro.split()) if intro else 0
-                        r["bottom_text"] = bottom[:3000]
-                        r["bottom_word_count"] = len(bottom.split()) if bottom else 0
-                        r["total_editorial_words"] = r["intro_word_count"] + r["bottom_word_count"]
-                        fixed += 1
-
-                save_key("audit_results")
-                st.success(f"Fixed editorial text on {fixed} pages. Run Step 7 + Step 8 to see corrected quality scores.")
-                st.rerun()
-
-        # Re-scrape + re-classify category pages (picks up new HTML signals)
-        col1, col2 = st.columns([3, 1])
-        # Re-scrape all CONTENT pages (not just categories — blogs, FAQ, guides also have editorial text)
-        _rescrape_types = ("category", "blog", "faq", "info")
-        category_pages = [r for r in st.session_state.get("audit_results", []) if r.get("page_type") in _rescrape_types]
-        with col1:
-            st.markdown(
-                f"<div style='font-size:0.85rem; color:#9b9bb8;'>"
-                f"<strong>Re-scrape all content pages ({len(category_pages)})</strong><br>"
-                f"Re-downloads HTML for all categories, blogs, FAQ, and guides. "
-                f"Re-extracts editorial text (intro + bottom) with latest parser. "
-                f"Saves every 25 pages. Skips pages with full text unless Force is checked.</div>",
-                unsafe_allow_html=True,
-            )
-        force_all = st.checkbox("Force re-scrape ALL (ignore cached text)", key="rp_force_rescrape")
-        with col2:
-            if st.button(f"Re-scrape {len(category_pages)}", key="rp_rescrape_cats", use_container_width=True):
-                from utils.page_scraper import scrape_page, reset_playwright
-                from utils.category_analyzer import classify_page_type
-                # Reset Playwright so it gets a fresh chance (may have crashed in prior run)
-                reset_playwright()
-                from utils.persistence import save
-                results = st.session_state["audit_results"]
-                progress = st.progress(0)
-                changed = 0
-                errors = 0
-                scraped = 0
-                log_lines = []
-                status_text = st.empty()
-                cat_indices = [i for i, r in enumerate(results) if r.get("page_type") in _rescrape_types]
-                total_cats = len(cat_indices)
-                skipped = 0
-                for idx_num, i in enumerate(cat_indices):
-                    r = results[i]
-                    url = r.get("url", "")
-                    short = url.split("/")[-1][:40] if "/" in url else url[:40]
-
-                    # Skip pages that already have full editorial text (from prior run)
-                    existing_bottom = len(r.get("bottom_text", "") or "")
-                    if existing_bottom > 500 and not force_all:
-                        skipped += 1
-                        progress.progress(min(1.0, (idx_num + 1) / max(1, total_cats)))
-                        continue
-
-                    status_text.text(f"[{idx_num+1}/{total_cats}] {short}... ({skipped} skipped)")
-                    try:
-                        page_data = scrape_page(url, timeout=12)
-                        scraped += 1
-                        # Extract key signals
-                        tmpl = page_data.get("template_type", "")
-                        accordion = page_data.get("has_accordion_product", False)
-                        breadcrumb = page_data.get("has_breadcrumb_schema", False)
-                        body_cls = page_data.get("body_classes", "")
-                        schemas = page_data.get("schema_types", [])
-                        scraper_used = page_data.get("_scraper", "?")
-
-                        # DIRECT Magento body class override (strongest signal, works without JS)
-                        is_product_by_body = "catalog-product-view" in body_cls or "product-view" in body_cls
-                        is_product_by_accordion = accordion
-                        is_product_by_schema = any("product" in str(s).lower() for s in schemas) and not any("itemlist" in str(s).lower() for s in schemas)
-
-                        if page_data.get("success") or page_data.get("title"):
-                            # Copy ALL useful fields from fresh scrape to audit_results
-                            for key in ("template_type", "has_accordion_product",
-                                        "has_breadcrumb_schema", "body_classes",
-                                        "schema_types", "product_count",
-                                        "body_text", "word_count",
-                                        "intro_text", "intro_word_count",
-                                        "bottom_text", "bottom_word_count",
-                                        "total_editorial_words",
-                                        "title", "meta_description", "h1", "h2s",
-                                        "internal_links", "images_without_alt"):
-                                if key in page_data:
-                                    r[key] = page_data[key]
-
-                            # Force product if ANY definitive signal detected
-                            if is_product_by_body or is_product_by_accordion or is_product_by_schema:
-                                if r["page_type"] == "category":
-                                    reason = []
-                                    if is_product_by_body: reason.append("body class")
-                                    if is_product_by_accordion: reason.append("accordion")
-                                    if is_product_by_schema: reason.append("schema")
-                                    r["page_type"] = "product"
-                                    r["_reclassified_from"] = "category"
-                                    r["_reclassified_signals"] = reason
-                                    changed += 1
-                                    log_lines.append(f"✓ {short} → product ({', '.join(reason)})")
-                            else:
-                                # Run classifier for other possible reclassifications
-                                new_class = classify_page_type(url, {**r, **page_data})
-                                new_type = new_class.get("page_type", "unknown")
-                                if new_type != "category":
-                                    r["page_type"] = new_type
-                                    r["_reclassified_from"] = "category"
-                                    r["_reclassified_signals"] = new_class.get("signals", [])
-                                    changed += 1
-                                    log_lines.append(f"✓ {short} → {new_type}")
-
-                            # Log first 20 pages for diagnostics
-                            if idx_num < 20 and not any(short in l for l in log_lines):
-                                log_lines.append(
-                                    f"  {short}: tmpl={tmpl} accordion={accordion} "
-                                    f"breadcrumb={breadcrumb} body_cls={body_cls[:30]} "
-                                    f"schemas={schemas[:3]} scraper={scraper_used} → stays category"
-                                )
-                        else:
-                            errors += 1
-                            if idx_num < 10:
-                                log_lines.append(f"✗ {short}: scrape failed ({scraper_used})")
-                    except Exception as e:
-                        errors += 1
-                        if idx_num < 10:
-                            log_lines.append(f"✗ {short}: error {str(e)[:60]}")
-                    progress.progress(min(1.0, (idx_num + 1) / max(1, total_cats)))
-                    # Save every 25 pages so a crash doesn't lose progress
-                    if scraped > 0 and scraped % 25 == 0:
-                        save_key("audit_results")
-                save_key("audit_results")
-                status_text.empty()
-                progress.empty()
-
-                # Show results WITHOUT st.rerun() so user can see diagnostics
-                st.success(f"Re-scraped {scraped}/{total_cats} category pages → **{changed} reclassified** to product. {skipped} skipped (already had full text). {errors} errors.")
-                if log_lines:
-                    with st.expander(f"Diagnostic log ({len(log_lines)} entries)", expanded=True):
-                        st.code("\n".join(log_lines[:50]), language="text")
-
-        # Reset + re-run ALL quality checks (with new detection rules)
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            # Count existing quality checks
-            existing_quality = sum(1 for k in st.session_state if k.startswith("_quality_"))
-            st.markdown(
-                f"<div style='font-size:0.85rem; color:#9b9bb8;'>"
-                f"<strong>Reset + re-run ALL quality checks ({existing_quality} existing)</strong><br>"
-                f"Clears all cached quality scores and re-evaluates every page with latest "
-                f"detection rules (keyword stuffing, generic text, E-E-A-T). "
-                f"Then automatically re-runs Step 5 (Cannibalization) so all data is fresh.</div>",
-                unsafe_allow_html=True,
-            )
-        with col2:
-            if st.button("Reset & re-run", key="rp_reset_quality", use_container_width=True):
-                # 1. Delete all cached quality scores
-                keys_to_delete = [k for k in st.session_state if k.startswith("_quality_")]
-                for k in keys_to_delete:
-                    del st.session_state[k]
-                # Also delete from disk
-                import os
-                from utils.persistence import AI_CACHE_DIR
-                if os.path.isdir(AI_CACHE_DIR):
-                    for f in os.listdir(AI_CACHE_DIR):
-                        if f.startswith("_quality_"):
-                            try:
-                                os.remove(os.path.join(AI_CACHE_DIR, f))
-                            except Exception:
-                                pass
-                st.success(f"Cleared {len(keys_to_delete)} quality scores. Now run Step 7 (Quality Check) to re-evaluate, then Step 8 (Cannibalization).")
-                st.rerun()
-
-    # ── Export pipeline state ────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 📋 Export pipeline state")
-    st.markdown(
-        "<p style='color:#9b9bb8; font-size:0.85rem;'>"
-        "Compact text dump of all pipeline results for sharing or AI review.</p>",
-        unsafe_allow_html=True,
-    )
-    if st.button("Generate export", key="rp_export_state", use_container_width=False):
-        import json as _json
-        lines = ["# Pipeline State Export", ""]
-
-        # GSC + crawl basics
-        gsc = st.session_state.get("gsc_data")
-        if gsc is not None and hasattr(gsc, "shape"):
-            lines.append(f"**GSC:** {len(gsc):,} query/page rows · {gsc['page'].nunique() if 'page' in gsc.columns else '?'} unique pages")
-        auth = st.session_state.get("page_authority")
-        if auth is not None and hasattr(auth, "shape"):
-            lines.append(f"**Authority:** {len(auth):,} pages with backlink data")
-        sf = st.session_state.get("sf_crawl_issues") or {}
-        if isinstance(sf, dict):
-            lines.append(f"**Crawl issues:** " + ", ".join(f"{k}={len(v) if hasattr(v,'__len__') else v}" for k, v in sf.items()))
-        ctr = st.session_state.get("ctr_gaps")
-        if ctr is not None and hasattr(ctr, "shape") and not ctr.empty:
-            lines.append(f"**CTR gaps:** {len(ctr):,} rows")
-            top_ctr = ctr.sort_values("lost_clicks_estimate", ascending=False).head(10)
-            lines.append("\n**Top 10 CTR gap pages (most lost clicks):**")
-            for _, r in top_ctr.iterrows():
-                lines.append(f"- `{r.get('page','')}` · q='{r.get('query','')}' · pos {r.get('position',0):.1f} · lost {int(r.get('lost_clicks_estimate',0))}")
-        cann = st.session_state.get("cannibalization")
-        if cann is not None and hasattr(cann, "shape") and not cann.empty:
-            severe = len(cann[cann["severity"] == "severe"]) if "severity" in cann.columns else 0
-            moderate = len(cann[cann["severity"] == "moderate"]) if "severity" in cann.columns else 0
-            lines.append(f"\n**Cannibalization:** {severe} severe, {moderate} moderate")
-        else:
-            lines.append("\n**Cannibalization:** NOT RUN")
-
-        # Topic clusters
-        tc = st.session_state.get("topic_clusters", {})
-        if isinstance(tc, dict):
-            lines.append(f"\n**Topic clusters:** {len(tc.get('clusters', []))}")
-            top_clusters = sorted(tc.get("clusters", []), key=lambda c: -c.get("total_impressions", 0))[:10]
-            lines.append("\n**Top 10 clusters by impressions:**")
-            for c in top_clusters:
-                lines.append(f"- {c.get('topic','?')}: {c.get('query_count',0)} queries · {c.get('total_impressions',0):,} impr · {c.get('total_clicks',0):,} cl · {c.get('page_count',0)} pages")
-
-        # Content gaps
-        gaps = st.session_state.get("content_gaps", []) or []
-        if gaps:
-            lines.append(f"\n**Content gaps:** {len(gaps)}")
-            high = [g for g in gaps if g.get("priority") == "high"]
-            lines.append(f"  - High: {len(high)}")
-            for g in high[:5]:
-                lines.append(f"    - {g.get('topic','?')}: " + " | ".join(g.get('issues', [])))
-
-        # Site validation
-        sv = st.session_state.get("_site_validation", {})
-        if isinstance(sv, dict) and sv:
-            lines.append(f"\n## Site Validation (score {sv.get('overall_health_score','?')}/100)")
-            comp = sv.get("_score_components", {})
-            if comp:
-                lines.append(f"_Score components: {_json.dumps(comp)}_")
-            lines.append(f"Summary: {sv.get('summary','')}")
-            lines.append(f"\n**Critical issues:**")
-            for x in sv.get("critical_issues", []):
-                lines.append(f"- {x}")
-            lines.append(f"\n**Structural problems:**")
-            for x in sv.get("structural_problems", []):
-                lines.append(f"- {x}")
-            lines.append(f"\n**Cluster issues:**")
-            for x in sv.get("cluster_issues", []):
-                lines.append(f"- {x}")
-            lines.append(f"\n**Opportunities:**")
-            for x in sv.get("opportunities", []):
-                lines.append(f"- {x}")
-            lines.append(f"\n**Priority actions:**")
-            for a in sv.get("priority_actions", []):
-                if isinstance(a, dict):
-                    lines.append(f"- [{a.get('impact','?')}] {a.get('action','')} ({a.get('pages_affected','?')} pages)")
-                else:
-                    lines.append(f"- {a}")
-
-        # Ideal structure
-        ideal = st.session_state.get("_ideal_structure", {})
-        if isinstance(ideal, dict) and ideal:
-            lines.append(f"\n## Ideal Structure")
-            lines.append(f"{len(ideal.get('clusters', []))} clusters · {len(ideal.get('merge', []))} merges · {len(ideal.get('delete', []))} deletes · {len(ideal.get('create', []))} creates")
-            lines.append(f"Estimated new score: {ideal.get('estimated_new_score','?')}/100")
-            lines.append(f"Summary: {ideal.get('summary','')}")
-            if ideal.get("merge"):
-                lines.append(f"\n**Merges:**")
-                for m in ideal.get("merge", [])[:10]:
-                    lines.append(f"- {m.get('from',[])} → {m.get('to','')} ({m.get('why','')[:80]})")
-            if ideal.get("delete"):
-                lines.append(f"\n**Deletes:**")
-                for d in ideal.get("delete", [])[:10]:
-                    lines.append(f"- {d.get('url','')}: {d.get('why','')[:80]}")
-            if ideal.get("create"):
-                lines.append(f"\n**Creates:**")
-                for c in ideal.get("create", [])[:10]:
-                    lines.append(f"- {c.get('url','')} ({c.get('type','')}, kw={c.get('kw','')}): {c.get('why','')[:80]}")
-
-        # Gap analysis
-        ga = st.session_state.get("_gap_analysis", {})
-        if isinstance(ga, dict) and ga.get("phases"):
-            lines.append(f"\n## Gap Analysis ({ga.get('total_weeks','?')} weeks total)")
-            for ph in ga.get("phases", []):
-                lines.append(f"\n**Phase {ph.get('phase','?')}: {ph.get('name','')}** ({ph.get('duration_weeks','?')}w, risk {ph.get('risk','?')})")
-                for a in ph.get("actions", []):
-                    lines.append(f"- {a}")
-            if ga.get("risks"):
-                lines.append(f"\n**Risks:**")
-                for r in ga.get("risks", []):
-                    lines.append(f"- {r}")
-            if ga.get("success_metrics"):
-                lines.append(f"\n**Success metrics:**")
-                for m in ga.get("success_metrics", []):
-                    lines.append(f"- {m}")
-
-        # Plan validation
-        pv = st.session_state.get("_plan_validation", {})
-        if isinstance(pv, dict) and pv:
-            lines.append(f"\n## Plan Validation (coverage {pv.get('coverage_score','?')}/100, confidence {pv.get('confidence','?')}/100)")
-            lines.append(f"Verdict: {pv.get('overall_verdict','')}")
-            if pv.get("uncovered_issues"):
-                lines.append(f"\n**Uncovered issues:**")
-                for x in pv.get("uncovered_issues", []):
-                    lines.append(f"- {x}")
-            if pv.get("missing_actions"):
-                lines.append(f"\n**Missing actions:**")
-                for x in pv.get("missing_actions", []):
-                    lines.append(f"- {x}")
-            if pv.get("conflicts"):
-                lines.append(f"\n**Conflicts:**")
-                for c in pv.get("conflicts", []):
-                    if isinstance(c, dict):
-                        lines.append(f"- {c.get('plan_a','')} ↔ {c.get('plan_b','')}: {c.get('conflict','')}")
-            if pv.get("risks"):
-                lines.append(f"\n**Risks:**")
-                for r in pv.get("risks", []):
-                    lines.append(f"- {r}")
-
-        # Page type breakdown from audit
-        ar = st.session_state.get("audit_results", [])
-        if ar:
-            from collections import Counter
-            types = Counter(r.get("page_type", "unknown") for r in ar)
-            lines.append(f"\n## Audit ({len(ar)} pages)")
-            lines.append("Page types: " + ", ".join(f"{k}={v}" for k, v in types.most_common()))
-            wcs = [r.get("word_count", 0) for r in ar]
-            if wcs:
-                thin_count = sum(1 for w in wcs if w < 300)
-                lines.append(f"Thin pages (<300 words): {thin_count}")
-
-        export_text = "\n".join(lines)
-        st.code(export_text, language="markdown")
-        st.download_button(
-            "Download as .md",
-            export_text,
-            file_name="pipeline_state.md",
-            mime="text/markdown",
-        )
-
-    # ── Cache Status ────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 💾 Cache Status")
-    from utils.persistence import get_storage_info, _volume_available, AI_CACHE_DIR
-    import os
-    if not _volume_available():
-        st.warning("⚠ No persistent volume mounted (/data missing). Running locally — nothing is cached to disk.")
-    else:
-        info = get_storage_info()
-        ai_info = info.get("files", {}).get("ai_cache", {})
-        total_mb = info.get("total_mb", 0)
-
-        # Count AI cache files by prefix
-        prefix_counts = {}
-        if os.path.isdir(AI_CACHE_DIR):
-            for fname in os.listdir(AI_CACHE_DIR):
-                if not fname.endswith(".json"):
-                    continue
-                key = fname[:-5]
-                prefix = "other"
-                for p in ("_cluster_health_", "_quality_", "_ai_plan_", "_bottom_text_",
-                          "_intro_text_", "_site_validation", "_ideal_structure",
-                          "_gap_analysis", "_plan_validation", "_kw_filter_"):
-                    if key.startswith(p):
-                        prefix = p.rstrip("_")
-                        break
-                prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
-
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            lines = [f"**Total on disk:** {total_mb} MB · **AI cache files:** {ai_info.get('count', 0)}"]
-            if prefix_counts:
-                lines.append("")
-                lines.append("**AI cache breakdown:**")
-                for p, c in sorted(prefix_counts.items(), key=lambda x: -x[1]):
-                    lines.append(f"- `{p}` — {c} file(s)")
-            st.markdown("\n".join(lines))
-        with col2:
-            if st.button("Force save all", key="rp_force_save", use_container_width=True):
-                from utils.persistence import save_all
-                save_all()
-                st.success("All in-memory state saved to disk")
-                st.rerun()
-
-    st.markdown("---")
-    st.markdown(
-        "<div style='background:#0d0d15; border:1px solid #5533ff; border-radius:6px; padding:0.8rem;'>"
-        "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#5533ff; margin-bottom:0.3rem;'>NEXT</div>"
-        "<div style='font-size:0.85rem; color:#c8b4ff;'>Once all steps are done, go to <strong>🎯 Action Center</strong> "
-        "to see prioritized recommendations and generate content.</div>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
