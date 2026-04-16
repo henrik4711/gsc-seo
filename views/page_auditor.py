@@ -466,9 +466,10 @@ def render():
                     progress.progress((i + 1) / total_urls)
                     log.write(f"[{i+1}/{total_urls}] Done: {url}")
 
-                # Auto-save every 100 pages — write to DISK only (not session_state)
-                # to avoid triggering Streamlit re-renders during audit
-                if len(audit_results) % 100 == 0:
+                # Auto-save every 25 pages — write to DISK only (not session_state)
+                # to avoid triggering Streamlit re-renders during audit.
+                # 25 = max ~25 sec lost on crash (vs 100 = ~100 sec).
+                if len(audit_results) % 25 == 0:
                     try:
                         from utils.persistence import _volume_available, _file_path
                         import json

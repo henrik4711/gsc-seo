@@ -291,8 +291,65 @@ def _run_topic_clusters():
 
 
 def _run_bulk_audit():
-    """Trigger the bulk audit. This is the slowest step."""
-    raise NotImplementedError("Bulk audit must be run from 6. Page Auditor — too long for this page")
+    """
+    Run bulk audit inline. Uses the same scrape function as Page Auditor.
+    Saves every 25 pages so crash recovery loses at most ~25 seconds.
+    """
+    from utils.page_scraper import scrape_page
+    from utils.category_analyzer import classify_page_type, deep_scrape_category
+    from utils.ui_helpers import normalize_url as _norm
+    from utils.persistence import _volume_available, _file_path
+    import os, json
+
+    gsc = st.session_state.get("gsc_data")
+    if gsc is None or not hasattr(gsc, "page"):
+        raise ValueError("Run Step 1 (Fetch GSC) first")
+
+    all_pages = gsc["page"].unique().tolist()
+    existing = st.session_state.get("audit_results", []) or []
+    existing_urls = set(_norm(r.get("url", "")) for r in existing)
+    to_scrape = [p for p in all_pages if _norm(p) not in existing_urls]
+    if not to_scrape:
+        return
+
+    new_results = []
+    for i, url in enumerate(to_scrape):
+        try:
+            quick = classify_page_type(url)
+            if quick.get("page_type") == "category":
+                page_data = deep_scrape_category(url, timeout=30)
+            else:
+                page_data = scrape_page(url, timeout=30)
+            page_data["url"] = url
+            new_results.append(page_data)
+        except Exception as e:
+            new_results.append({"url": url, "success": False, "error": str(e)})
+
+        # Save every 25 pages to disk
+        if (i + 1) % 25 == 0 and _volume_available():
+            try:
+                path = _file_path("audit_results", "json")
+                on_disk = []
+                if os.path.exists(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        on_disk = json.load(f)
+                disk_urls = set(_norm(r.get("url", "")) for r in on_disk)
+                for new_r in new_results:
+                    if _norm(new_r.get("url", "")) not in disk_urls:
+                        on_disk.append(new_r)
+                        disk_urls.add(_norm(new_r["url"]))
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(on_disk, f, ensure_ascii=False, indent=1, default=str)
+            except Exception as e:
+                print(f"[bulk_audit] checkpoint save failed at {i+1}: {e}")
+
+    # Final merge into session_state + save
+    merged = list(existing) + new_results
+    st.session_state["audit_results"] = merged
+    try:
+        save_key("audit_results")
+    except Exception as e:
+        print(f"[bulk_audit] final save failed: {e}")
 
 
 def _run_quality_check():
