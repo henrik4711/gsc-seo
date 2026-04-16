@@ -111,12 +111,13 @@ def _classify_conflict_page(page_url: str, winner_url: str, query: str,
             ),
         }
 
-    # Path-based geometry
-    winner_path = urlparse(winner_norm).path.rstrip("/")
-    loser_path = urlparse(norm).path.rstrip("/")
+    # Path-based geometry — single source of truth via url_helpers
+    from utils.url_helpers import url_path, url_segments, path_is_descendant, paths_are_siblings, shared_top_level
+    winner_path = url_path(winner_norm)
+    loser_path = url_path(norm)
 
     # SUB-CATEGORY of winner
-    if winner_path and loser_path.startswith(winner_path + "/"):
+    if path_is_descendant(page_url, winner_url):
         return {
             "role": "SUB-CATEGORY",
             "label": "🌳 KEEP — sub-category of winner",
@@ -132,9 +133,7 @@ def _classify_conflict_page(page_url: str, winner_url: str, query: str,
         }
 
     # SIBLING (same parent directory)
-    winner_parent = "/".join(winner_path.split("/")[:-1]) if "/" in winner_path else ""
-    loser_parent = "/".join(loser_path.split("/")[:-1]) if "/" in loser_path else ""
-    if winner_parent and loser_parent == winner_parent:
+    if paths_are_siblings(page_url, winner_url):
         return {
             "role": "SIBLING",
             "label": "🌳 KEEP — sibling category (different variant)",
@@ -150,9 +149,7 @@ def _classify_conflict_page(page_url: str, winner_url: str, query: str,
         }
 
     # DIFFERENT TREE (different top-level section)
-    winner_segs = [s for s in winner_path.split("/") if s]
-    loser_segs = [s for s in loser_path.split("/") if s]
-    if winner_segs and loser_segs and winner_segs[0] != loser_segs[0]:
+    if not shared_top_level(page_url, winner_url):
         return {
             "role": "DIFFERENT PURPOSE",
             "label": "🔀 KEEP — different site section / intent",

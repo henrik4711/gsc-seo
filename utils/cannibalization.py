@@ -11,12 +11,13 @@ import numpy as np
 def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
     """Classify cannibalization using REAL page_type from audit_results,
     topic cluster membership, and sf_link_map structural signals."""
-    from urllib.parse import urlparse
     import streamlit as _st
-    from utils.ui_helpers import normalize_url as _nu
-
-    def _path_of(u):
-        return urlparse(str(u)).path.rstrip("/") or "/"
+    from utils.url_helpers import (
+        url_path as _path_of,
+        is_sale_url as _is_sale,
+        normalize_url as _nu,
+        path_is_descendant,
+    )
 
     audit_results = _st.session_state.get("audit_results", [])
     type_lookup = {}
@@ -68,25 +69,15 @@ def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
     # serve a different purpose (price filter view, not a true category).
     # Exclude them from the category count so they don't trigger
     # false-positive "duplicate_categories" classifications.
-    try:
-        from utils.site_patterns import get_sale_patterns
-        _sale_patterns = get_sale_patterns()
-    except Exception:
-        _sale_patterns = ["/rea/", "/sale/", "/udsalg/", "billig"]
-
-    def _is_sale(u):
-        return any(sp in str(u).lower() for sp in _sale_patterns)
-
     sale_pages = [u for u in all_urls if _is_sale(u)]
     categories = [u for u in all_urls if page_types[u] == "category" and not _is_sale(u)]
     products = [u for u in all_urls if page_types[u] == "product"]
     n_cat, n_prod, n_sale = len(categories), len(products), len(sale_pages)
 
     def _has_prefix(urls):
-        paths = [_path_of(u) for u in urls]
-        for i, p1 in enumerate(paths):
-            for j, p2 in enumerate(paths):
-                if i != j and (p2.startswith(p1 + "/") or p1.startswith(p2 + "/")):
+        for i, u1 in enumerate(urls):
+            for j, u2 in enumerate(urls):
+                if i != j and (path_is_descendant(u2, u1) or path_is_descendant(u1, u2)):
                     return True
         return False
 
@@ -477,12 +468,13 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                             if t_url:
                                 p_outbound.add(_nu(t_url))
 
+                from utils.url_helpers import url_path as _up_path, path_is_descendant as _pid
                 p_type = _audit_types.get(p_norm, "unknown")
-                p_path = _urlparse(p_url).path.rstrip("/")
+                p_path = _up_path(p_url)
 
                 # Find the winner/main category — that's the page products/variants should link TO
                 winner_norm = _nu(winner_page)
-                winner_path = _urlparse(winner_page).path.rstrip("/")
+                winner_path = _up_path(winner_page)
 
                 # Only recommend links that make architectural sense
                 if p_norm != winner_norm:
@@ -507,10 +499,9 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                         if other_url == p_norm:
                             continue
                         other_type = _audit_types.get(other_url, "unknown")
-                        other_path = _urlparse(other_url).path.rstrip("/")
+                        other_path = _up_path(other_url)
                         # Only suggest winner → child if child is under winner's path
-                        # or if winner is a category and child is a related sub-category
-                        is_child = other_path.startswith(p_path + "/")
+                        is_child = _pid(other_url, p_url)
                         if is_child and other_url not in p_outbound:
                             other_title = page_titles.get(other_url, "")
                             other_anchor = other_path.split("/")[-1].replace("-", " ")

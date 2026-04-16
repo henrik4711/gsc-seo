@@ -37,12 +37,7 @@ def _get_unclustered(audit_lookup, page_topics):
     return unclustered
 
 
-def _shorten(url, max_len=55):
-    """Shorten URL for display."""
-    path = url.split("//")[-1]
-    if len(path) > max_len:
-        return path[:max_len] + "..."
-    return path
+from utils.url_helpers import shorten_url_path as _shorten  # single source of truth
 
 
 def _render_structure_actions(ideal, audit_lookup):
