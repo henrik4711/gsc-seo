@@ -157,6 +157,11 @@ def render():
                         st.session_state["generated_content"] = {}
                     st.session_state["generated_content"][selected_url] = st.session_state["generated_content"].get(selected_url, {})
                     st.session_state["generated_content"][selected_url]["meta"] = result
+                    try:
+                        from utils.persistence import save_key as _sk
+                        _sk("generated_content")
+                    except Exception:
+                        pass
 
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
@@ -225,6 +230,11 @@ def render():
                     if "generated_content" not in st.session_state:
                         st.session_state["generated_content"] = {}
                     st.session_state["generated_content"].setdefault(selected_url, {})["gap_analysis"] = result
+                    try:
+                        from utils.persistence import save_key as _sk
+                        _sk("generated_content")
+                    except Exception:
+                        pass
 
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
@@ -303,6 +313,11 @@ def render():
                     if "generated_content" not in st.session_state:
                         st.session_state["generated_content"] = {}
                     st.session_state["generated_content"].setdefault(selected_url, {})["landing_text"] = result
+                    try:
+                        from utils.persistence import save_key as _sk
+                        _sk("generated_content")
+                    except Exception:
+                        pass
 
                 except Exception as e:
                     st.error(f"❌ Error: {e}")

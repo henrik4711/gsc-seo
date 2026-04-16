@@ -28,6 +28,11 @@ def _auto_connect_gsc():
         if site_url in properties and "gsc_site" not in st.session_state:
             st.session_state["gsc_site"] = site_url
             st.session_state["demo_mode"] = False
+            try:
+                from utils.persistence import save_key
+                save_key("gsc_site")
+            except Exception:
+                pass
     except Exception:
         pass  # silently fail, user can connect manually
 
@@ -74,6 +79,12 @@ def render():
                 st.session_state["gsc_data"] = demo_df
                 st.session_state["gsc_site"] = "https://demo-store.example.com/ (DEMO)"
                 st.session_state["demo_mode"] = True
+                try:
+                    from utils.persistence import save_key
+                    save_key("gsc_data")
+                    save_key("gsc_site")
+                except Exception:
+                    pass
                 st.success(f"Demo data loaded: {len(demo_df)} rows")
                 st.rerun()
 

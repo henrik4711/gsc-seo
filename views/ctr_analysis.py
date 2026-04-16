@@ -158,6 +158,11 @@ def render():
             if st.button("📋 Add to Audit Queue", type="primary"):
                 st.session_state["audit_queue"] = selected_pages
                 st.session_state["ctr_gaps"] = filtered
+                try:
+                    from utils.persistence import save_key as _sk
+                    _sk("ctr_gaps")
+                except Exception:
+                    pass
                 st.success(f"✅ {len(selected_pages)} pages added to audit queue. Go to Page Auditor →")
 
     with tab3:

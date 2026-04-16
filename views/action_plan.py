@@ -89,6 +89,11 @@ def render():
         _seen_urls[norm] = r  # Last entry wins (newest)
     audit_results = list(_seen_urls.values())
     st.session_state["audit_results"] = audit_results
+    try:
+        from utils.persistence import save_key as _sk
+        _sk("audit_results")
+    except Exception:
+        pass
 
     # ── Normalized lookup helpers (cross-source matching) ─────────
     _audit_by_norm = {}

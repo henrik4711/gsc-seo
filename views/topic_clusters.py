@@ -86,6 +86,7 @@ def render():
 
                         from utils.persistence import save_key
                         save_key("topic_clusters")
+                        save_key("content_gaps")
                         save_key("content_roadmap")
 
                         if result.get("ai_summary"):
@@ -115,6 +116,7 @@ def render():
 
                 from utils.persistence import save_key
                 save_key("topic_clusters")
+                save_key("content_gaps")
                 save_key("content_roadmap")
 
     if "topic_clusters" not in st.session_state:
@@ -338,6 +340,11 @@ def _render_content_roadmap(topic_result: dict):
                 authority_data=auth_data,
             )
             st.session_state["content_roadmap"] = roadmap
+            try:
+                from utils.persistence import save_key as _sk
+                _sk("content_roadmap")
+            except Exception:
+                pass
 
     if "content_roadmap" not in st.session_state:
         st.info("Click 'Generate Content Roadmap' to analyze gaps and suggest new articles")
