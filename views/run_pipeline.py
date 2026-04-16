@@ -5,6 +5,7 @@ Each step has a Run button and shows status. "Run All" runs everything sequentia
 
 import streamlit as st
 from utils.persistence import save_key
+from utils.ui_helpers import stable_hash
 from config import get_anthropic_key, has_anthropic_key
 
 
