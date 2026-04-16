@@ -43,6 +43,8 @@ PERSIST_KEYS = {
     # AI generated
     "generated_content": "json",
     "action_plan": "json",
+    # Cluster-based internal link recommendations (vertical + horizontal)
+    "cluster_link_recommendations": "json",
 }
 
 # Prefixes for dynamic AI cache keys — stored as individual files

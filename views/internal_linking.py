@@ -295,6 +295,64 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # ── Cluster-based linking recommendations ──────────────
+    cluster_recs = st.session_state.get("cluster_link_recommendations") or []
+    if cluster_recs:
+        from utils.cluster_linking import summarize_recommendations
+        summary = summarize_recommendations(cluster_recs)
+        st.markdown(
+            f"<div style='background:#0d0d15; border:2px solid #5533ff; border-radius:8px; "
+            f"padding:1rem; margin-bottom:1.5rem;'>"
+            f"<div style='font-weight:700; color:#c8b4ff; font-size:1rem;'>"
+            f"🔗 Cluster-based linking — {summary['total']} missing links across "
+            f"{len(summary['by_cluster'])} clusters</div>"
+            f"<div style='color:#9b9bb8; font-size:0.85rem; margin-top:0.4rem;'>"
+            f"Vertical-up (spoke→pillar): <strong>{summary['by_type'].get('vertical-up', 0)}</strong> · "
+            f"Vertical-down (pillar→spoke): <strong>{summary['by_type'].get('vertical-down', 0)}</strong> · "
+            f"Horizontal (sibling→sibling): <strong>{summary['by_type'].get('horizontal', 0)}</strong> · "
+            f"<strong>{summary['pages_affected']}</strong> pages need updates</div></div>",
+            unsafe_allow_html=True,
+        )
+        with st.expander(f"📋 Show all {summary['total']} cluster-link recommendations", expanded=False):
+            type_filter = st.selectbox(
+                "Filter by type",
+                ["All", "vertical-up", "vertical-down", "horizontal"],
+                key="il_cluster_filter",
+            )
+            cluster_filter = st.selectbox(
+                "Filter by cluster",
+                ["All"] + sorted(summary["by_cluster"].keys()),
+                key="il_cluster_topic_filter",
+            )
+            shown = cluster_recs
+            if type_filter != "All":
+                shown = [r for r in shown if r["type"] == type_filter]
+            if cluster_filter != "All":
+                shown = [r for r in shown if r["cluster_topic"] == cluster_filter]
+            st.caption(f"Showing {len(shown)} of {len(cluster_recs)}")
+            type_color = {"vertical-up": "#33dd88", "vertical-down": "#5bb4d4", "horizontal": "#ffaa33"}
+            for r in shown[:200]:
+                color = type_color.get(r["type"], "#9b9bb8")
+                st.markdown(
+                    f"<div style='background:#12121f; border-left:3px solid {color}; "
+                    f"padding:0.6rem; margin:0.3rem 0; border-radius:0 6px 6px 0; font-size:0.85rem;'>"
+                    f"<div style='color:{color}; font-family:\"IBM Plex Mono\",monospace; "
+                    f"font-size:0.65rem; letter-spacing:0.05em;'>"
+                    f"[{r['type'].upper()}] cluster: {r['cluster_topic']}</div>"
+                    f"<div style='color:#e8e8f0; margin-top:0.2rem;'>"
+                    f"<strong>FROM</strong> <code>{r['from_url']}</code></div>"
+                    f"<div style='color:#e8e8f0;'>"
+                    f"<strong>TO</strong> <code>{r['to_url']}</code></div>"
+                    f"<div style='color:#c8b4ff; margin-top:0.2rem;'>"
+                    f"<strong>Anchor:</strong> <code>{r['anchor']}</code></div>"
+                    f"<div style='color:#9b9bb8; font-size:0.75rem; margin-top:0.2rem;'>"
+                    f"{r['reason']}</div></div>",
+                    unsafe_allow_html=True,
+                )
+            if len(shown) > 200:
+                st.caption(f"...and {len(shown)-200} more (use filters to narrow down)")
+        st.markdown("---")
+
     if not has_anthropic_key():
         st.warning("Go to **1. Setup & Connect** and add Anthropic API key.")
         return

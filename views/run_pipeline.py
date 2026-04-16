@@ -879,6 +879,23 @@ def _run_quality_until_done():
             break
 
 
+def _run_cluster_linking():
+    """Generate horizontal/vertical link recommendations within each cluster."""
+    from utils.cluster_linking import generate_cluster_link_recommendations
+    from utils.persistence import save
+    tc = st.session_state.get("topic_clusters", {}) or {}
+    clusters = tc.get("clusters", []) if isinstance(tc, dict) else []
+    audit = st.session_state.get("audit_results", []) or []
+    sf = st.session_state.get("sf_link_map", {}) or {}
+    recs = generate_cluster_link_recommendations(clusters, audit, sf)
+    st.session_state["cluster_link_recommendations"] = recs
+    try:
+        save("cluster_link_recommendations", recs)
+    except Exception:
+        pass
+    return recs
+
+
 # Pipeline definition — single source of truth for "what to run, in what order"
 PIPELINE_STEPS = [
     {"num": 1,  "title": "Fetch GSC data",         "key": "gsc_data",         "fn": _run_fetch_gsc,         "long": False, "estimate": "~30 sec"},
@@ -889,10 +906,11 @@ PIPELINE_STEPS = [
     {"num": 6,  "title": "Bulk Audit Pages",       "key": "audit_results",    "fn": _run_bulk_audit,        "long": True,  "estimate": "~18 min for 1000+ pages"},
     {"num": 7,  "title": "AI Content Quality",     "key": None,               "fn": _run_quality_until_done,"long": True,  "estimate": "~15 min (AI)"},
     {"num": 8,  "title": "Cannibalization",        "key": "cannibalization",  "fn": _run_cannibalization,   "long": False, "estimate": "~5 min"},
-    {"num": 9,  "title": "Site Validation",        "key": "_site_validation", "fn": _run_site_validation,   "long": False, "estimate": "~30 sec (AI)"},
-    {"num": 10, "title": "Generate Ideal Structure","key": "_ideal_structure","fn": _run_ideal_structure,   "long": False, "estimate": "~1 min (AI)"},
-    {"num": 11, "title": "Gap Analysis",           "key": "_gap_analysis",    "fn": _run_gap_analysis,      "long": False, "estimate": "~1 min (AI)"},
-    {"num": 12, "title": "Plan Validation",        "key": "_plan_validation", "fn": _run_plan_validation,   "long": False, "estimate": "~30 sec (AI)"},
+    {"num": 9,  "title": "Cluster Linking",        "key": "cluster_link_recommendations", "fn": _run_cluster_linking, "long": False, "estimate": "~10 sec"},
+    {"num": 10, "title": "Site Validation",        "key": "_site_validation", "fn": _run_site_validation,   "long": False, "estimate": "~30 sec (AI)"},
+    {"num": 11, "title": "Generate Ideal Structure","key": "_ideal_structure","fn": _run_ideal_structure,   "long": False, "estimate": "~1 min (AI)"},
+    {"num": 12, "title": "Gap Analysis",           "key": "_gap_analysis",    "fn": _run_gap_analysis,      "long": False, "estimate": "~1 min (AI)"},
+    {"num": 13, "title": "Plan Validation",        "key": "_plan_validation", "fn": _run_plan_validation,   "long": False, "estimate": "~30 sec (AI)"},
 ]
 
 
