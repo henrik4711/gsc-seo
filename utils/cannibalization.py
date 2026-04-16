@@ -356,17 +356,89 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
 
         query_intent = _query_intent(row.get("query", ""))
 
-        # ── Intent-matched LINK TARGET ──────────────────────────
-        # This is the page OTHER pages should link TO when this query
-        # appears. If query intent matches a page's intent, that page
-        # is the right target — even if it's not the score-winner.
-        link_target = winner_page  # default fallback
-        link_target_reason = "highest score (no intent match)"
+        # ── Cluster/pillar awareness for link_target ────────────
+        # The query lives in some topic cluster. Find which cluster(s)
+        # it belongs to + which pages in this conflict are in the same
+        # cluster. Within the same cluster, pillar pages (pages with
+        # most internal links + most queries) are preferred over spokes.
+        topic_clusters_data = _st.session_state.get("topic_clusters", {}) or {}
+        clusters_list = topic_clusters_data.get("clusters", []) if isinstance(topic_clusters_data, dict) else []
+
+        # Find cluster(s) this query belongs to
+        query_lower = (row.get("query", "") or "").lower().strip()
+        query_clusters = set()
+        for cluster in clusters_list:
+            for q in cluster.get("queries", []) or []:
+                if (q or "").lower().strip() == query_lower:
+                    query_clusters.add(cluster.get("topic", ""))
+                    break
+
+        # Map: cluster_topic → set of pages in that cluster
+        cluster_pages = {c.get("topic", ""): set(_nu(p.get("page", "")) for p in c.get("pages", []) or [])
+                         for c in clusters_list}
+
+        # Map: page → is_pillar (page_count >= 3 AND most queries in cluster)
+        pillar_pages = set()
+        for c in clusters_list:
+            pages = c.get("pages", []) or []
+            if len(pages) >= 3:
+                # Pillar = page with the most queries in the cluster
+                top_page = max(pages, key=lambda p: p.get("query_count", 0), default=None)
+                if top_page and top_page.get("query_count", 0) > 1:
+                    pillar_pages.add(_nu(top_page.get("page", "")))
+
+        # ── Intent + cluster matched LINK TARGET ──────────────
+        # Priority order:
+        # 1. Page in same cluster as query AND matching query intent
+        # 2. Pillar page in same cluster as query
+        # 3. Any page in same cluster as query
+        # 4. Page matching query intent (regardless of cluster)
+        # 5. Score-based winner (fallback)
+        link_target = winner_page
+        link_target_reason = "highest score (fallback)"
+        link_priority_used = 5
+
+        candidates_in_cluster = []
         for pi_url, pi_intent in page_intents.items():
-            if pi_intent == query_intent:
-                link_target = pi_url
-                link_target_reason = f"intent match: query='{query_intent}', page='{pi_intent}'"
+            pi_norm = _nu(pi_url)
+            in_query_cluster = any(pi_norm in cluster_pages.get(qc, set()) for qc in query_clusters)
+            is_pillar = pi_norm in pillar_pages
+            candidates_in_cluster.append({
+                "url": pi_url, "intent": pi_intent,
+                "in_query_cluster": in_query_cluster, "is_pillar": is_pillar,
+            })
+
+        # Try priority 1: in-cluster + intent-matched
+        for c in candidates_in_cluster:
+            if c["in_query_cluster"] and c["intent"] == query_intent:
+                link_target = c["url"]
+                link_target_reason = f"in query's cluster + intent match ({query_intent})"
+                link_priority_used = 1
                 break
+        # Priority 2: pillar in cluster
+        if link_priority_used > 2:
+            for c in candidates_in_cluster:
+                if c["in_query_cluster"] and c["is_pillar"]:
+                    link_target = c["url"]
+                    link_target_reason = "pillar page in query's cluster"
+                    link_priority_used = 2
+                    break
+        # Priority 3: any page in cluster
+        if link_priority_used > 3:
+            for c in candidates_in_cluster:
+                if c["in_query_cluster"]:
+                    link_target = c["url"]
+                    link_target_reason = f"in query's cluster ({list(query_clusters)[0] if query_clusters else 'unknown'})"
+                    link_priority_used = 3
+                    break
+        # Priority 4: intent match (no cluster info)
+        if link_priority_used > 4:
+            for c in candidates_in_cluster:
+                if c["intent"] == query_intent:
+                    link_target = c["url"]
+                    link_target_reason = f"intent match: query='{query_intent}', page='{c['intent']}'"
+                    link_priority_used = 4
+                    break
 
         # ── Check if meta titles are already differentiated ───
         # If pages already have unique, keyword-focused titles → "already handled"
@@ -719,13 +791,19 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
             "cannibal_parent_url": cannibal_type.get("parent_url"),
             "cannibal_suggested_parent": cannibal_type.get("suggested_parent_path"),
             "already_differentiated": cannibal_type.get("already_differentiated", False),
-            # NEW: query intent + intent-matched link target (separate from
+            # Intent + cluster-aware link target (separate from
             # the score-based winner). When other pages link to this query,
-            # they should anchor to link_target — which is the page whose
-            # intent matches the query, not necessarily the highest-scoring page.
+            # they should anchor to link_target. Priority chain:
+            # 1. Page in query's cluster + intent match
+            # 2. Pillar page in query's cluster
+            # 3. Any page in query's cluster
+            # 4. Page with matching intent (no cluster info)
+            # 5. Score-based winner (fallback)
             "query_intent": query_intent,
+            "query_clusters": sorted(query_clusters),
             "link_target": link_target,
             "link_target_reason": link_target_reason,
+            "link_target_priority": link_priority_used,
             "page_intents": page_intents,
         })
 
