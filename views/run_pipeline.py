@@ -333,13 +333,15 @@ def _run_bulk_audit():
                 if os.path.exists(path):
                     with open(path, "r", encoding="utf-8") as f:
                         on_disk = json.load(f)
-                disk_urls = set(_norm(r.get("url", "")) for r in on_disk)
-                for new_r in new_results:
-                    if _norm(new_r.get("url", "")) not in disk_urls:
-                        on_disk.append(new_r)
-                        disk_urls.add(_norm(new_r["url"]))
+                # CRITICAL: fresh scrapes must OVERWRITE existing disk entries,
+                # not skip them. Previous logic appended-only and silently
+                # discarded fresh re-scrapes of already-audited URLs.
+                fresh_urls = set(_norm(r.get("url", "")) for r in new_results)
+                kept = [r for r in on_disk if _norm(r.get("url", "")) not in fresh_urls]
+                merged = kept + new_results
                 with open(path, "w", encoding="utf-8") as f:
-                    json.dump(on_disk, f, ensure_ascii=False, indent=1, default=str)
+                    json.dump(merged, f, ensure_ascii=False, indent=1, default=str)
+                print(f"[bulk_audit] checkpoint at {i+1}: {len(merged)} total ({len(kept)} kept + {len(new_results)} fresh)")
             except Exception as e:
                 print(f"[bulk_audit] checkpoint save failed at {i+1}: {e}")
 

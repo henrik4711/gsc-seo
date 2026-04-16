@@ -469,29 +469,37 @@ def render():
                 # Auto-save every 25 pages — write to DISK only (not session_state)
                 # to avoid triggering Streamlit re-renders during audit.
                 # 25 = max ~25 sec lost on crash (vs 100 = ~100 sec).
+                # CRITICAL: fresh scrapes OVERWRITE existing disk entries.
+                # Previous code only APPENDED new URLs — so a re-scrape of
+                # an already-audited URL was silently discarded at checkpoint
+                # time. Fresh editorial_images / structural_signals data from
+                # a new scrape run got dropped and old polluted data stayed.
                 if len(audit_results) % 25 == 0:
                     try:
                         from utils.persistence import _volume_available, _file_path
+                        from utils.ui_helpers import normalize_url as _nu_ckpt
                         import json
                         if _volume_available():
-                            # Merge with existing on disk
                             path = _file_path("audit_results", "json")
                             existing_on_disk = []
                             if __import__("os").path.exists(path):
                                 with open(path, "r", encoding="utf-8") as f:
                                     existing_on_disk = json.load(f)
-                            existing_urls = set(r.get("url", "") for r in existing_on_disk)
-                            for new_r in audit_results:
-                                if new_r.get("url", "") not in existing_urls:
-                                    existing_on_disk.append(new_r)
-                                    existing_urls.add(new_r["url"])
+                            # Build a set of URLs from this scrape run (freshly scraped)
+                            fresh_urls_norm = set(_nu_ckpt(r.get("url", "")) for r in audit_results)
+                            # Keep only disk entries that are NOT being re-scraped right now
+                            kept_from_disk = [r for r in existing_on_disk
+                                              if _nu_ckpt(r.get("url", "")) not in fresh_urls_norm]
+                            # Concatenate: untouched disk entries + all fresh entries from this run
+                            merged = kept_from_disk + list(audit_results)
                             def _conv(obj):
                                 if hasattr(obj, 'item'): return obj.item()
                                 raise TypeError(type(obj))
                             with open(path, "w", encoding="utf-8") as f:
-                                json.dump(existing_on_disk, f, ensure_ascii=False, indent=1, default=_conv)
-                    except Exception:
-                        pass  # Don't crash audit if save fails
+                                json.dump(merged, f, ensure_ascii=False, indent=1, default=_conv)
+                            print(f"[audit checkpoint] saved {len(merged)} total ({len(kept_from_disk)} kept + {len(audit_results)} fresh)")
+                    except Exception as e:
+                        print(f"[audit checkpoint] save failed: {e}")
 
             # Merge: replace existing entries for re-audited URLs, keep the rest
             if "audit_results" in st.session_state and st.session_state["audit_results"]:
