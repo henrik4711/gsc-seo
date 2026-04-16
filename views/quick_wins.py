@@ -1100,6 +1100,9 @@ def render():
                 unsafe_allow_html=True,
             )
 
+            # Pre-compute meta cache key so both title + description sections can use it
+            meta_key = f"_cannibal_meta_{stable_hash(page['url'])}"
+
             # Title
             t_status = "⚠ TOO LONG" if title_too_long else "⚠ TOO SHORT" if title_too_short else "✓ OK"
             st.markdown(f"**Current title:** `{page['title']}` ({len(page['title'])} chars) {t_status}")
@@ -1107,7 +1110,6 @@ def render():
                 st.markdown(f"**New title:** `{new_title}` ({len(new_title)} chars)")
             else:
                 # Generate meta via AI instead of asking user to write manually
-                meta_key = f"_cannibal_meta_{stable_hash(page['url'])}"
                 if meta_key in st.session_state:
                     cached_meta = st.session_state[meta_key]
                     if isinstance(cached_meta, dict):
