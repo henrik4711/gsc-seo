@@ -54,7 +54,24 @@ def scrape_page(url: str, timeout: int = 30) -> dict:
     if not BS4_AVAILABLE:
         result["error"] = "beautifulsoup4 not installed"
         return result
-    return _scrape_with_requests(url, timeout, result)
+    out = _scrape_with_requests(url, timeout, result)
+    # Lightweight log event — one line per scraped page (not a full run)
+    try:
+        from utils.diagnostics import log_event
+        log_event(
+            "scrape_page",
+            url=url,
+            success=out.get("success"),
+            error=out.get("error"),
+            word_count=out.get("word_count"),
+            intro_words=out.get("intro_word_count", 0),
+            bottom_words=out.get("bottom_word_count", 0),
+            editorial_images=out.get("editorial_image_count", 0),
+            page_type=out.get("page_type") or out.get("template_type", ""),
+        )
+    except Exception:
+        pass
+    return out
 
 
 def extract_editorial_content(html: str, url: str) -> dict:

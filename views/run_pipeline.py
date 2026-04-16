@@ -1068,13 +1068,33 @@ def render():
             unsafe_allow_html=True,
         )
         if st.button(button_label, type="primary", key="rp_run_all", use_container_width=True):
+            from utils.diagnostics import log_run
             progress = st.progress(0)
             status = st.empty()
             done_now = 0
             for step in remaining_steps:
-                status.markdown(f"**Step {step['num']}/{step['num']} — {step['title']}** ({step['estimate']})...")
+                status.markdown(f"**Step {step['num']} — {step['title']}** ({step['estimate']})...")
                 try:
-                    step["fn"]()
+                    with log_run(f"Step {step['num']}: {step['title']}") as run_ctx:
+                        run_ctx.input("step_num", step["num"])
+                        run_ctx.input("estimate", step["estimate"])
+                        # Snapshot relevant input sizes
+                        for k in ("gsc_data", "audit_results", "topic_clusters", "cannibalization", "page_authority"):
+                            v = st.session_state.get(k)
+                            if v is not None:
+                                try:
+                                    run_ctx.input(f"{k}_size", len(v) if hasattr(v, "__len__") else "present")
+                                except Exception:
+                                    pass
+                        step["fn"]()
+                        # Snapshot what was produced
+                        if step["key"]:
+                            out_data = st.session_state.get(step["key"])
+                            if out_data is not None:
+                                try:
+                                    run_ctx.output(f"{step['key']}_size", len(out_data) if hasattr(out_data, "__len__") else "present")
+                                except Exception:
+                                    pass
                     done_now += 1
                     progress.progress(done_now / len(remaining_steps))
                 except Exception as e:
@@ -1104,14 +1124,78 @@ def render():
                 st.markdown(f"**{step['title']}** — {step['estimate']}")
             with c[2]:
                 if st.button("Run", key=f"rp_solo_{step['num']}", use_container_width=True):
+                    from utils.diagnostics import log_run
                     try:
                         with st.spinner(f"Running {step['title']}..."):
-                            step["fn"]()
+                            with log_run(f"Solo: Step {step['num']}: {step['title']}"):
+                                step["fn"]()
                         st.success("done")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
                         import traceback
                         st.code(traceback.format_exc())
-        return  # ← skip the LEGACY render below; the new flow is complete
+
+    # ── Diagnostics — download + summary ─────────────────────
+    st.markdown("---")
+    with st.expander("🔬 Diagnostics — download run logs (errors, timing, inputs/outputs)", expanded=False):
+        from utils.diagnostics import get_summary, export_all_as_json, get_logs, clear_logs
+        summary = get_summary()
+        st.caption(
+            "Every pipeline step + AI call writes a log entry: inputs (data sizes), "
+            "outputs (what was produced), elapsed time, full error traceback. "
+            "Persisted to /data/diagnostics/ on the Railway volume — survives restarts."
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total log entries", summary["total_entries"])
+        c2.metric("Distinct operations", len(summary["by_name"]))
+        err_count = sum(summary["errors_by_name"].values())
+        c3.metric("Errors", err_count, delta="↓ good" if err_count == 0 else f"↑ {err_count}")
+        c4.metric("Total elapsed (s)", summary["total_seconds"])
+
+        d1, d2 = st.columns(2)
+        with d1:
+            if summary["total_entries"] > 0:
+                blob = export_all_as_json()
+                from datetime import datetime as _dt
+                fname = f"diagnostics_{_dt.now().strftime('%Y%m%d_%H%M')}.json"
+                st.download_button(
+                    f"⬇ Download {fname} ({len(blob)//1024} KB)",
+                    data=blob, file_name=fname, mime="application/json",
+                    type="primary", use_container_width=True, key="rp_diag_dl",
+                )
+            else:
+                st.caption("No log entries yet. Run something to generate logs.")
+        with d2:
+            if st.button("🗑 Clear all logs", key="rp_diag_clear", use_container_width=True):
+                n = clear_logs()
+                st.success(f"Cleared {n} log files")
+                st.rerun()
+
+        if err_count > 0:
+            st.markdown("**Recent errors:**")
+            for entry in get_logs(limit=20, errors_only=True):
+                err = entry.get("error", {})
+                st.markdown(
+                    f"<div style='background:#1a0a0a; border-left:3px solid #ff4455; "
+                    f"padding:0.6rem; margin:0.3rem 0; border-radius:0 6px 6px 0; font-size:0.85rem;'>"
+                    f"<div style='color:#ff4455; font-weight:600;'>{entry.get('name', '?')}</div>"
+                    f"<div style='color:#9b9bb8; font-size:0.75rem;'>{entry.get('ts', '')}</div>"
+                    f"<div style='color:#e8e8f0; margin-top:0.3rem;'>{err.get('type', '')}: {err.get('message', '')}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+        if summary["by_name"]:
+            st.markdown("**Operation counts:**")
+            for name, count in list(summary["by_name"].items())[:20]:
+                err_n = summary["errors_by_name"].get(name, 0)
+                color = "#ff4455" if err_n > 0 else "#33dd88"
+                st.markdown(
+                    f"- `{name}`: {count} runs"
+                    + (f" · <span style='color:{color};'>{err_n} errors</span>" if err_n else ""),
+                    unsafe_allow_html=True,
+                )
+
+        return  # end render
 
