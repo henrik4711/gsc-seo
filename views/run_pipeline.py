@@ -354,25 +354,56 @@ def _run_bulk_audit():
         print(f"[bulk_audit] final save failed: {e}")
 
 
+def _quality_input_hash(audit_row: dict) -> str:
+    """Hash of the data that quality check uses as input. If this hash
+    matches the one stored with the verdict, the audit data hasn't changed
+    and we can skip the expensive AI call."""
+    import hashlib
+    text = (
+        (audit_row.get("body_text") or "")[:3000] +
+        (audit_row.get("intro_text") or "") +
+        (audit_row.get("bottom_text") or "") +
+        (audit_row.get("page_type") or "")
+    )
+    return hashlib.md5(text.encode()).hexdigest()[:12]
+
+
 def _run_quality_check():
     from utils.ai_generator import get_client, assess_content_quality_batch
-    from utils.ui_helpers import stable_hash
     if not has_anthropic_key():
         raise ValueError("Anthropic API key missing")
     audit_results = st.session_state.get("audit_results", [])
     if not audit_results:
         raise ValueError("Run bulk audit first")
-    # Check pages not yet assessed
-    candidates = [r for r in audit_results
-                  if r.get("page_type") in ("category", "blog", "faq")
-                  and r.get("word_count", 0) > 50
-                  and f"_quality_{stable_hash(r['url'])}" not in st.session_state]
+
+    # Only check pages that NEED checking:
+    # 1. No verdict yet, OR
+    # 2. Verdict exists but was computed on DIFFERENT input data (hash mismatch)
+    candidates = []
+    skipped = 0
+    for r in audit_results:
+        if r.get("page_type") not in ("category", "blog", "faq"):
+            continue
+        if (r.get("word_count", 0) or 0) <= 50:
+            continue
+        url = r.get("url", "")
+        key = f"_quality_{stable_hash(url)}"
+        current_hash = _quality_input_hash(r)
+        existing = st.session_state.get(key)
+        if isinstance(existing, dict) and existing.get("_input_hash") == current_hash:
+            skipped += 1
+            continue  # verdict still valid — input data hasn't changed
+        candidates.append(r)
+
+    if skipped > 0:
+        print(f"[quality] Skipped {skipped} pages (input data unchanged since last check)")
     if not candidates:
         return
+
     client = get_client(get_anthropic_key())
     from utils.persistence import save
-    # Process in batches of 5
-    for i in range(0, min(len(candidates), 50), 5):  # Max 50 pages per click
+    # Process in batches of 5, max 50 per call
+    for i in range(0, min(len(candidates), 50), 5):
         batch = candidates[i:i+5]
         results = assess_content_quality_batch(
             client, batch,
@@ -380,10 +411,13 @@ def _run_quality_check():
             language=st.session_state.get("content_language", "Swedish"),
             topic_clusters=st.session_state.get("topic_clusters"),
         )
-        for r in results:
-            url = r.get("url", "")
+        for idx, result in enumerate(results):
+            url = result.get("url", "")
             key = f"_quality_{stable_hash(url)}"
-            st.session_state[key] = r
+            # Store hash of the input data alongside the verdict
+            if idx < len(batch):
+                result["_input_hash"] = _quality_input_hash(batch[idx])
+            st.session_state[key] = result
             save(key)  # Persist immediately per-item
 
 
@@ -922,14 +956,23 @@ Identify:
 # ── Main render ────────────────────────────────────────────────
 
 def _run_quality_until_done():
-    """Run AI quality check repeatedly until all category+blog pages checked."""
+    """Run AI quality check repeatedly until all eligible pages have
+    up-to-date verdicts. Pages whose input data hasn't changed since
+    last check are automatically skipped (hash-based)."""
     audit = st.session_state.get("audit_results", []) or []
     eligible = [r for r in audit
                 if r.get("page_type") in ("category", "blog", "faq")
                 and r.get("word_count", 0) > 50]
     while True:
-        remaining = sum(1 for r in eligible
-                        if f"_quality_{stable_hash(r['url'])}" not in st.session_state)
+        # Count pages that still NEED checking (no verdict OR stale verdict)
+        remaining = 0
+        for r in eligible:
+            key = f"_quality_{stable_hash(r['url'])}"
+            existing = st.session_state.get(key)
+            if existing is None:
+                remaining += 1
+            elif isinstance(existing, dict) and existing.get("_input_hash") != _quality_input_hash(r):
+                remaining += 1
         if remaining == 0:
             break
         try:
@@ -977,13 +1020,20 @@ PIPELINE_STEPS = [
 def _step_done(step) -> bool:
     """Has this step completed (data exists in session_state)?"""
     if step["num"] == 7:
-        # Quality check has no single state key — check via _quality_* count
+        # Quality check: done = every eligible page has a verdict with
+        # matching input hash (so stale verdicts don't count as done)
         audit = st.session_state.get("audit_results", []) or []
         eligible = [r for r in audit if r.get("page_type") in ("category", "blog", "faq") and r.get("word_count", 0) > 50]
         if not eligible:
             return False
-        checked = sum(1 for r in eligible if f"_quality_{stable_hash(r['url'])}" in st.session_state)
-        return checked >= len(eligible)
+        # Count verdicts with MATCHING input hash (stale don't count)
+        up_to_date = 0
+        for r in eligible:
+            key = f"_quality_{stable_hash(r['url'])}"
+            existing = st.session_state.get(key)
+            if isinstance(existing, dict) and existing.get("_input_hash") == _quality_input_hash(r):
+                up_to_date += 1
+        return up_to_date >= len(eligible)
     return step["key"] in st.session_state and st.session_state[step["key"]] is not None
 
 
@@ -994,12 +1044,30 @@ def _step_progress_text(step) -> str:
         eligible = [r for r in audit if r.get("page_type") in ("category", "blog", "faq") and r.get("word_count", 0) > 50]
         if not eligible:
             return "waiting for audit"
-        checked = sum(1 for r in eligible if f"_quality_{stable_hash(r['url'])}" in st.session_state)
-        if checked >= len(eligible):
-            return f"✓ {checked}/{len(eligible)} checked"
-        elif checked > 0:
-            return f"⏳ {checked}/{len(eligible)} checked"
-        return "not started"
+        up_to_date = 0
+        stale = 0
+        missing = 0
+        for r in eligible:
+            key = f"_quality_{stable_hash(r['url'])}"
+            existing = st.session_state.get(key)
+            if existing is None:
+                missing += 1
+            elif isinstance(existing, dict) and existing.get("_input_hash") == _quality_input_hash(r):
+                up_to_date += 1
+            else:
+                stale += 1
+        total = len(eligible)
+        if up_to_date >= total:
+            return f"✓ {up_to_date}/{total} checked"
+        parts = []
+        if up_to_date:
+            parts.append(f"{up_to_date} current")
+        if stale:
+            parts.append(f"{stale} stale")
+        if missing:
+            parts.append(f"{missing} new")
+        need_check = stale + missing
+        return f"⏳ {need_check}/{total} need check ({', '.join(parts)})"
     if _step_done(step):
         data = st.session_state.get(step["key"])
         if hasattr(data, "__len__"):
