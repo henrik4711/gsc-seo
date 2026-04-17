@@ -134,9 +134,10 @@ def _gather_all_tasks():
 
     # ── Source 5: New articles (check existing pages first) ─────────
     roadmap = st.session_state.get("content_roadmap", {})
+    from utils.url_helpers import url_path as _upath
     existing_url_paths = set()
     for url in all_urls:
-        existing_url_paths.add(urlparse(url.lower().rstrip("/")).path.rstrip("/"))
+        existing_url_paths.add(_upath(url).lower())
     for article in roadmap.get("articles_needed", []):
         title = article.get("suggested_title", "")
         # Check if a page already covers this topic (by keyword in URL)

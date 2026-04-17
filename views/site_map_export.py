@@ -119,7 +119,8 @@ def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
         hub_url = ""
         hub_depth = 999
         for p in pages:
-            depth = len(urlparse(p["page"]).path.strip("/").split("/"))
+            from utils.url_helpers import url_segments as _usegs_sm
+            depth = len(_usegs_sm(p["page"]))
             if depth < hub_depth:
                 hub_depth = depth
                 hub_url = p["page"]
@@ -184,12 +185,8 @@ def _build_link_matrix(audit_results, topic_clusters):
             same_cluster = bool(shared)
 
             # Check if link is in same URL hierarchy
-            source_path = urlparse(url).path.lower().strip("/")
-            target_path = urlparse(target).path.lower().strip("/")
-            is_parent_child = (
-                target_path.startswith(source_path + "/") or
-                source_path.startswith(target_path + "/")
-            )
+            from utils.url_helpers import path_is_descendant as _pid_sm
+            is_parent_child = _pid_sm(target, url) or _pid_sm(url, target)
             is_sibling = False
             if "/" in source_path and "/" in target_path:
                 is_sibling = source_path.rsplit("/", 1)[0] == target_path.rsplit("/", 1)[0]
@@ -386,7 +383,7 @@ def _build_orphan_fixes(df_structure, audit_results, topic_clusters):
     rows = []
     for _, orphan in orphans.iterrows():
         url = orphan["URL"]
-        path = urlparse(url).path.lower().rstrip("/")
+        path = _upath_sm(url).lower()
         path_parts = path.strip("/").split("/")
         impressions = orphan.get("Impressions", 0)
         page_type = orphan.get("Page Type", "?")
@@ -422,7 +419,7 @@ def _build_orphan_fixes(df_structure, audit_results, topic_clusters):
         if path_parts:
             first_segment = path_parts[0]
             for r in audit_results:
-                r_path = urlparse(r["url"]).path.lower().rstrip("/").strip("/")
+                r_path = _upath_sm(r["url"]).lower().strip("/")
                 if r_path == first_segment and r["url"] != url:
                     slug_parent = r["url"]
                     break
@@ -463,7 +460,7 @@ def _build_link_fixes(df_links, df_structure, topic_clusters):
             continue
 
         # Find hub (shallowest URL)
-        hub = min(pages, key=lambda u: len(urlparse(u).path.strip("/").split("/")))
+        hub = min(pages, key=lambda u: len(_usegs_sm(u)))
 
         # Check: does hub link to each spoke?
         hub_links_to = set()
@@ -480,7 +477,7 @@ def _build_link_fixes(df_links, df_structure, topic_clusters):
 
             # Hub → Spoke missing?
             if spoke_norm not in hub_links_to:
-                spoke_slug = urlparse(spoke).path.strip("/").split("/")[-1].replace("-", " ")
+                spoke_slug = _ulast_sm(spoke).replace("-", " ")
                 rows.append({
                     "Action": "ADD",
                     "From": hub,
@@ -496,7 +493,7 @@ def _build_link_fixes(df_links, df_structure, topic_clusters):
                 spoke_outlinks = df_links[df_links["From"] == spoke]
                 spoke_links_to = set(spoke_outlinks["To"].apply(_norm_url))
                 if hub_norm not in spoke_links_to:
-                    hub_slug = urlparse(hub).path.strip("/").split("/")[-1].replace("-", " ") or "hem"
+                    hub_slug = _ulast_sm(hub).replace("-", " ") or "hem"
                     rows.append({
                         "Action": "ADD",
                         "From": spoke,

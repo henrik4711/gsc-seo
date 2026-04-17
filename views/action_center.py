@@ -7,6 +7,7 @@ Missing Keywords, New Articles, etc. Everything happens here.
 import streamlit as st
 from config import get_anthropic_key, has_anthropic_key
 from utils.ui_helpers import stable_hash, normalize_url
+from utils.url_helpers import url_path as _url_path
 
 
 def _get_page_actions(audit_results, top_n=100):
@@ -315,7 +316,7 @@ def _new_articles_section():
         u = r.get("url", "")
         if u:
             from urllib.parse import urlparse
-            existing_url_paths.add(urlparse(normalize_url(u)).path.lower().rstrip("/"))
+            existing_url_paths.add(_url_path(normalize_url(u)).lower())
 
     st.markdown(f"### {len(all_articles)} New Articles to Write")
     for i, art in enumerate(all_articles[:20]):

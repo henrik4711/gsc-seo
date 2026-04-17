@@ -48,9 +48,10 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
     Classify a page as category, product, blog, faq, or other.
     Uses URL patterns + schema + HTML structure signals.
     """
+    from utils.url_helpers import url_path as _url_path, url_segments as _url_segments
     url_lower = url.lower()
-    path = urlparse(url_lower).path.rstrip("/")
-    segments = [s for s in path.split("/") if s]
+    path = _url_path(url_lower)
+    segments = _url_segments(url_lower)
 
     result = {
         "page_type": "unknown",
@@ -706,26 +707,23 @@ def audit_category_content(
     raw_keywords = list(set((cluster_keywords or []) + (gsc_queries or [])))
 
     # Extract topic words from URL slug
-    from urllib.parse import urlparse as _urlparse
-    page_path = _urlparse(url).path.lower().rstrip("/")
+    from utils.url_helpers import url_path as _upath, path_is_descendant as _pid
+    page_path = _upath(url).lower()
     slug_parts = set(page_path.replace("-", " ").replace("/", " ").split())
     slug_parts.discard("")
 
     # Detect if this is a PILLAR page (has child pages in the URL hierarchy)
-    # e.g. /sexleksaker is pillar for /sexleksaker/vibratorer, /sexleksaker/dildos
     child_slug_words = set()
     if topic_clusters:
         all_urls = list(topic_clusters.get("page_topics", {}).keys())
     elif gsc_queries:
-        # Fallback: use GSC pages
         all_urls = []
     else:
         all_urls = []
 
     for other_url in all_urls:
-        other_path = _urlparse(other_url).path.lower().rstrip("/")
-        # other_path starts with page_path + "/" → it's a child page
-        if other_path != page_path and other_path.startswith(page_path + "/"):
+        other_path = _upath(other_url).lower()
+        if _pid(other_url, url):
             # Add child page slug words as relevant
             child_part = other_path[len(page_path):].replace("-", " ").replace("/", " ")
             child_slug_words.update(child_part.split())
@@ -1013,8 +1011,8 @@ def audit_category_content(
         spoke_topics_missing = []
         for cluster in topic_clusters.get("clusters", []):
             for p in cluster.get("pages", []):
-                p_path = _urlparse(p.get("page", "")).path.lower().rstrip("/")
-                if p_path != page_path and p_path.startswith(page_path + "/"):
+                p_path = _upath(p.get("page", "")).lower()
+                if _pid(p.get("page", ""), url):
                     # This is a spoke page — does pillar mention its topic?
                     spoke_slug = p_path.split("/")[-1].replace("-", " ")
                     topic_name = cluster.get("topic", spoke_slug)
@@ -1835,9 +1833,7 @@ def _audit_product_alignment(
 
             # Category→product is VALID if product is under this category's URL hierarchy
             # e.g. /sexleksaker-for-man → /sexleksaker-for-man/produkt is always fine
-            current_path = urlparse(current_url).path.rstrip("/").lower()
-            product_path = urlparse(pl_url_full).path.rstrip("/").lower()
-            is_child_product = product_path.startswith(current_path + "/") or current_path.startswith(product_path.rsplit("/", 1)[0])
+            is_child_product = _pid(pl_url_full, current_url) or _upath(current_url).lower().startswith(_upath(pl_url_full).lower().rsplit("/", 1)[0])
 
             if not shared and target_topic_names and not is_child_product:
                 anchor = pl.get("anchor", pl_url)[:60]

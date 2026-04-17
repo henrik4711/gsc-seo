@@ -14,6 +14,8 @@ def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
     import streamlit as _st
     from utils.url_helpers import (
         url_path as _path_of,
+        url_path as _url_path,
+        url_segments as _url_segments,
         is_sale_url as _is_sale,
         normalize_url as _nu,
         path_is_descendant,
@@ -285,7 +287,7 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
             page_url = pd_item["page"]
             page_type = _audit_types.get(_nu(page_url), "unknown")
             category_bonus = 500 if page_type == "category" else 0
-            url_depth = len([s for s in _urlparse(page_url).path.split("/") if s])
+            url_depth = len(_url_segments(page_url))
             depth_bonus = max(0, (5 - url_depth) * 50)
             score = (pd_item["clicks"] * 2 + pd_item["referring_domains"] * 10
                      + pd_item["authority_score"] + category_bonus + depth_bonus)
@@ -299,7 +301,7 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
 
         # Detect page types from URL patterns
         def _page_intent(url):
-            path = urlparse(url).path.lower()
+            path = _url_path(url).lower()
             if path.rstrip("/") == "" or path == "/":
                 return "homepage"
             if "/blog/" in path or "/guide/" in path or "/artikel/" in path or "/tips/" in path:

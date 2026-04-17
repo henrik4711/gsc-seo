@@ -173,8 +173,8 @@ def _classify_conflict_page(page_url: str, winner_url: str, query: str,
             f"Same-level duplicate of the winner. Action:<br>"
             f"1. Copy any unique content from this page into the winner first.<br>"
             f"2. Magento → Marketing → SEO &amp; Search → <strong>URL Rewrites</strong> → Add URL "
-            f"Rewrite. Request Path = <code>{urlparse(page_url).path}</code>, Target Path = "
-            f"<code>{urlparse(winner_url).path}</code>, Redirect Type = <strong>Permanent (301)</strong>.<br>"
+            f"Rewrite. Request Path = <code>{url_path(page_url)}</code>, Target Path = "
+            f"<code>{url_path(winner_url)}</code>, Redirect Type = <strong>Permanent (301)</strong>.<br>"
             f"3. Magento → Catalog → Categories → move all products from this category to the winner.<br>"
             f"4. Delete this category."
         ),
@@ -264,10 +264,9 @@ def _pages_to_create():
         if u:
             existing_urls.add(u)
             # Extract path segments for fuzzy URL matching
-            from urllib.parse import urlparse
-            path = urlparse(u).path.lower().rstrip("/")
-            for seg in path.split("/"):
-                if seg and len(seg) > 3:
+            from utils.url_helpers import url_path as _up, url_segments as _usegs
+            for seg in _usegs(u):
+                if len(seg) > 3:
                     existing_url_segments.add(seg)
         t = (r.get("title") or "").lower().strip()
         if t:
@@ -280,12 +279,10 @@ def _pages_to_create():
         if norm in existing_urls:
             return f"Page already exists: {url_or_title}"
         # Check if URL path matches an existing page
-        from urllib.parse import urlparse
-        path = urlparse(url_or_title).path.lower().rstrip("/") if "://" in url_or_title or url_or_title.startswith("/") else ""
+        path = _up(url_or_title).lower() if "://" in url_or_title or url_or_title.startswith("/") else ""
         if path:
             for eu in existing_urls:
-                ep = urlparse(eu).path.lower().rstrip("/")
-                if ep == path:
+                if _up(eu).lower() == path:
                     return f"URL path already exists: {eu}"
         # Check title similarity
         title_lower = url_or_title.lower().strip()
@@ -506,10 +503,8 @@ def _generate_cannibal_subcategory_meta(query: str, pages: list, row, ai_key: st
                      "word_count": 0, "page_type": "category"}
 
         # Extract path segments to suggest variant-specific keywords
-        from urllib.parse import urlparse
-        path = urlparse(page_url).path.rstrip("/")
-        last_segment = path.split("/")[-1] if path else ""
-        variant_kw = last_segment.replace("-", " ") if last_segment else ""
+        from utils.url_helpers import url_last_segment as _uls
+        variant_kw = _uls(page_url).replace("-", " ")
 
         # Build target keywords: generic query + variant-specific
         target_kws = [query]

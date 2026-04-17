@@ -195,14 +195,9 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
 
                 # Filter: only suggest links between related pages
                 # Related = same URL hierarchy, OR share topic clusters
-                src_parts = urlparse(source_url).path.lower().strip("/").split("/")
-                tgt_parts = urlparse(target_url).path.lower().strip("/").split("/")
-                is_sibling = (len(src_parts) >= 2 and len(tgt_parts) >= 2
-                              and src_parts[0] == tgt_parts[0])
-                is_parent_child = (
-                    _nu(target_url).startswith(_nu(source_url) + "/") or
-                    _nu(source_url).startswith(_nu(target_url) + "/")
-                )
+                from utils.url_helpers import shared_top_level as _stl, path_is_descendant as _pid
+                is_sibling = _stl(source_url, target_url)
+                is_parent_child = _pid(target_url, source_url) or _pid(source_url, target_url)
                 shares_topic = shared_count >= 2  # They share 2+ topic clusters = related
                 if not is_sibling and not is_parent_child and not shares_topic:
                     continue

@@ -11,6 +11,7 @@ import streamlit as st
 import pandas as pd
 
 from utils.ui_helpers import normalize_url, stable_hash
+from utils.url_helpers import url_path as _url_path_fn
 
 
 def build_page_profile(url: str) -> dict:
@@ -20,7 +21,7 @@ def build_page_profile(url: str) -> dict:
     Every field has a sensible default so callers never need to check for None.
     """
     norm = normalize_url(url)
-    url_path = urlparse(norm).path or "/"
+    url_path = _url_path_fn(norm)
     url_hash = stable_hash(norm)
 
     profile = {
@@ -242,7 +243,7 @@ def build_page_profile(url: str) -> dict:
         children = []
         for other_url in all_cluster_pages:
             if other_url != norm:
-                other_path = urlparse(other_url).path or "/"
+                other_path = _url_path_fn(other_url)
                 if other_path.startswith(url_path + "/") and url_path != "/":
                     children.append(other_url)
         if children:

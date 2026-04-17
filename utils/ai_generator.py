@@ -401,10 +401,10 @@ def assess_content_quality_batch(
                 cluster_info = f"Topic cluster(s): {', '.join(topic_names)}\n"
 
             # Is this a pillar page?
-            from urllib.parse import urlparse
-            page_path = urlparse(url).path.lower().rstrip("/")
+            from utils.url_helpers import url_path as _url_path
+            page_path = _url_path(url).lower()
             child_pages = [u for u in page_topics.keys()
-                          if urlparse(u).path.lower().rstrip("/").startswith(page_path + "/")]
+                          if _url_path(u).lower().startswith(page_path + "/")]
             if child_pages:
                 cluster_info += f"PILLAR page with {len(child_pages)} child pages\n"
                 cluster_info += f"Child pages: {', '.join(c.split('/')[-1] for c in child_pages[:8])}\n"
@@ -1922,7 +1922,7 @@ def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str
     # Is this a pillar?
     child_pages = []
     for other_url in page_topics.keys():
-        other_path = urlparse(other_url).path.lower().rstrip("/")
+        other_path = _url_path(other_url).lower()
         if other_path != page_path and other_path.startswith(page_path + "/"):
             child_pages.append(other_url)
 
@@ -1943,13 +1943,11 @@ def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str
             lines.append("As a spoke, this page should: go DEEP on its specific subtopic, link UP to parent hub, cross-link to sibling pages")
 
         # Find siblings
+        from utils.url_helpers import url_segments as _usegs, paths_are_siblings as _psibs
         sibling_pages = []
         for other_url in page_topics.keys():
-            other_path = urlparse(other_url).path.lower().rstrip("/")
-            if other_url != url and len(other_path.strip("/").split("/")) == len(path_parts):
-                other_parts = other_path.strip("/").split("/")
-                if len(other_parts) >= 2 and other_parts[:-1] == path_parts[:-1]:
-                    sibling_pages.append(other_url)
+            if other_url != url and _psibs(other_url, url):
+                sibling_pages.append(other_url)
         if sibling_pages:
             lines.append(f"Sibling pages ({len(sibling_pages)}): {', '.join(s.replace(site_origin, '') for s in sibling_pages[:8])}")
 

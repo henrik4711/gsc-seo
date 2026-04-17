@@ -4,6 +4,7 @@ Checks: hub-spoke linking, keyword distribution, content gaps, cannibalization
 """
 
 import streamlit as st
+from utils.url_helpers import url_segments as _url_segments
 import json
 from urllib.parse import urlparse
 from config import get_anthropic_key, has_anthropic_key
@@ -24,7 +25,7 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     hub_url = ""
     hub_depth = 999
     for pu in page_urls:
-        depth = len(urlparse(pu).path.strip("/").split("/"))
+        depth = len(_url_segments(pu))
         if depth < hub_depth:
             hub_depth = depth
             hub_url = pu
