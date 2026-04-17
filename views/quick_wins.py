@@ -865,14 +865,27 @@ def render():
     c3.metric("Meta score", f"{page['meta_score']}/100")
     c4.metric("Content score", f"{page['content_score']}/100")
 
-    # ── Issues detected ──────────────────────────────────────
-    st.markdown("### What's wrong (auto-detected)")
+    # ── DO THIS FIRST — clear, single top-priority action ──
     issues = _detect_issues(page)
-    if not issues:
+    if issues:
+        top_issue = issues[0]
+        st.markdown(
+            f"<div style='background:#1a1020; border:2px solid #ff6644; border-radius:8px; "
+            f"padding:1rem; margin:0.5rem 0 1rem 0;'>"
+            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; "
+            f"color:#ff6644; letter-spacing:0.05em; margin-bottom:0.3rem;'>DO THIS FIRST</div>"
+            f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600;'>{top_issue}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Other issues ────────────────────────────────────────
+    if len(issues) > 1:
+        with st.expander(f"All {len(issues)} issues detected", expanded=False):
+            for issue in issues:
+                st.markdown(f"- {issue}")
+    elif not issues:
         st.success("No major issues detected on this page")
-    else:
-        for issue in issues:
-            st.markdown(f"- {issue}")
 
     st.markdown("---")
 
@@ -1396,49 +1409,63 @@ def render():
                             })
                             break
             if page_cannibals:
-                st.markdown(f"#### [CANNIBALIZATION] {len(page_cannibals)} keyword conflicts")
-                st.markdown(
-                    "<p style='color:#9b9bb8; font-size:0.8rem;'>"
-                    "This page competes with other pages for these keywords.</p>",
-                    unsafe_allow_html=True,
-                )
-                for c in page_cannibals[:5]:
-                    sev_color = {"severe": "#ff4455", "moderate": "#ffaa33", "mild": "#6b6b8a"}.get(c["severity"], "#6b6b8a")
-                    is_winner = normalize_url(c["winner"]) == normalize_url(url)
-                    winner_label = "🏆 This page WINS" if is_winner else f"✗ Loses to: `{c['winner']}`"
+                # ── CONSOLIDATE: group by competing URL so the same
+                # competitor doesn't repeat 5x for keyword variants ──
+                from collections import defaultdict
+                by_competitor = defaultdict(lambda: {"queries": [], "total_lost": 0, "merge_action": "", "severity": "mild", "is_winner": True, "competing_pages": []})
+                for c in page_cannibals:
+                    # Build a key from the competing URLs (sorted)
+                    comp_key = tuple(sorted(normalize_url(cp["url"]) for cp in (c.get("competing_pages") or [])))
+                    if not comp_key:
+                        comp_key = ("unknown",)
+                    grp = by_competitor[comp_key]
+                    grp["queries"].append(c["query"])
+                    grp["total_lost"] += c.get("lost_clicks", 0)
+                    if c.get("severity") == "severe":
+                        grp["severity"] = "severe"
+                    elif c.get("severity") == "moderate" and grp["severity"] == "mild":
+                        grp["severity"] = "moderate"
+                    if not (normalize_url(c.get("winner", "")) == normalize_url(url)):
+                        grp["is_winner"] = False
+                    if not grp["merge_action"] and c.get("merge_action"):
+                        grp["merge_action"] = c["merge_action"]
+                    if not grp["competing_pages"] and c.get("competing_pages"):
+                        grp["competing_pages"] = c["competing_pages"]
 
-                    # Header line per conflict
+                groups = sorted(by_competitor.values(), key=lambda g: -g["total_lost"])
+                total_conflicts = len(page_cannibals)
+                unique_competitors = len(groups)
+                st.markdown(f"#### [CANNIBALIZATION] {total_conflicts} keyword conflicts → {unique_competitors} unique competitor(s)")
+
+                for grp in groups[:5]:
+                    sev_color = {"severe": "#ff4455", "moderate": "#ffaa33", "mild": "#6b6b8a"}.get(grp["severity"], "#6b6b8a")
+                    winner_label = "🏆 This page WINS" if grp["is_winner"] else "✗ Competitor leads"
+                    queries_str = ", ".join(f"'{q}'" for q in grp["queries"][:5])
+                    if len(grp["queries"]) > 5:
+                        queries_str += f" +{len(grp['queries'])-5} more"
+
                     st.markdown(
-                        f"##### `{c['query']}` "
-                        f"<span style='color:{sev_color}; font-weight:600; font-size:0.7rem;'>"
-                        f"[{c['severity'].upper()}]</span> · "
-                        f"{c['lost_clicks']:,} lost clicks · {winner_label}",
+                        f"<div style='background:#12121f; border-left:4px solid {sev_color}; "
+                        f"padding:0.8rem; margin:0.5rem 0; border-radius:0 6px 6px 0;'>"
+                        f"<div style='font-size:0.9rem; color:#e8e8f0; font-weight:600;'>"
+                        f"{len(grp['queries'])} keywords: {queries_str}</div>"
+                        f"<div style='color:{sev_color}; font-size:0.8rem; margin-top:0.2rem;'>"
+                        f"[{grp['severity'].upper()}] · {grp['total_lost']:,} total lost clicks · {winner_label}</div>"
+                        f"</div>",
                         unsafe_allow_html=True,
                     )
 
-                    # Show ALL competing URLs (not just the count)
-                    if c.get("competing_pages"):
-                        st.markdown("**Competing URLs:**")
-                        for cp in c["competing_pages"]:
-                            cp_url = cp["url"]
-                            cp_pos = cp.get("position", "?")
-                            cp_clicks = cp.get("clicks", 0)
-                            cp_impr = cp.get("impressions", 0)
+                    if grp.get("competing_pages"):
+                        st.markdown("**Competing with:**")
+                        for cp in grp["competing_pages"]:
                             st.markdown(
-                                f"- `{cp_url}` — pos {cp_pos} · {cp_clicks} clicks · {cp_impr:,} impressions",
+                                f"- `{cp['url']}` — pos {cp.get('position','?')} · "
+                                f"{cp.get('clicks',0)} clicks · {cp.get('impressions',0):,} impressions"
                             )
 
-                    # Show FULL action text — was truncated to 200 chars before.
-                    # Render as native markdown so **bold**, lists, code render.
-                    if c.get("merge_action"):
-                        with st.container():
-                            st.markdown(
-                                f"<div style='border-left:3px solid {sev_color}; padding-left:0.8rem; "
-                                f"margin:0.4rem 0;'><strong>What to do:</strong></div>",
-                                unsafe_allow_html=True,
-                            )
-                            st.markdown(c["merge_action"])
-                    st.markdown("---")
+                    if grp.get("merge_action"):
+                        with st.expander("What to do (click to expand)", expanded=False):
+                            st.markdown(grp["merge_action"])
 
                 _approval_button("Cannibal", f"{url_hash}_cannibal")
                 st.markdown("---")
