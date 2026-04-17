@@ -135,11 +135,12 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             result["page_type"] = "category"
             result["confidence"] = "high"
             result["signals"].append("Category template container found")
-        # If structural signals settled the answer, return early.
+        # If structural signals settled the answer with high confidence,
+        # return NOW. Do NOT let schema/heuristic overrides change it.
+        # FAQPage schema on a category page (common on e-commerce) was
+        # overriding the correct structural "category" classification.
         if result["confidence"] == "high":
-            # Still populate word_count etc for downstream consumers that
-            # read these off the result dict.
-            pass
+            return result
 
         schema_types = [str(s).lower() for s in page_data.get("schema_types", [])]
         h1 = (page_data.get("h1") or "").lower()
@@ -559,13 +560,13 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
         result["images_total"] = img_stats["images_total"]
         result["images_without_alt"] = img_stats["images_without_alt"]
 
-        # Page type
-        classification = classify_page_type(url, {
-            "schema_types": result["schema_types"],
-            "body_text": result["full_body_text"],
-            "h2s": result["h2s"],
-            "internal_links": result["internal_link_count"],
-        })
+        # Page type — pass the FULL result dict so classify_page_type
+        # can use structural_signals (from extract_editorial_content),
+        # template_type, body_classes, etc. for authoritative classification.
+        # Previously a minimal 4-field dict was passed, which missed all
+        # structural signals and fell back to heuristics (wrong for
+        # flat-URL category pages like /sexleksaker-for-man).
+        classification = classify_page_type(url, result)
         result["page_type"] = classification["page_type"]
 
     except Exception as e:
