@@ -1920,10 +1920,10 @@ def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str
     lines.append(f"Topics this page covers: {', '.join(topic_names)}")
 
     # Is this a pillar?
+    from utils.url_helpers import url_path as _url_path_fc, path_is_descendant as _pid_fc
     child_pages = []
     for other_url in page_topics.keys():
-        other_path = _url_path(other_url).lower()
-        if other_path != page_path and other_path.startswith(page_path + "/"):
+        if _pid_fc(other_url, url):
             child_pages.append(other_url)
 
     if child_pages:

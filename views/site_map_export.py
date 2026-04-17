@@ -10,6 +10,11 @@ import io
 from urllib.parse import urlparse
 from config import get_anthropic_key, has_anthropic_key
 from utils.ui_helpers import stable_hash
+from utils.url_helpers import (
+    url_path as _upath_sm,
+    url_segments as _usegs_sm,
+    url_last_segment as _ulast_sm,
+)
 
 
 def _norm_url(url):
