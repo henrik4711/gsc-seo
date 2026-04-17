@@ -5,21 +5,20 @@ Identifies keywords where multiple pages compete for the same query.
 
 import pandas as pd
 import numpy as np
-
+from utils.url_helpers import (
+    url_path as _url_path,
+    url_segments as _url_segments,
+    is_sale_url as _is_sale,
+    normalize_url as _nu,
+    path_is_descendant,
+)
 
 
 def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
     """Classify cannibalization using REAL page_type from audit_results,
     topic cluster membership, and sf_link_map structural signals."""
     import streamlit as _st
-    from utils.url_helpers import (
-        url_path as _path_of,
-        url_path as _url_path,
-        url_segments as _url_segments,
-        is_sale_url as _is_sale,
-        normalize_url as _nu,
-        path_is_descendant,
-    )
+    _path_of = _url_path  # alias for readability in this function
 
     audit_results = _st.session_state.get("audit_results", [])
     type_lookup = {}
