@@ -522,6 +522,12 @@ def _scrape_with_requests(url: str, timeout: int = 30, result: dict = None) -> d
             result["error"] = f"Response too short ({len(html)} bytes)"
             return result
         result["success"] = True
+        # Cache raw HTML to disk so we can re-parse later without re-fetching
+        try:
+            from utils.html_cache import save_html
+            save_html(url, html)
+        except Exception:
+            pass
         # Delegate ALL parsing to shared _parse_html — same logic as
         # the Playwright path: title, meta, editorial containers,
         # editorial images, structural signals, container candidates.

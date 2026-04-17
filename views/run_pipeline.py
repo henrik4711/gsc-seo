@@ -1194,15 +1194,69 @@ def render():
             )
             st.rerun()
 
+        # ── Re-parse cached HTML (no network) ────────────────
+        from utils.html_cache import cache_stats, parse_from_cache, clear_cache
+        stats = cache_stats()
+        st.markdown(
+            f"<div style='background:#0d0d15; border:1px solid #5bb4d4; border-radius:6px; "
+            f"padding:0.8rem; margin-top:1rem;'>"
+            f"<strong style='color:#5bb4d4;'>🔄 Re-parse cached HTML (no re-scrape needed)</strong><br>"
+            f"<span style='color:#9b9bb8; font-size:0.85rem;'>"
+            f"Cached HTML: <strong>{stats['count']} pages</strong> · {stats['size_mb']} MB on disk.<br>"
+            f"Re-runs the full parser + classifier on already-fetched HTML. "
+            f"Use after fixing parser/classifier bugs — takes ~2 min instead of 18.</span></div>",
+            unsafe_allow_html=True,
+        )
+        rpc1, rpc2 = st.columns(2)
+        with rpc1:
+            if st.button("🔄 Re-parse ALL cached HTML", key="rp_reparse_cached", type="primary", use_container_width=True):
+                if stats["count"] == 0:
+                    st.warning("No cached HTML found. Run a scrape first.")
+                else:
+                    from utils.ui_helpers import normalize_url as _nurl_rp
+                    from utils.diagnostics import log_run
+                    audit = st.session_state.get("audit_results", []) or []
+                    urls_to_reparse = [r.get("url", "") for r in audit if r.get("url")]
+                    progress = st.progress(0)
+                    status_txt = st.empty()
+                    reparsed = 0
+                    with log_run("Re-parse cached HTML") as run_ctx:
+                        run_ctx.input("urls", len(urls_to_reparse))
+                        run_ctx.input("cached_pages", stats["count"])
+                        for i, url in enumerate(urls_to_reparse):
+                            parsed = parse_from_cache(url)
+                            if parsed:
+                                # Update the audit entry in-place
+                                norm = _nurl_rp(url)
+                                for j, r in enumerate(audit):
+                                    if _nurl_rp(r.get("url", "")) == norm:
+                                        parsed["url"] = url
+                                        audit[j] = parsed
+                                        reparsed += 1
+                                        break
+                            if (i + 1) % 50 == 0:
+                                progress.progress((i + 1) / len(urls_to_reparse))
+                                status_txt.text(f"Re-parsed {i+1}/{len(urls_to_reparse)}...")
+                        run_ctx.output("reparsed", reparsed)
+                    st.session_state["audit_results"] = audit
+                    save_key("audit_results")
+                    progress.progress(1.0)
+                    st.success(f"Re-parsed {reparsed}/{len(urls_to_reparse)} pages from cached HTML")
+                    st.rerun()
+        with rpc2:
+            if st.button("🗑 Clear HTML cache", key="rp_clear_html_cache", use_container_width=True):
+                n = clear_cache()
+                st.success(f"Cleared {n} cached HTML files")
+
         st.markdown(
             "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; "
             "padding:0.8rem; margin-top:1rem;'>"
-            "<strong style='color:#c8b4ff;'>🔄 Re-scrape audit data</strong><br>"
+            "<strong style='color:#c8b4ff;'>🌐 Re-scrape from network</strong><br>"
             "<span style='color:#9b9bb8; font-size:0.85rem;'>"
-            "Audit data is the input to most other steps. If scraper logic has changed "
-            "(image extraction, container parsing) you need a fresh scrape.</span><br>"
-            "<a href='#' style='color:#5bb4d4;'>→ Go to <strong>6. Page Auditor</strong> "
-            "in left menu and click the lilla \"Re-scrape ALL pages (force)\" button.</a></div>",
+            "Only needed when the SITE's content has changed (new pages, updated text). "
+            "If you just fixed parser/classifier bugs, use Re-parse above instead.</span><br>"
+            "<span style='color:#5bb4d4;'>→ Go to <strong>6. Page Auditor</strong> "
+            "in left menu and click \"Re-scrape ALL pages (force)\".</span></div>",
             unsafe_allow_html=True,
         )
 

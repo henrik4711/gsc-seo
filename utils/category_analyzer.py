@@ -347,6 +347,12 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
         resp = requests.get(url, headers=HEADERS, timeout=timeout)
         resp.raise_for_status()
         html = resp.text
+        # Cache raw HTML so we can re-parse later without re-fetching
+        try:
+            from utils.html_cache import save_html
+            save_html(url, html)
+        except Exception:
+            pass
         soup = BeautifulSoup(html, "html.parser")
         result["success"] = True
         domain = urlparse(url).netloc
