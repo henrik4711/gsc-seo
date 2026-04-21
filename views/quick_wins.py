@@ -5,7 +5,7 @@ For users who want fast wins without navigating multiple menus.
 
 import streamlit as st
 from config import get_anthropic_key, has_anthropic_key
-from utils.ui_helpers import stable_hash, normalize_url, shorten_url
+from utils.ui_helpers import stable_hash, normalize_url, shorten_url, extract_content_summary
 
 
 def _get_top_pages(audit_results, top_n=20):
@@ -612,15 +612,17 @@ def _export_page_as_markdown(page, plan_data, text_data, intro_data):
             md.append("")
 
     # Bottom text
-    if text_data and text_data.get("html"):
+    if text_data and (text_data.get("bottom_html") or text_data.get("html")):
         md.append("## NEW BOTTOM TEXT (below product grid)")
-        md.append(f"- Word count: {text_data.get('word_count', 0)}")
-        md.append(f"- Keywords: {', '.join(text_data.get('keywords_integrated', []))}")
-        md.append(f"- Internal links: {len(text_data.get('internal_links_added', []))}")
-        md.append(f"- Products: {len(text_data.get('products_featured', []))}")
+        wc = text_data.get("bottom_word_count") or text_data.get("word_count", 0)
+        md.append(f"- Word count: {wc}")
+        ex_kws, ex_links, ex_prods = extract_content_summary(text_data)
+        md.append(f"- Keywords: {', '.join(ex_kws)}")
+        md.append(f"- Internal links: {len(ex_links)}")
+        md.append(f"- Products: {len(ex_prods)}")
         md.append("")
         md.append("```html")
-        md.append(text_data.get("html", ""))
+        md.append(text_data.get("bottom_html") or text_data.get("html", ""))
         md.append("```")
         md.append("")
 
@@ -1031,9 +1033,7 @@ def render():
                 st.warning("⚠ Text generated with old rules. Click **Regenerate** below for improved text with FAQ schema, product images, hierarchy links, and no prices.")
             html = text_data.get("bottom_html") or text_data.get("html", "")
             wc = text_data.get("bottom_word_count") or text_data.get("word_count", 0)
-            kws = text_data.get("keywords_integrated", [])
-            links = text_data.get("internal_links_added", [])
-            prods = text_data.get("products_featured", [])
+            kws, links, prods = extract_content_summary(text_data)
             st.markdown(f"**New bottom text:** {wc} words · **Keywords:** {len(kws)} · **Internal links:** {len(links)} · **Products:** {len(prods)}")
             with st.expander("View HTML preview", expanded=False):
                 st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")

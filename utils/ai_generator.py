@@ -1793,6 +1793,8 @@ ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
     }},
     "target_keyword": "{query}",
     "internal_links": [{{"anchor": "text", "url": "/path"}}],
+    "keywords_integrated": ["list of target/GSC keywords you actually integrated naturally in top_html or bottom_html"],
+    "products_featured": ["list of product names you mentioned or featured in the body"],
     "issues_fixed": ["which issues from the list above were fixed"]
 }}"""
 

@@ -8,7 +8,7 @@ import streamlit as st
 import json
 import pandas as pd
 from config import get_anthropic_key, has_anthropic_key
-from utils.ui_helpers import shorten_url, stable_hash, normalize_url as _nu_ap
+from utils.ui_helpers import shorten_url, stable_hash, normalize_url as _nu_ap, extract_content_summary
 from utils.ai_generator import _clean_body_text
 
 
@@ -780,10 +780,8 @@ def render():
 
                     if bottom_key in st.session_state:
                         bt = st.session_state[bottom_key]
-                        wc = bt.get("word_count", 0)
-                        kws = bt.get("keywords_integrated", [])
-                        links = bt.get("internal_links_added", [])
-                        prods = bt.get("products_featured", [])
+                        wc = bt.get("bottom_word_count") or bt.get("word_count", 0)
+                        kws, links, prods = extract_content_summary(bt)
 
                         # Summary of what changed
                         st.markdown(
@@ -817,18 +815,19 @@ def render():
                             st.markdown(f"<div style='font-size:0.8rem; color:#c8b4ff; padding:1px 0;'>+ {c}</div>", unsafe_allow_html=True)
 
                         # Preview
+                        bt_html = bt.get("bottom_html") or bt.get("html", "")
                         st.markdown("---")
                         st.markdown("**New text preview:**")
-                        st.markdown(bt.get("html", ""), unsafe_allow_html=True)
+                        st.markdown(bt_html, unsafe_allow_html=True)
 
                         # Copy HTML
                         st.markdown("---")
                         st.markdown("**Copy HTML source:**")
-                        st.code(bt.get("html", ""), language="html")
+                        st.code(bt_html, language="html")
 
                         st.download_button(
                             "Download HTML",
-                            bt.get("html", "").encode("utf-8"),
+                            bt_html.encode("utf-8"),
                             f"bottom_text_{url_hash}.html",
                             "text/html",
                             key=f"dl_bottom_{url_hash}",
@@ -836,8 +835,7 @@ def render():
 
                         # ── Push to Magento (preview → confirm) ──
                         from utils.footer_push_ui import render_footer_push_block
-                        bottom_html_for_push = bt.get("bottom_html") or bt.get("html", "")
-                        render_footer_push_block(url, bottom_html_for_push, key_prefix=f"ap_push_{url_hash}")
+                        render_footer_push_block(url, bt_html, key_prefix=f"ap_push_{url_hash}")
 
                         if kws:
                             with st.expander(f"Keywords integrated ({len(kws)})"):

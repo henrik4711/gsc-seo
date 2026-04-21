@@ -119,3 +119,33 @@ def show_next_step():
 def show_missing_step(step_name: str, description: str):
     """Show a warning that a previous step needs to be completed first."""
     st.warning(f"Go to **{step_name}** first: {description}")
+
+
+def extract_content_summary(text_data: dict) -> tuple[list, list, list]:
+    """
+    Pull (keywords, internal_links, products) from a generated-content payload.
+
+    Handles both shapes the AI can produce:
+      - new generate_page_content: internal_links is [{anchor, url}, ...]
+      - older generators: internal_links_added is ["url", "url", ...]
+    Returns three flat lists. Always safe to call .len() on the results.
+    """
+    if not isinstance(text_data, dict):
+        return [], [], []
+
+    keywords = list(text_data.get("keywords_integrated") or [])
+
+    raw_links = text_data.get("internal_links_added")
+    if not raw_links:
+        raw_links = text_data.get("internal_links") or []
+    links: list = []
+    for item in raw_links:
+        if isinstance(item, dict):
+            url = item.get("url") or item.get("href") or ""
+            if url:
+                links.append(url)
+        elif isinstance(item, str) and item:
+            links.append(item)
+
+    products = list(text_data.get("products_featured") or [])
+    return keywords, links, products
