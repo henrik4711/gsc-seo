@@ -19,8 +19,48 @@ def build_page_profile(url: str) -> dict:
     Aggregate every data source in session_state for a single URL.
     Returns a dict with all known information about the page.
     Every field has a sensible default so callers never need to check for None.
+
+    Result is memoised in session_state with a version token derived from
+    the size/identity of the underlying datasets — so repeated calls within
+    the same render (and across most reruns) return instantly. The cache
+    invalidates automatically when audit / GSC / cluster data changes.
     """
     norm = normalize_url(url)
+    h = stable_hash(norm)
+
+    # Cheap version token — changes if any input dataset is reloaded OR
+    # if a per-URL AI artifact (quality, plan, intro/bottom text) is updated.
+    audit = st.session_state.get("audit_results", []) or []
+    gsc_df = st.session_state.get("gsc_data")
+    clusters = st.session_state.get("topic_clusters", {}) or {}
+    auth_df = st.session_state.get("page_authority")
+    sf_link_map = st.session_state.get("sf_link_map", {}) or {}
+
+    version_token = (
+        len(audit),
+        id(gsc_df),
+        len(clusters.get("clusters", []) or []),
+        id(auth_df),
+        sf_link_map.get("unique_pairs", 0),
+        id(st.session_state.get(f"_quality_{h}")),
+        id(st.session_state.get(f"_ai_plan_{h}")),
+        id(st.session_state.get(f"_intro_text_{h}")),
+        id(st.session_state.get(f"_bottom_text_{h}")),
+        id(st.session_state.get("_ideal_structure")),
+    )
+
+    cache_key = f"_pp_cache_{h}"
+    cached = st.session_state.get(cache_key)
+    if cached and cached.get("v") == version_token:
+        return cached["p"]
+
+    profile = _build_page_profile_uncached(norm)
+    st.session_state[cache_key] = {"v": version_token, "p": profile}
+    return profile
+
+
+def _build_page_profile_uncached(norm: str) -> dict:
+    """The original aggregator — split out so build_page_profile can memoise."""
     url_path = _url_path_fn(norm)
     url_hash = stable_hash(norm)
 
