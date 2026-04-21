@@ -4,12 +4,11 @@ Used by views/quick_wins.py and views/action_plan.py.
 
 UX:
 - @st.fragment scopes reruns to just this block — no full-page reload.
-- @st.dialog opens the preview as a true modal so the underlying page
-  state is preserved and the user doesn't have to scroll back to where
-  they were.
-- After a successful push the content_hash is stored in session_state;
-  on the next render the locked-state banner shows. Regenerating bottom
-  text changes the hash → automatically unlocks the push button again.
+- @st.dialog opens the preview as a true modal.
+- After Confirm, the dialog stays open and shows the raw Magento response
+  (HTTP code + body) so the user can verify the push actually took effect.
+- Successful push caches content_hash so the parent fragment shows the
+  "PUSHED" banner; regenerating bottom text invalidates that automatically.
 """
 
 import os
@@ -25,6 +24,7 @@ from utils.footer_text_api import (
     build_payload,
     push_footer_text,
     last_successful_push,
+    read_push_log,
 )
 
 
@@ -38,6 +38,12 @@ def _store_id() -> int:
         return int(raw) if raw else 0
     except ValueError:
         return 0
+
+
+def _section_counts(payload: dict) -> tuple[int, int]:
+    texts = payload.get("texts", []) or []
+    faq = sum(1 for t in texts if t.get("tagAsFaq"))
+    return len(texts) - faq, faq
 
 
 @st.fragment
@@ -55,15 +61,23 @@ def render_footer_push_block(url: str, bottom_html: str, key_prefix: str) -> Non
 
     last = last_successful_push(url)
     if last:
+        reg, faq = _section_counts(last.get("payload", {}))
         st.markdown(
             f"<div style='background:#0d1a0d; border:1px solid #33dd88; border-radius:6px; "
             f"padding:0.5rem 0.7rem; margin:0.5rem 0; font-size:0.75rem;'>"
             f"<strong style='color:#33dd88;'>Last successful push:</strong> "
             f"<span style='color:#c8b4ff;'>{last.get('timestamp','')} · "
-            f"{last.get('section_count', 0)} sections to store {last.get('store_id')}</span>"
+            f"HTTP {last.get('http_code')} · {reg} regular + {faq} FAQ sections · "
+            f"store {last.get('store_id')}</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
+        with st.expander("Show last Magento response", expanded=False):
+            st.markdown(f"**HTTP {last.get('http_code')}** · `{last.get('timestamp','')}`")
+            body = last.get("response_body") or "(empty body)"
+            st.code(body, language="json")
+            st.markdown("**Payload that was sent:**")
+            st.code(json.dumps(last.get("payload", {}), ensure_ascii=False, indent=2), language="json")
 
     # Locked state — current content was pushed already
     if st.session_state.get(pushed_hash_key) == content_hash:
@@ -104,8 +118,18 @@ def render_footer_push_block(url: str, bottom_html: str, key_prefix: str) -> Non
 
 @st.dialog("Preview — push to Magento", width="large")
 def _push_preview_dialog(url: str, bottom_html: str, key_prefix: str, content_hash: str) -> None:
+    result_key = f"{key_prefix}_dlg_result"
+
+    # If Confirm already ran, we're now in the "show response" view
+    result = st.session_state.get(result_key)
+    if result:
+        _render_push_result(result, key_prefix)
+        return
+
+    # Preview view
     payload = build_payload(url, bottom_html, _store_id())
-    sec_count = len(payload.get("texts", []))
+    reg_count, faq_count = _section_counts(payload)
+    sec_count = reg_count + faq_count
 
     if sec_count == 0:
         st.error("Payload builder produced 0 sections — generated HTML cannot be parsed.")
@@ -118,7 +142,7 @@ def _push_preview_dialog(url: str, bottom_html: str, key_prefix: str, content_ha
         f"<strong>URL:</strong> <code>{payload['url']}</code><br>"
         f"<strong>storeId:</strong> {payload['storeId']} · "
         f"<strong>Replace existing:</strong> {payload['disableExistingTexts']} · "
-        f"<strong>Sections:</strong> {sec_count}"
+        f"<strong>Sections:</strong> {reg_count} regular + {faq_count} FAQ"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -155,23 +179,70 @@ def _push_preview_dialog(url: str, bottom_html: str, key_prefix: str, content_ha
         ):
             with st.spinner("Pushing to Magento…"):
                 result = push_footer_text(url, bottom_html)
+            st.session_state[result_key] = result
             if result.get("status") == "success":
                 st.session_state[f"{key_prefix}_pushed_hash"] = content_hash
                 st.session_state[f"{key_prefix}_pushed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 st.session_state.pop(f"{key_prefix}_last_error", None)
-                st.rerun()  # closes dialog + refreshes the locked-state banner
-            else:
-                status = result.get("status", "error")
-                err_msg = result.get("error") or "Unknown error"
-                http_code = result.get("http_code")
-                body = (result.get("response_body") or "")[:2000]
-                msg = f"Push failed ({status}): {err_msg}"
-                if http_code:
-                    msg += f" · HTTP {http_code}"
-                if body:
-                    msg += f"\n\nResponse body:\n{body}"
-                st.session_state[f"{key_prefix}_last_error"] = msg
-                st.error(msg)
+            st.rerun()  # re-renders dialog in result view
     with col_cancel:
         if st.button("Cancel", key=f"{key_prefix}_dlg_cancel", use_container_width=True):
             st.rerun()  # closes dialog
+
+
+def _render_push_result(result: dict, key_prefix: str) -> None:
+    """Inside the dialog, show the raw Magento response after Confirm."""
+    status = result.get("status", "error")
+    http_code = result.get("http_code")
+    body = result.get("response_body") or ""
+    payload = result.get("payload", {}) or {}
+
+    if status == "success":
+        st.success(f"Push succeeded — HTTP {http_code}")
+    else:
+        st.error(f"Push failed — {status} · HTTP {http_code or 'n/a'}")
+        if result.get("error"):
+            st.markdown(f"**Error:** `{result['error']}`")
+
+    st.markdown("##### Raw response from Magento")
+    if body.strip():
+        # Show as JSON if it parses, else as plain text
+        try:
+            parsed = json.loads(body)
+            st.code(json.dumps(parsed, ensure_ascii=False, indent=2), language="json")
+        except Exception:
+            st.code(body, language="text")
+    else:
+        st.info("Response body was empty.")
+
+    reg, faq = _section_counts(payload)
+    st.markdown(
+        f"<div style='font-size:0.75rem; color:#9b9bb8; margin-top:0.5rem;'>"
+        f"Sent {reg} regular + {faq} FAQ sections · "
+        f"<code>disableExistingTexts={payload.get('disableExistingTexts')}</code> · "
+        f"storeId={payload.get('storeId')}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("Show full payload that was sent", expanded=False):
+        st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
+
+    col_close, col_back = st.columns([2, 1])
+    with col_close:
+        if st.button(
+            "Close",
+            key=f"{key_prefix}_dlg_result_close",
+            type="primary",
+            use_container_width=True,
+        ):
+            st.session_state.pop(f"{key_prefix}_dlg_result", None)
+            st.rerun()
+    with col_back:
+        if st.button(
+            "Back to preview",
+            key=f"{key_prefix}_dlg_result_back",
+            use_container_width=True,
+        ):
+            st.session_state.pop(f"{key_prefix}_dlg_result", None)
+            st.rerun()
