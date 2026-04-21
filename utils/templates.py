@@ -54,6 +54,7 @@ BLOG_TEMPLATE_INSTRUCTIONS = """
 ### Internal Links:
 - Link category and product names to their actual pages
 - Use the EXACT URLs provided in the site URL list — do NOT invent URLs
+- Absolute URLs in href must include the https://www. prefix exactly as listed
 - Link relevant terms naturally in body text (2-5 internal links per 500 words)
 - Every link must have descriptive anchor text matching the target page's topic
 
@@ -134,6 +135,7 @@ It is the most important text for Google on category pages.
 - ALL subcategory pages must be linked with descriptive anchor text
 - ALL sibling category pages should be cross-linked where relevant
 - Use the EXACT URLs from the site URL list — do NOT invent URLs
+- Absolute URLs in href must include the https://www. prefix exactly as listed
 - Expert quotes in xmx--high-emphasis format
 - Product cards in xmx-carousel format with real product data
 

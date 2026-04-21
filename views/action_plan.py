@@ -834,6 +834,11 @@ def render():
                             key=f"dl_bottom_{url_hash}",
                         )
 
+                        # ── Push to Magento (preview → confirm) ──
+                        from utils.footer_push_ui import render_footer_push_block
+                        bottom_html_for_push = bt.get("bottom_html") or bt.get("html", "")
+                        render_footer_push_block(url, bottom_html_for_push, key_prefix=f"ap_push_{url_hash}")
+
                         if kws:
                             with st.expander(f"Keywords integrated ({len(kws)})"):
                                 st.markdown(", ".join(kws))

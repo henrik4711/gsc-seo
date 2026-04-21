@@ -1044,9 +1044,14 @@ def render():
                 mime="text/html",
                 key=f"dl_text_{url_hash}",
             )
+
+            # ── Push to Magento (preview → confirm) ──
+            from utils.footer_push_ui import render_footer_push_block
+            render_footer_push_block(url, html, key_prefix=f"qw_push_{url_hash}")
+
             st.markdown(
                 "<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.8rem; margin:0.5rem 0;'>"
-                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5533ff;'>HOW TO USE IN MAGENTO 1.9</div>"
+                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5533ff;'>MANUAL FALLBACK — IF PUSH IS NOT AVAILABLE</div>"
                 "<div style='font-size:0.85rem; color:#c8b4ff;'>"
                 "1) Download HTML  2) Magento Admin → Catalog → Categories → this category  "
                 "3) Paste into <strong>Description</strong> field (NOT 'Page Title' or 'Meta')  "

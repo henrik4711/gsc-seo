@@ -9,6 +9,15 @@ import anthropic
 import streamlit as st
 from typing import Optional
 
+from utils.footer_text_api import add_www_to_url
+
+
+def _www_urls(urls):
+    """Return urls transformed to https://www. form, preserving input order/filter."""
+    if not urls:
+        return urls
+    return [add_www_to_url(u) for u in urls if u]
+
 
 # ── Anti-hallucination rules injected into all prompts that assess page state ──
 # These prevent AI from contradicting the data it is given.
@@ -1160,7 +1169,7 @@ def evaluate_cluster_health(
     # Include actual site URLs so AI can reference real pages
     url_list = ""
     if all_site_urls:
-        url_list = f"\n\n## ALL PAGES ON THIS SITE (use these exact URLs in your recommendations)\n{chr(10).join(all_site_urls[:200])}"
+        url_list = f"\n\n## ALL PAGES ON THIS SITE (use these exact URLs in your recommendations)\n{chr(10).join(_www_urls(all_site_urls[:200]))}"
 
     prompt = f"""You are a senior SEO architect specializing in topic cluster strategy (Google 2026 best practices).
 
@@ -1310,7 +1319,7 @@ Feature 3-5 of these products naturally in the article using the product card HT
 
     url_section = ""
     if all_site_urls:
-        url_section = f"\n\n## ALL SITE URLs (use these for internal links — do NOT invent URLs)\n{chr(10).join(all_site_urls[:150])}"
+        url_section = f"\n\n## ALL SITE URLs (use these for internal links — do NOT invent URLs)\n{chr(10).join(_www_urls(all_site_urls[:150]))}"
 
     prompt = f"""You are a senior content writer for an e-commerce site.
 Write a complete, CMS-ready article following the EXACT HTML format specified below.
@@ -1832,15 +1841,15 @@ def generate_category_bottom_text(
 
     subcats = ""
     if subcategory_urls:
-        subcats = "\n\n## SUBCATEGORY PAGES (MUST link to ALL of these)\n" + "\n".join(subcategory_urls[:20])
+        subcats = "\n\n## SUBCATEGORY PAGES (MUST link to ALL of these)\n" + "\n".join(_www_urls(subcategory_urls[:20]))
 
     siblings = ""
     if sibling_urls:
-        siblings = "\n\n## SIBLING/RELATED CATEGORIES (cross-link to these)\n" + "\n".join(sibling_urls[:15])
+        siblings = "\n\n## SIBLING/RELATED CATEGORIES (cross-link to these)\n" + "\n".join(_www_urls(sibling_urls[:15]))
 
     url_list = ""
     if all_site_urls:
-        url_list = f"\n\n## ALL SITE URLs\n{chr(10).join(all_site_urls[:150])}"
+        url_list = f"\n\n## ALL SITE URLs\n{chr(10).join(_www_urls(all_site_urls[:150]))}"
 
     bottom_word_count = len(current_bottom_text.split()) if current_bottom_text else 0
     intro_word_count = len(current_intro_text.split()) if current_intro_text else 0
@@ -2179,7 +2188,7 @@ def generate_page_implementation_plan(
     # Include site URLs so AI uses real URLs in link recommendations
     url_list_section = ""
     if all_site_urls:
-        url_list_section = f"\n\n## ALL PAGES ON THIS SITE (use these exact URLs when recommending internal links)\n{chr(10).join(all_site_urls[:200])}"
+        url_list_section = f"\n\n## ALL PAGES ON THIS SITE (use these exact URLs when recommending internal links)\n{chr(10).join(_www_urls(all_site_urls[:200]))}"
 
     prompt = f"""You are a senior SEO strategist reviewing a single page. Based on ALL the data below, create a precise implementation plan with ONLY actions that are correct and relevant for THIS specific page.
 {ANTI_HALLUCINATION_RULES}
