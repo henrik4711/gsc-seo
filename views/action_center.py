@@ -116,22 +116,39 @@ def _action_card(page, idx):
 
         st.markdown("---")
 
-        # Action buttons row
-        bcol1, bcol2, bcol3 = st.columns(3)
-
+        # ── Row 1: plan + open in Implementation ──────────────
+        bcol1, bcol2 = st.columns(2)
         with bcol1:
             if st.button("Generate AI plan", key=f"plan_{url_hash}", use_container_width=True, type="primary" if not has_plan else "secondary"):
                 _generate_plan(url, page["audit"])
                 st.rerun()
-
         with bcol2:
-            if st.button("Generate page text", key=f"text_{url_hash}", use_container_width=True):
-                _generate_page_text(url, page["audit"])
-                st.rerun()
-
-        with bcol3:
             if st.button("Open in Implementation", key=f"impl_{url_hash}", use_container_width=True):
                 st.session_state["selected_page"] = "14. Implementation"
+                st.rerun()
+
+        # ── Row 2: per-section generation (same as Quick Wins) ──
+        meta_key = f"_meta_suggestions_{url_hash}"
+        intro_key = f"_intro_text_{url_hash}"
+        has_meta_suggest = meta_key in st.session_state
+        has_intro = intro_key in st.session_state
+
+        gcol1, gcol2, gcol3 = st.columns(3)
+        with gcol1:
+            lbl_meta = "Regenerate meta title + description" if has_meta_suggest else "Generate meta title + description"
+            if st.button(lbl_meta, key=f"meta_{url_hash}", use_container_width=True):
+                _generate_meta(url, page["audit"])
+                st.rerun()
+        with gcol2:
+            lbl_intro = "Regenerate intro text" if has_intro else "Generate intro text (above product grid)"
+            if st.button(lbl_intro, key=f"intro_{url_hash}", use_container_width=True):
+                _generate_intro(url, page["audit"])
+                st.rerun()
+        with gcol3:
+            lbl_bottom = "Regenerate footer text" if has_text else "Generate footer text (with links + products + images)"
+            if st.button(lbl_bottom, key=f"text_{url_hash}", use_container_width=True,
+                         type="primary" if not has_text else "secondary"):
+                _generate_page_text(url, page["audit"])
                 st.rerun()
 
         # Show plan if available
@@ -173,25 +190,85 @@ def _action_card(page, idx):
                     for nc in new_content[:3]:
                         st.markdown(f"- *{nc.get('suggested_title', '')}* — {nc.get('why', '')[:120]}")
 
-        # Show generated text if available
+        # ── Show meta suggestions if available ─────────────────
+        if has_meta_suggest:
+            meta_res = st.session_state[meta_key]
+            if isinstance(meta_res, dict) and not meta_res.get("error"):
+                variants = meta_res.get("variants", [])
+                if variants:
+                    st.markdown("**Meta title + description — pick a variant:**")
+                    current_title = page["audit"].get("title", "") or ""
+                    current_desc = page["audit"].get("meta_description", "") or ""
+                    st.caption(f"Current title ({len(current_title)} chars): {current_title}")
+                    st.caption(f"Current desc ({len(current_desc)} chars): {current_desc[:120]}")
+                    for vi, v in enumerate(variants[:3], 1):
+                        t = v.get("title", "")
+                        d = v.get("description", "")
+                        strategy = v.get("strategy", "")
+                        st.markdown(
+                            f"**Variant {vi}** · Title ({len(t)} chars) · Desc ({len(d)} chars)  \n"
+                            f"Title: `{t}`  \n"
+                            f"Description: `{d}`  \n"
+                            f"<span style='color:#9b9bb8; font-size:0.8rem;'>Strategy: {strategy}</span>",
+                            unsafe_allow_html=True,
+                        )
+                        st.code(f"Title: {t}\nDescription: {d}", language="text")
+            elif isinstance(meta_res, dict) and meta_res.get("error"):
+                st.error(f"Meta generation failed: {meta_res['error']}")
+
+        # ── Show intro text if available ───────────────────────
+        if has_intro:
+            intro_res = st.session_state[intro_key]
+            if isinstance(intro_res, dict) and not intro_res.get("error"):
+                new_intro = (
+                    intro_res.get("rewritten_intro")
+                    or intro_res.get("optimized_text")
+                    or intro_res.get("html", "")
+                    or intro_res.get("text", "")
+                )
+                if new_intro:
+                    st.markdown(f"**New intro text** ({len(new_intro.split())} words) — paste ABOVE product grid:")
+                    st.markdown(
+                        f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.8rem; border-radius:0 6px 6px 0;'>"
+                        f"<div style='color:#e8e8f0; line-height:1.6;'>{new_intro}</div></div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.code(new_intro, language="text")
+            elif isinstance(intro_res, dict) and intro_res.get("error"):
+                st.error(f"Intro generation failed: {intro_res['error']}")
+
+        # ── Show generated footer/bottom text if available ─────
         if has_text:
             bt = st.session_state[text_key]
-            # Check if text was generated with old rules (no top/bottom split, no FAQ schema)
             has_new_format = bt.get("top_html") or bt.get("bottom_html") or bt.get("faq_schema")
             if not has_new_format and bt.get("html"):
-                st.warning("⚠ Text generated with old rules — regenerate in **Site Cleanup → Merge tab** for improved text with FAQ schema, product images, correct links, and no prices.")
-            html = bt.get("html", "")
+                st.warning("⚠ Text generated with old rules — regenerate for FAQ schema, product images, and correct links.")
+            html = bt.get("bottom_html") or bt.get("html", "")
+            wc = bt.get("bottom_word_count") or bt.get("word_count", 0)
             if html:
-                st.markdown("**Generated text preview:**")
-                if st.toggle("Show HTML source", key=f"toggle_html_{url_hash}", value=False):
-                    st.code(html[:2000] + ("..." if len(html) > 2000 else ""), language="html")
+                from utils.ui_helpers import extract_content_summary, compute_lix, lix_badge
+                kws, links, prods = extract_content_summary(bt)
+                lix = compute_lix(html)
+                lix_color, lix_msg, _ = lix_badge(lix)
+                st.markdown(
+                    f"**Footer text ready** — {wc} words · {len(kws)} keywords · {len(links)} links · {len(prods)} products · "
+                    f"<span style='color:{lix_color};'>LIX {lix}</span>",
+                    unsafe_allow_html=True,
+                )
+                with st.expander("View preview", expanded=False):
+                    st.markdown(html, unsafe_allow_html=True)
+                with st.expander("View HTML source", expanded=False):
+                    st.code(html, language="html")
                 st.download_button(
                     "Download HTML",
-                    data=html,
+                    data=html.encode("utf-8"),
                     file_name=f"{short_url.replace('/', '_')}.html",
                     mime="text/html",
                     key=f"dl_{url_hash}",
                 )
+                # Push to Magento
+                from utils.footer_push_ui import render_footer_push_block
+                render_footer_push_block(url, html, key_prefix=f"ac_push_{url_hash}")
 
 
 def _generate_plan(url, audit_data):
@@ -236,19 +313,80 @@ def _generate_plan(url, audit_data):
 
 
 def _generate_page_text(url, audit_data):
-    """Generate complete page text using the unified generator."""
+    """Generate footer/bottom text using the shared generator (same as Quick Wins)."""
     if not has_anthropic_key():
         st.error("Anthropic API key missing")
         return
     try:
         from utils.ai_generator import generate_page_content
 
-        with st.spinner("AI generating page text..."):
+        with st.spinner("AI generating footer text with links + products + images..."):
             result = generate_page_content(url)
         st.session_state[f"_bottom_text_{stable_hash(url)}"] = result
         from utils.persistence import save_ai_cache
         save_ai_cache()
-        st.success("Text generated")
+        st.success("Footer text generated")
+    except Exception as e:
+        st.error(f"Error: {e}")
+
+
+def _generate_meta(url, audit_data):
+    """Generate meta title + description using the shared generator (same as Quick Wins)."""
+    if not has_anthropic_key():
+        st.error("Anthropic API key missing")
+        return
+    try:
+        from utils.ai_generator import get_client, generate_meta_suggestions
+        from utils.page_profile import build_page_profile
+
+        client = get_client(get_anthropic_key())
+        profile = build_page_profile(url)
+        target_kws = [q["query"] for q in profile.get("gsc_queries", [])[:5]]
+        site_context = st.session_state.get("site_context", "")
+        language = st.session_state.get("content_language", "Swedish")
+
+        with st.spinner("AI generating meta title + description..."):
+            result = generate_meta_suggestions(client, audit_data, target_kws, site_context, language)
+        st.session_state[f"_meta_suggestions_{stable_hash(url)}"] = result
+        from utils.persistence import save_ai_cache
+        save_ai_cache()
+        st.success("Meta generated")
+    except Exception as e:
+        st.error(f"Error: {e}")
+
+
+def _generate_intro(url, audit_data):
+    """Generate intro text (above product grid) using the shared generator (same as Quick Wins)."""
+    if not has_anthropic_key():
+        st.error("Anthropic API key missing")
+        return
+    try:
+        from utils.ai_generator import get_client, generate_intro_rewrite
+
+        client = get_client(get_anthropic_key())
+        site_context = st.session_state.get("site_context", "")
+        language = st.session_state.get("content_language", "Swedish")
+
+        # Pull missing keywords from content audit if available (same pattern as Quick Wins)
+        missing_kws = []
+        content_audit = audit_data.get("content_audit") or {}
+        kw_coverage = content_audit.get("keyword_coverage") or {}
+        missing_kws = (kw_coverage.get("missing", []) or [])[:8]
+
+        with st.spinner("AI generating intro text..."):
+            result = generate_intro_rewrite(
+                client,
+                missing_keywords=missing_kws,
+                existing_intro=audit_data.get("intro_text", "") or "",
+                page_type=audit_data.get("page_type", "category"),
+                url=url,
+                site_context=site_context,
+                language=language,
+            )
+        st.session_state[f"_intro_text_{stable_hash(url)}"] = result
+        from utils.persistence import save_ai_cache
+        save_ai_cache()
+        st.success("Intro generated")
     except Exception as e:
         st.error(f"Error: {e}")
 

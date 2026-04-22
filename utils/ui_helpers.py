@@ -121,6 +121,62 @@ def show_missing_step(step_name: str, description: str):
     st.warning(f"Go to **{step_name}** first: {description}")
 
 
+def compute_lix(text: str) -> int:
+    """
+    Compute Swedish/Danish LIX readability score for plain text.
+
+    LIX = (words / sentences) + (long_words * 100 / words)
+    where long_words have >6 characters.
+
+    Scale (Scandinavian norm):
+      <30 very easy · 30–40 easy (target) · 40–50 medium ·
+      50–60 difficult · >60 very difficult
+
+    Accepts HTML — tags are stripped before counting. Returns 0 when
+    there's nothing countable (no words or no sentence punctuation).
+    """
+    if not text:
+        return 0
+
+    # Strip HTML to plain text
+    if "<" in text and ">" in text:
+        try:
+            from bs4 import BeautifulSoup
+            text = BeautifulSoup(text, "html.parser").get_text(separator=" ")
+        except Exception:
+            pass
+
+    import re
+    # Count sentences — terminal punctuation .!?
+    sentences = len(re.findall(r"[.!?]+", text))
+    if sentences == 0:
+        return 0
+
+    words = re.findall(r"\b\w+\b", text, flags=re.UNICODE)
+    if not words:
+        return 0
+
+    long_words = sum(1 for w in words if len(w) > 6)
+    lix = (len(words) / sentences) + (long_words * 100 / len(words))
+    return int(round(lix))
+
+
+def lix_badge(lix: int) -> tuple[str, str, str]:
+    """
+    Map a LIX score to (color_hex, label, severity) for UI display.
+    severity is one of: "good", "warn", "bad", "too_simple".
+    """
+    if lix == 0:
+        return "#6b6b8a", "n/a", "warn"
+    if lix < 25:
+        return "#ffaa33", f"LIX {lix} — very easy (may feel childish)", "too_simple"
+    if lix <= 40:
+        return "#33dd88", f"LIX {lix} — readable, ideal for e-commerce", "good"
+    if lix <= 50:
+        return "#ffaa33", f"LIX {lix} — medium difficulty", "warn"
+    return "#ff4455", f"LIX {lix} — too difficult, regenerate recommended", "bad"
+
+
 def extract_content_summary(text_data: dict) -> tuple[list, list, list]:
     """
     Pull (keywords, internal_links, products) from a generated-content payload.

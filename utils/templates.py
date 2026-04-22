@@ -139,6 +139,17 @@ It is the most important text for Google on category pages.
 - Expert quotes in xmx--high-emphasis format
 - Product cards in xmx-carousel format with real product data
 
+### READABILITY — Target LIX 35-40 (Scandinavian readability index):
+LIX = (words / sentences) + (long words × 100 / words), where long words have >6 characters.
+35-40 is the sweet spot for e-commerce: readable for a broad audience without sounding childish.
+To stay in range:
+- Short sentences (avg 12-18 words). Break up anything longer with a period.
+- Prefer common everyday words over compound/technical ones where possible
+  ("använda" instead of "implementera", "välja" instead of "selektera")
+- Split long compound words when natural — but keep proper Swedish/Danish compounds
+- Mix sentence lengths — not all short (LIX <25 reads as childish), not all long (LIX >45 reads as academic)
+- FAQ answers can be slightly shorter/simpler than body text — that's fine
+
 ### Tone of Voice:
 - Warm, knowledgeable — like a trusted expert friend
 - "du/dig" addressing, slightly playful but respectful

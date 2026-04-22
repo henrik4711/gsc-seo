@@ -457,7 +457,7 @@ def _validate_generated_content(page, text_data, plan_data):
             results["failed"] += 1
 
     audit = page["audit"]
-    html = text_data.get("html", "") if text_data else ""
+    html = (text_data.get("bottom_html") or text_data.get("html", "")) if text_data else ""
 
     # ── 1. Check all URLs in generated HTML exist on the site ──
     all_site_urls = set()
@@ -552,6 +552,24 @@ def _validate_generated_content(page, text_data, plan_data):
                 _check(False, f"{len(missing_kws)}/{len(target_keywords)} target keywords missing: {', '.join(missing_kws[:3])}", "warning")
             else:
                 _check(True, f"All {len(target_keywords)} target keywords present", "info")
+
+        # ── 8. LIX readability (target 35-40) ──
+        from utils.ui_helpers import compute_lix
+        lix = compute_lix(html)
+        if lix == 0:
+            pass  # no content to measure
+        elif 35 <= lix <= 40:
+            _check(True, f"LIX {lix} — ideal readability (target 35-40)", "info")
+        elif 30 <= lix < 35 or 40 < lix <= 45:
+            _check(True, f"LIX {lix} — acceptable (ideal is 35-40)", "info")
+        elif lix < 25:
+            _check(False, f"LIX {lix} — too easy, reads as childish (target 35-40)", "warning")
+        elif lix < 30:
+            _check(False, f"LIX {lix} — a bit too simple (target 35-40)", "warning")
+        elif lix <= 50:
+            _check(False, f"LIX {lix} — getting difficult, consider shorter sentences (target 35-40)", "warning")
+        else:
+            _check(False, f"LIX {lix} — too difficult, regenerate recommended (target 35-40)", "error")
 
     return results
 
@@ -1034,7 +1052,15 @@ def render():
             html = text_data.get("bottom_html") or text_data.get("html", "")
             wc = text_data.get("bottom_word_count") or text_data.get("word_count", 0)
             kws, links, prods = extract_content_summary(text_data)
-            st.markdown(f"**New bottom text:** {wc} words · **Keywords:** {len(kws)} · **Internal links:** {len(links)} · **Products:** {len(prods)}")
+            from utils.ui_helpers import compute_lix, lix_badge
+            lix = compute_lix(html)
+            lix_color, lix_msg, _ = lix_badge(lix)
+            st.markdown(
+                f"**New bottom text:** {wc} words · **Keywords:** {len(kws)} · "
+                f"**Internal links:** {len(links)} · **Products:** {len(prods)} · "
+                f"<span style='color:{lix_color};'>**LIX {lix}**</span>",
+                unsafe_allow_html=True,
+            )
             with st.expander("View HTML preview", expanded=False):
                 st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")
             st.download_button(
