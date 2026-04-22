@@ -734,8 +734,8 @@ def _approval_button(label, key):
 def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
     """
     Render the full per-page SEO action card.
-    Shared by Quick Wins (one page at a time, prev/next nav, on_skip callback)
-    and Action Center (list of pages, each in an expander, no on_skip).
+    Called by Quick Wins' per-page tab with prev/next navigation via the
+    on_skip callback.
     """
     url = page["url"]
     url_hash = stable_hash(url)
@@ -1474,12 +1474,161 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
 
 
 
+def _new_articles_section():
+    """Article suggestions from content_roadmap + per-page plans (moved from Action Center)."""
+    from utils.url_helpers import url_path as _url_path
+
+    roadmap = st.session_state.get("content_roadmap", {})
+    articles = roadmap.get("new_articles", []) if isinstance(roadmap, dict) else []
+
+    plan_articles = []
+    for key, val in st.session_state.items():
+        if key.startswith("_ai_plan_") and isinstance(val, dict):
+            for nc in val.get("new_content_suggestions", []):
+                if nc.get("suggested_title"):
+                    plan_articles.append(nc)
+
+    all_articles = articles + plan_articles
+    if not all_articles:
+        st.info("No new article suggestions yet. Generate plans for top pages to get suggestions.")
+        return
+
+    audit_results = st.session_state.get("audit_results", [])
+    existing_titles = set()
+    existing_url_paths = set()
+    for r in audit_results:
+        t = (r.get("title") or "").lower().strip()
+        if t:
+            existing_titles.add(t)
+        u = r.get("url", "")
+        if u:
+            existing_url_paths.add(_url_path(normalize_url(u)).lower())
+
+    st.markdown(f"### {len(all_articles)} New Articles to Write")
+    for i, art in enumerate(all_articles[:20]):
+        title = art.get("suggested_title") or art.get("title", "")
+        keywords = art.get("target_keywords", [])
+        why = art.get("why", "")
+
+        already_exists = title.lower().strip() in existing_titles
+        if not already_exists and keywords:
+            for kw in keywords[:3]:
+                kw_slug = kw.lower().replace(" ", "-")
+                for ep in existing_url_paths:
+                    if kw_slug in ep:
+                        already_exists = True
+                        break
+                if already_exists:
+                    break
+
+        expander_label = f"{i+1}. {title}" + (" — MAY ALREADY EXIST" if already_exists else "")
+        with st.expander(expander_label, expanded=False):
+            if already_exists:
+                st.warning("A page with a similar title or keyword already exists on the site. Check before creating.")
+            if keywords:
+                st.markdown(f"**Keywords:** {', '.join(keywords[:8])}")
+            if why:
+                st.markdown(f"**Why:** {why}")
+            link_from = art.get("link_from") or art.get("supporting_page", "")
+            if link_from:
+                st.markdown(f"**Link from:** `{link_from}`")
+            st.button("Generate full article", key=f"art_{i}_{stable_hash(title)}", help="Coming soon")
+
+
+def _technical_section():
+    """Technical SEO issues from crawl analysis (moved from Action Center)."""
+    issues = st.session_state.get("sf_crawl_issues", {})
+    if not issues:
+        st.info("No crawl issues data. Run **Analyze Crawl Issues** in Run Pipeline.")
+        return
+
+    counts = {k: len(v) for k, v in issues.items() if v}
+    if not counts:
+        st.success("No technical issues found")
+        return
+
+    st.markdown("### Technical Issues (Magento 1.9)")
+    cols = st.columns(4)
+    items = list(counts.items())[:4]
+    for i, (key, count) in enumerate(items):
+        cols[i].metric(key.replace("_", " ").title(), f"{count:,}")
+
+    if len(counts) > 4:
+        cols2 = st.columns(4)
+        for i, (key, count) in enumerate(list(counts.items())[4:8]):
+            cols2[i].metric(key.replace("_", " ").title(), f"{count:,}")
+
+    st.markdown("**Top issues to fix:**")
+    priority_order = ["broken_links", "near_duplicates", "canonical_issues", "orphan_pages", "faceted_urls"]
+    for key in priority_order:
+        if issues.get(key):
+            with st.expander(f"{key.replace('_', ' ').title()} ({len(issues[key])} items)", expanded=False):
+                for item in issues[key][:20]:
+                    url_i = item.get("url", "")
+                    action_i = item.get("action", "")
+                    st.markdown(f"- `{url_i}` — {action_i}")
+
+
+def _render_per_page_tab():
+    """The per-page work tab — one page at a time with prev/next nav."""
+    audit_results = st.session_state["audit_results"]
+    pages = _get_top_pages(audit_results, top_n=20)
+
+    excluded_count = st.session_state.get("_qw_excluded_count", 0)
+    if excluded_count > 0:
+        st.markdown(
+            f"<div style='font-size:0.8rem; color:#9b9bb8; margin-bottom:0.5rem;'>"
+            f"{excluded_count} page(s) excluded (scheduled for merge/delete in ideal structure)</div>",
+            unsafe_allow_html=True,
+        )
+
+    if not pages:
+        st.success("All top pages marked as done. Reset done status to start over.")
+        if st.button("Reset all done status"):
+            keys = [k for k in st.session_state if k.startswith("_qw_done_")]
+            for k in keys:
+                del st.session_state[k]
+            st.rerun()
+        return
+
+    if "_qw_page_idx" not in st.session_state:
+        st.session_state["_qw_page_idx"] = 0
+    idx = st.session_state["_qw_page_idx"]
+    if idx >= len(pages):
+        idx = 0
+        st.session_state["_qw_page_idx"] = 0
+
+    nav_col1, nav_col2, nav_col3 = st.columns([1, 6, 1])
+    with nav_col1:
+        if st.button("◀ Previous", disabled=idx == 0, use_container_width=True):
+            st.session_state["_qw_page_idx"] = max(0, idx - 1)
+            st.rerun()
+    with nav_col2:
+        st.markdown(
+            f"<div style='text-align:center; font-size:0.85rem; color:#9b9bb8;'>"
+            f"Page <strong>{idx+1}</strong> of <strong>{len(pages)}</strong> top opportunities</div>",
+            unsafe_allow_html=True,
+        )
+    with nav_col3:
+        if st.button("Next ▶", disabled=idx >= len(pages) - 1, use_container_width=True):
+            st.session_state["_qw_page_idx"] = min(len(pages) - 1, idx + 1)
+            st.rerun()
+
+    st.markdown("---")
+
+    page = pages[idx]
+
+    def _skip():
+        st.session_state["_qw_page_idx"] = min(len(pages) - 1, idx + 1)
+
+    render_page_actions_card(page, idx=idx, total_pages=len(pages), on_skip=_skip)
+
+
 def render():
     st.markdown("## ⚡ Quick Wins")
     st.markdown(
         "<p style='color:#6b6b8a; margin-bottom:1rem;'>"
-        "One page at a time. AI generates everything automatically. "
-        "You approve, edit, or reject. Fast workflow for high-impact changes.</p>",
+        "One page at a time plus full context — new articles, technical issues, and site health, all here.</p>",
         unsafe_allow_html=True,
     )
 
@@ -1487,7 +1636,7 @@ def render():
         st.warning("No audit data. Go to **⚡ Run Pipeline** and run all steps first.")
         return
 
-    # ── REQUIRED: Site validation before per-page work ───────
+    # ── Site validation card (above tabs — applies to all tabs) ─────
     site_validation = st.session_state.get("_site_validation")
     if not site_validation or not isinstance(site_validation, dict):
         st.error(
@@ -1501,7 +1650,6 @@ def render():
         st.warning("You can still continue below, but recommendations will be less accurate.")
         st.markdown("---")
     else:
-        # Show site health summary
         health_score = site_validation.get("overall_health_score", 0)
         summary = site_validation.get("summary", "")
         critical_issues = site_validation.get("critical_issues", [])
@@ -1528,57 +1676,18 @@ def render():
                         st.markdown(f"- {pa}")
             st.info("These site-wide issues should be addressed BEFORE or ALONGSIDE per-page work. Per-page recommendations below are informed by this context.")
 
-    audit_results = st.session_state["audit_results"]
-    pages = _get_top_pages(audit_results, top_n=20)
+    # ── Tabs: everything from former Action Center now lives here ───
+    tab_page, tab_articles, tab_tech = st.tabs([
+        "🎯 Per-page work",
+        "📝 New Articles",
+        "⚙ Technical Issues",
+    ])
 
-    excluded_count = st.session_state.get("_qw_excluded_count", 0)
-    if excluded_count > 0:
-        st.markdown(
-            f"<div style='font-size:0.8rem; color:#9b9bb8; margin-bottom:0.5rem;'>"
-            f"{excluded_count} page(s) excluded (scheduled for merge/delete in ideal structure)</div>",
-            unsafe_allow_html=True,
-        )
+    with tab_page:
+        _render_per_page_tab()
 
-    if not pages:
-        st.success("All top pages marked as done. Reset done status to start over.")
-        if st.button("Reset all done status"):
-            keys = [k for k in st.session_state if k.startswith("_qw_done_")]
-            for k in keys:
-                del st.session_state[k]
-            st.rerun()
-        return
+    with tab_articles:
+        _new_articles_section()
 
-    # Page index navigator
-    if "_qw_page_idx" not in st.session_state:
-        st.session_state["_qw_page_idx"] = 0
-    idx = st.session_state["_qw_page_idx"]
-    if idx >= len(pages):
-        idx = 0
-        st.session_state["_qw_page_idx"] = 0
-
-    # Navigation header
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 6, 1])
-    with nav_col1:
-        if st.button("◀ Previous", disabled=idx == 0, use_container_width=True):
-            st.session_state["_qw_page_idx"] = max(0, idx - 1)
-            st.rerun()
-    with nav_col2:
-        st.markdown(
-            f"<div style='text-align:center; font-size:0.85rem; color:#9b9bb8;'>"
-            f"Page <strong>{idx+1}</strong> of <strong>{len(pages)}</strong> top opportunities</div>",
-            unsafe_allow_html=True,
-        )
-    with nav_col3:
-        if st.button("Next ▶", disabled=idx >= len(pages) - 1, use_container_width=True):
-            st.session_state["_qw_page_idx"] = min(len(pages) - 1, idx + 1)
-            st.rerun()
-
-    st.markdown("---")
-
-    # Current page
-    page = pages[idx]
-
-    def _skip():
-        st.session_state["_qw_page_idx"] = min(len(pages) - 1, idx + 1)
-
-    render_page_actions_card(page, idx=idx, total_pages=len(pages), on_skip=_skip)
+    with tab_tech:
+        _technical_section()

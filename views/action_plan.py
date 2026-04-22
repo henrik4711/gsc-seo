@@ -395,7 +395,7 @@ def render():
                     if meta_changed:
                         st.code(f"Title: {meta_title}\nDescription: {meta_desc_plan}", language="text")
 
-                # ── (Re)generate meta via shared module (same as Quick Wins + Action Center) ──
+                # ── (Re)generate meta via shared module (same as Quick Wins) ──
                 meta_sugg_key = f"_meta_suggestions_{url_hash}"
                 has_meta_sugg = meta_sugg_key in st.session_state
                 btn_meta_label = "Regenerate meta variants" if has_meta_sugg else "Generate meta title + description variants"
