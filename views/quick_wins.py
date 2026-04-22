@@ -729,109 +729,14 @@ def _approval_button(label, key):
         st.markdown(f"<div style='font-size:0.75rem; color:{color}; font-weight:600;'>Status: {current.upper()}</div>", unsafe_allow_html=True)
 
 
-def render():
-    st.markdown("## ⚡ Quick Wins")
-    st.markdown(
-        "<p style='color:#6b6b8a; margin-bottom:1rem;'>"
-        "One page at a time. AI generates everything automatically. "
-        "You approve, edit, or reject. Fast workflow for high-impact changes.</p>",
-        unsafe_allow_html=True,
-    )
 
-    if "audit_results" not in st.session_state or not st.session_state["audit_results"]:
-        st.warning("No audit data. Go to **⚡ Run Pipeline** and run all steps first.")
-        return
 
-    # ── REQUIRED: Site validation before per-page work ───────
-    site_validation = st.session_state.get("_site_validation")
-    if not site_validation or not isinstance(site_validation, dict):
-        st.error(
-            "⚠ **Site structure validation NOT yet run.** "
-            "You should validate the OVERALL site structure before working on individual pages — "
-            "otherwise link recommendations and cleanup may be based on flawed assumptions."
-        )
-        if st.button("Go to Run Pipeline → Step 9: Site Validation", type="primary"):
-            st.session_state["selected_page"] = "⚡ Run Pipeline"
-            st.rerun()
-        st.warning("You can still continue below, but recommendations will be less accurate.")
-        st.markdown("---")
-    else:
-        # Show site health summary
-        health_score = site_validation.get("overall_health_score", 0)
-        summary = site_validation.get("summary", "")
-        critical_issues = site_validation.get("critical_issues", [])
-        priority_actions = site_validation.get("priority_actions", [])
-
-        score_color = "#33dd88" if health_score >= 70 else "#ffaa33" if health_score >= 40 else "#ff4455"
-
-        with st.expander(f"🏗 Site Architecture — Health {health_score}/100", expanded=(health_score < 50)):
-            st.markdown(
-                f"<div style='background:#0d0d15; border-left:4px solid {score_color}; padding:0.8rem; border-radius:0 6px 6px 0; margin-bottom:1rem;'>"
-                f"<div style='font-size:0.85rem; color:#c8b4ff;'>{summary}</div></div>",
-                unsafe_allow_html=True,
-            )
-            if critical_issues:
-                st.markdown("**Critical site-level issues:**")
-                for issue in critical_issues[:5]:
-                    st.markdown(f"- {issue}")
-            if priority_actions:
-                st.markdown("**Site-wide priority actions:**")
-                for pa in priority_actions[:5]:
-                    if isinstance(pa, dict):
-                        st.markdown(f"- **[{pa.get('impact', '?').upper()}]** {pa.get('action', '')} ({pa.get('pages_affected', 0)} pages affected)")
-                    else:
-                        st.markdown(f"- {pa}")
-            st.info("These site-wide issues should be addressed BEFORE or ALONGSIDE per-page work. Per-page recommendations below are informed by this context.")
-
-    audit_results = st.session_state["audit_results"]
-    pages = _get_top_pages(audit_results, top_n=20)
-
-    excluded_count = st.session_state.get("_qw_excluded_count", 0)
-    if excluded_count > 0:
-        st.markdown(
-            f"<div style='font-size:0.8rem; color:#9b9bb8; margin-bottom:0.5rem;'>"
-            f"{excluded_count} page(s) excluded (scheduled for merge/delete in ideal structure)</div>",
-            unsafe_allow_html=True,
-        )
-
-    if not pages:
-        st.success("All top pages marked as done. Reset done status to start over.")
-        if st.button("Reset all done status"):
-            keys = [k for k in st.session_state if k.startswith("_qw_done_")]
-            for k in keys:
-                del st.session_state[k]
-            st.rerun()
-        return
-
-    # Page index navigator
-    if "_qw_page_idx" not in st.session_state:
-        st.session_state["_qw_page_idx"] = 0
-    idx = st.session_state["_qw_page_idx"]
-    if idx >= len(pages):
-        idx = 0
-        st.session_state["_qw_page_idx"] = 0
-
-    # Navigation header
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 6, 1])
-    with nav_col1:
-        if st.button("◀ Previous", disabled=idx == 0, use_container_width=True):
-            st.session_state["_qw_page_idx"] = max(0, idx - 1)
-            st.rerun()
-    with nav_col2:
-        st.markdown(
-            f"<div style='text-align:center; font-size:0.85rem; color:#9b9bb8;'>"
-            f"Page <strong>{idx+1}</strong> of <strong>{len(pages)}</strong> top opportunities</div>",
-            unsafe_allow_html=True,
-        )
-    with nav_col3:
-        if st.button("Next ▶", disabled=idx >= len(pages) - 1, use_container_width=True):
-            st.session_state["_qw_page_idx"] = min(len(pages) - 1, idx + 1)
-            st.rerun()
-
-    st.markdown("---")
-
-    # Current page
-    page = pages[idx]
+def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
+    """
+    Render the full per-page SEO action card.
+    Shared by Quick Wins (one page at a time, prev/next nav, on_skip callback)
+    and Action Center (list of pages, each in an expander, no on_skip).
+    """
     url = page["url"]
     url_hash = stable_hash(url)
 
@@ -872,7 +777,7 @@ def render():
         f"<div style='background:#0d0d15; border:2px solid {border}; border-left:6px solid {border}; "
         f"border-radius:8px; padding:1rem; margin-bottom:1rem;'>"
         f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:{border}; margin-bottom:0.3rem;'>"
-        f"#{idx+1} · {page['page_type'].upper()}</div>"
+        f"{('#' + str(idx+1) + ' · ') if idx is not None else ''}{page['page_type'].upper()}</div>"
         f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600; word-break:break-all;'>{url}</div>"
         f"</div>",
         unsafe_allow_html=True,
@@ -1552,13 +1457,128 @@ def render():
 
         # Final actions
         st.markdown("### Done with this page?")
-        fcol1, fcol2 = st.columns(2)
-        with fcol1:
-            if st.button("⏭ Skip (don't mark done)", use_container_width=True, key=f"skip_{url_hash}"):
-                st.session_state["_qw_page_idx"] = min(len(pages) - 1, idx + 1)
-                st.rerun()
-        with fcol2:
-            if st.button("✓ Mark done & next page", type="primary", use_container_width=True, key=f"done_{url_hash}"):
+        if on_skip is not None:
+            fcol1, fcol2 = st.columns(2)
+            with fcol1:
+                if st.button("⏭ Skip (don't mark done)", use_container_width=True, key=f"skip_{url_hash}"):
+                    on_skip()
+                    st.rerun()
+            with fcol2:
+                if st.button("✓ Mark done & next page", type="primary", use_container_width=True, key=f"done_{url_hash}"):
+                    st.session_state[f"_qw_done_{url_hash}"] = True
+                    st.rerun()
+        else:
+            if st.button("✓ Mark as done (hides from list)", type="primary", use_container_width=True, key=f"done_{url_hash}"):
                 st.session_state[f"_qw_done_{url_hash}"] = True
-                # idx stays the same — list rebuilds without this page
                 st.rerun()
+
+
+
+def render():
+    st.markdown("## ⚡ Quick Wins")
+    st.markdown(
+        "<p style='color:#6b6b8a; margin-bottom:1rem;'>"
+        "One page at a time. AI generates everything automatically. "
+        "You approve, edit, or reject. Fast workflow for high-impact changes.</p>",
+        unsafe_allow_html=True,
+    )
+
+    if "audit_results" not in st.session_state or not st.session_state["audit_results"]:
+        st.warning("No audit data. Go to **⚡ Run Pipeline** and run all steps first.")
+        return
+
+    # ── REQUIRED: Site validation before per-page work ───────
+    site_validation = st.session_state.get("_site_validation")
+    if not site_validation or not isinstance(site_validation, dict):
+        st.error(
+            "⚠ **Site structure validation NOT yet run.** "
+            "You should validate the OVERALL site structure before working on individual pages — "
+            "otherwise link recommendations and cleanup may be based on flawed assumptions."
+        )
+        if st.button("Go to Run Pipeline → Step 9: Site Validation", type="primary"):
+            st.session_state["selected_page"] = "⚡ Run Pipeline"
+            st.rerun()
+        st.warning("You can still continue below, but recommendations will be less accurate.")
+        st.markdown("---")
+    else:
+        # Show site health summary
+        health_score = site_validation.get("overall_health_score", 0)
+        summary = site_validation.get("summary", "")
+        critical_issues = site_validation.get("critical_issues", [])
+        priority_actions = site_validation.get("priority_actions", [])
+
+        score_color = "#33dd88" if health_score >= 70 else "#ffaa33" if health_score >= 40 else "#ff4455"
+
+        with st.expander(f"🏗 Site Architecture — Health {health_score}/100", expanded=(health_score < 50)):
+            st.markdown(
+                f"<div style='background:#0d0d15; border-left:4px solid {score_color}; padding:0.8rem; border-radius:0 6px 6px 0; margin-bottom:1rem;'>"
+                f"<div style='font-size:0.85rem; color:#c8b4ff;'>{summary}</div></div>",
+                unsafe_allow_html=True,
+            )
+            if critical_issues:
+                st.markdown("**Critical site-level issues:**")
+                for issue in critical_issues[:5]:
+                    st.markdown(f"- {issue}")
+            if priority_actions:
+                st.markdown("**Site-wide priority actions:**")
+                for pa in priority_actions[:5]:
+                    if isinstance(pa, dict):
+                        st.markdown(f"- **[{pa.get('impact', '?').upper()}]** {pa.get('action', '')} ({pa.get('pages_affected', 0)} pages affected)")
+                    else:
+                        st.markdown(f"- {pa}")
+            st.info("These site-wide issues should be addressed BEFORE or ALONGSIDE per-page work. Per-page recommendations below are informed by this context.")
+
+    audit_results = st.session_state["audit_results"]
+    pages = _get_top_pages(audit_results, top_n=20)
+
+    excluded_count = st.session_state.get("_qw_excluded_count", 0)
+    if excluded_count > 0:
+        st.markdown(
+            f"<div style='font-size:0.8rem; color:#9b9bb8; margin-bottom:0.5rem;'>"
+            f"{excluded_count} page(s) excluded (scheduled for merge/delete in ideal structure)</div>",
+            unsafe_allow_html=True,
+        )
+
+    if not pages:
+        st.success("All top pages marked as done. Reset done status to start over.")
+        if st.button("Reset all done status"):
+            keys = [k for k in st.session_state if k.startswith("_qw_done_")]
+            for k in keys:
+                del st.session_state[k]
+            st.rerun()
+        return
+
+    # Page index navigator
+    if "_qw_page_idx" not in st.session_state:
+        st.session_state["_qw_page_idx"] = 0
+    idx = st.session_state["_qw_page_idx"]
+    if idx >= len(pages):
+        idx = 0
+        st.session_state["_qw_page_idx"] = 0
+
+    # Navigation header
+    nav_col1, nav_col2, nav_col3 = st.columns([1, 6, 1])
+    with nav_col1:
+        if st.button("◀ Previous", disabled=idx == 0, use_container_width=True):
+            st.session_state["_qw_page_idx"] = max(0, idx - 1)
+            st.rerun()
+    with nav_col2:
+        st.markdown(
+            f"<div style='text-align:center; font-size:0.85rem; color:#9b9bb8;'>"
+            f"Page <strong>{idx+1}</strong> of <strong>{len(pages)}</strong> top opportunities</div>",
+            unsafe_allow_html=True,
+        )
+    with nav_col3:
+        if st.button("Next ▶", disabled=idx >= len(pages) - 1, use_container_width=True):
+            st.session_state["_qw_page_idx"] = min(len(pages) - 1, idx + 1)
+            st.rerun()
+
+    st.markdown("---")
+
+    # Current page
+    page = pages[idx]
+
+    def _skip():
+        st.session_state["_qw_page_idx"] = min(len(pages) - 1, idx + 1)
+
+    render_page_actions_card(page, idx=idx, total_pages=len(pages), on_skip=_skip)

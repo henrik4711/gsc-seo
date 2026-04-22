@@ -46,14 +46,19 @@ def _get_page_actions(audit_results, top_n=100):
         verdict = quality.get("verdict") if isinstance(quality, dict) else None
 
         pages.append({
+            # Same shape as Quick Wins' _get_top_pages so render_page_actions_card works identically.
             "url": r["url"],
             "page_type": r.get("page_type", "unknown"),
             "impressions": impressions_by_url.get(norm, 0),
             "lost_clicks": ctr_gaps_by_url.get(norm, 0.0),
-            "meta_score": r.get("meta_score"),
-            "content_score": r.get("content_score"),
+            "meta_score": r.get("meta_score") or 0,
+            "content_score": r.get("content_score") or 0,
             "title": r.get("title", ""),
+            "meta_description": r.get("meta_description", ""),
+            "h1": r.get("h1", ""),
             "word_count": r.get("word_count", 0),
+            "intro_text": r.get("intro_text", ""),
+            "bottom_text": r.get("bottom_text", ""),
             "audit": r,
             "quality_verdict": verdict,
             "has_old_text": bool(st.session_state.get(f"_bottom_text_{url_hash}")),
@@ -67,208 +72,36 @@ def _get_page_actions(audit_results, top_n=100):
 
 
 def _action_card(page, idx):
-    """Render one action card with collapsed/expanded states."""
+    """Render one action card — delegates to Quick Wins' render_page_actions_card for 100% parity."""
     url = page["url"]
     url_hash = stable_hash(url)
     lost = page["lost_clicks"]
     impr = page["impressions"]
     ptype = page["page_type"].upper()
-    meta_s = page["meta_score"] or 0
-    content_s = page["content_score"] or 0
 
-    # Status badges
+    # Same done flag as Quick Wins — marking done here also hides the page in Quick Wins.
     plan_key = f"_ai_plan_{url_hash}"
     text_key = f"_bottom_text_{url_hash}"
     has_plan = plan_key in st.session_state
     has_text = text_key in st.session_state
-    is_done = st.session_state.get(f"_action_done_{url_hash}", False)
+    is_done = st.session_state.get(f"_qw_done_{url_hash}", False)
 
-    # Color border by impact
-    border = "#ff4455" if lost > 1000 else "#ffaa33" if lost > 200 else "#6b6b8a"
-
-    # Build status line
     badges = []
     if has_plan:
-        badges.append("<span style='color:#33dd88;'>Plan ready</span>")
+        badges.append("Plan ready")
     if has_text:
-        badges.append("<span style='color:#33dd88;'>Text ready</span>")
+        badges.append("Text ready")
     if is_done:
-        badges.append("<span style='color:#33dd88;'>DONE</span>")
-    badges_html = " · ".join(badges) if badges else "<span style='color:#6b6b8a;'>Not started</span>"
+        badges.append("DONE")
+    badges_html = " · ".join(badges) if badges else "Not started"
 
-    # Card header
     short_url = url.replace("https://", "").replace("http://", "")
-    expander_label = f"#{idx+1}  {short_url}  |  {ptype}  |  {lost:,} lost clicks"
+    expander_label = f"#{idx+1}  {short_url}  |  {ptype}  |  {lost:,} lost clicks  ·  {badges_html}"
 
     with st.expander(expander_label, expanded=False):
-        # Top metrics row
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Impressions", f"{impr:,}")
-        c2.metric("Lost clicks", f"{lost:,}")
-        c3.metric("Meta score", f"{meta_s}/100" if meta_s else "—")
-        c4.metric("Content score", f"{content_s}/100" if content_s else "—")
-
-        st.markdown(f"<div style='font-size:0.8rem; color:#9b9bb8; margin:0.5rem 0;'>{badges_html}</div>", unsafe_allow_html=True)
-
-        # Mark done toggle
-        if st.checkbox("Mark as done (hides from list)", value=is_done, key=f"done_{url_hash}"):
-            st.session_state[f"_action_done_{url_hash}"] = True
-
-        st.markdown("---")
-
-        # ── Row 1: plan + open in Implementation ──────────────
-        bcol1, bcol2 = st.columns(2)
-        with bcol1:
-            if st.button("Generate AI plan", key=f"plan_{url_hash}", use_container_width=True, type="primary" if not has_plan else "secondary"):
-                _generate_plan(url, page["audit"])
-                st.rerun()
-        with bcol2:
-            if st.button("Open in Implementation", key=f"impl_{url_hash}", use_container_width=True):
-                st.session_state["selected_page"] = "14. Implementation"
-                st.rerun()
-
-        # ── Row 2: per-section generation (same as Quick Wins) ──
-        meta_key = f"_meta_suggestions_{url_hash}"
-        intro_key = f"_intro_text_{url_hash}"
-        has_meta_suggest = meta_key in st.session_state
-        has_intro = intro_key in st.session_state
-
-        gcol1, gcol2, gcol3 = st.columns(3)
-        with gcol1:
-            lbl_meta = "Regenerate meta title + description" if has_meta_suggest else "Generate meta title + description"
-            if st.button(lbl_meta, key=f"meta_{url_hash}", use_container_width=True):
-                _generate_meta(url, page["audit"])
-                st.rerun()
-        with gcol2:
-            lbl_intro = "Regenerate intro text" if has_intro else "Generate intro text (above product grid)"
-            if st.button(lbl_intro, key=f"intro_{url_hash}", use_container_width=True):
-                _generate_intro(url, page["audit"])
-                st.rerun()
-        with gcol3:
-            lbl_bottom = "Regenerate footer text" if has_text else "Generate footer text (with links + products + images)"
-            if st.button(lbl_bottom, key=f"text_{url_hash}", use_container_width=True,
-                         type="primary" if not has_text else "secondary"):
-                _generate_page_text(url, page["audit"])
-                st.rerun()
-
-        # Show plan if available
-        if has_plan:
-            plan = st.session_state[plan_key]
-            if not plan.get("error"):
-                st.markdown("**AI Plan:**")
-                if plan.get("overall_assessment"):
-                    st.info(plan["overall_assessment"])
-
-                # Meta title/desc if changed — show current vs new for comparison
-                if plan.get("meta_changed") and plan.get("meta_title"):
-                    current_title = page.get("title", "") or ""
-                    current_desc = page["audit"].get("meta_description", "") or "" if "audit" in page else ""
-                    new_title = plan['meta_title']
-                    new_desc = plan.get('meta_description', '')
-                    # Only show if actually different from current
-                    if new_title.strip().lower() != current_title.strip().lower() or new_desc.strip().lower() != current_desc.strip().lower():
-                        if current_title:
-                            st.markdown(f"**Current title ({len(current_title)} chars):** {current_title}")
-                        st.markdown(f"**New title ({len(new_title)} chars):** {new_title}")
-                        if current_desc:
-                            st.markdown(f"**Current desc ({len(current_desc)} chars):** {current_desc[:100]}...")
-                        st.markdown(f"**New desc ({len(new_desc)} chars):** {new_desc}")
-                    else:
-                        st.markdown(f"**Meta: OK** — AI confirms current meta is fine")
-
-                # Steps
-                steps = plan.get("steps", [])
-                if steps:
-                    st.markdown(f"**{len(steps)} steps:**")
-                    for i, s in enumerate(steps[:5], 1):
-                        st.markdown(f"{i}. **{s.get('action', '')}** ({s.get('time_minutes', '?')} min) — {s.get('detail', '')}")
-
-                # New content suggestions
-                new_content = plan.get("new_content_suggestions", [])
-                if new_content:
-                    st.markdown("**Suggested new articles:**")
-                    for nc in new_content[:3]:
-                        st.markdown(f"- *{nc.get('suggested_title', '')}* — {nc.get('why', '')[:120]}")
-
-        # ── Show meta suggestions if available ─────────────────
-        if has_meta_suggest:
-            meta_res = st.session_state[meta_key]
-            if isinstance(meta_res, dict) and not meta_res.get("error"):
-                variants = meta_res.get("variants", [])
-                if variants:
-                    st.markdown("**Meta title + description — pick a variant:**")
-                    current_title = page["audit"].get("title", "") or ""
-                    current_desc = page["audit"].get("meta_description", "") or ""
-                    st.caption(f"Current title ({len(current_title)} chars): {current_title}")
-                    st.caption(f"Current desc ({len(current_desc)} chars): {current_desc[:120]}")
-                    for vi, v in enumerate(variants[:3], 1):
-                        t = v.get("title", "")
-                        d = v.get("description", "")
-                        strategy = v.get("strategy", "")
-                        st.markdown(
-                            f"**Variant {vi}** · Title ({len(t)} chars) · Desc ({len(d)} chars)  \n"
-                            f"Title: `{t}`  \n"
-                            f"Description: `{d}`  \n"
-                            f"<span style='color:#9b9bb8; font-size:0.8rem;'>Strategy: {strategy}</span>",
-                            unsafe_allow_html=True,
-                        )
-                        st.code(f"Title: {t}\nDescription: {d}", language="text")
-            elif isinstance(meta_res, dict) and meta_res.get("error"):
-                st.error(f"Meta generation failed: {meta_res['error']}")
-
-        # ── Show intro text if available ───────────────────────
-        if has_intro:
-            intro_res = st.session_state[intro_key]
-            if isinstance(intro_res, dict) and not intro_res.get("error"):
-                new_intro = (
-                    intro_res.get("rewritten_intro")
-                    or intro_res.get("optimized_text")
-                    or intro_res.get("html", "")
-                    or intro_res.get("text", "")
-                )
-                if new_intro:
-                    st.markdown(f"**New intro text** ({len(new_intro.split())} words) — paste ABOVE product grid:")
-                    st.markdown(
-                        f"<div style='background:#0d1a0d; border-left:3px solid #33dd88; padding:0.8rem; border-radius:0 6px 6px 0;'>"
-                        f"<div style='color:#e8e8f0; line-height:1.6;'>{new_intro}</div></div>",
-                        unsafe_allow_html=True,
-                    )
-                    st.code(new_intro, language="text")
-            elif isinstance(intro_res, dict) and intro_res.get("error"):
-                st.error(f"Intro generation failed: {intro_res['error']}")
-
-        # ── Show generated footer/bottom text if available ─────
-        if has_text:
-            bt = st.session_state[text_key]
-            has_new_format = bt.get("top_html") or bt.get("bottom_html") or bt.get("faq_schema")
-            if not has_new_format and bt.get("html"):
-                st.warning("⚠ Text generated with old rules — regenerate for FAQ schema, product images, and correct links.")
-            html = bt.get("bottom_html") or bt.get("html", "")
-            wc = bt.get("bottom_word_count") or bt.get("word_count", 0)
-            if html:
-                from utils.ui_helpers import extract_content_summary, compute_lix, lix_badge
-                kws, links, prods = extract_content_summary(bt)
-                lix = compute_lix(html)
-                lix_color, lix_msg, _ = lix_badge(lix)
-                st.markdown(
-                    f"**Footer text ready** — {wc} words · {len(kws)} keywords · {len(links)} links · {len(prods)} products · "
-                    f"<span style='color:{lix_color};'>LIX {lix}</span>",
-                    unsafe_allow_html=True,
-                )
-                with st.expander("View preview", expanded=False):
-                    st.markdown(html, unsafe_allow_html=True)
-                with st.expander("View HTML source", expanded=False):
-                    st.code(html, language="html")
-                st.download_button(
-                    "Download HTML",
-                    data=html.encode("utf-8"),
-                    file_name=f"{short_url.replace('/', '_')}.html",
-                    mime="text/html",
-                    key=f"dl_{url_hash}",
-                )
-                # Push to Magento
-                from utils.footer_push_ui import render_footer_push_block
-                render_footer_push_block(url, html, key_prefix=f"ac_push_{url_hash}")
+        from views.quick_wins import render_page_actions_card
+        render_page_actions_card(page, idx=idx, total_pages=None, on_skip=None)
+        return
 
 
 def _generate_plan(url, audit_data):
@@ -312,83 +145,6 @@ def _generate_plan(url, audit_data):
         st.error(f"Error: {e}")
 
 
-def _generate_page_text(url, audit_data):
-    """Generate footer/bottom text using the shared generator (same as Quick Wins)."""
-    if not has_anthropic_key():
-        st.error("Anthropic API key missing")
-        return
-    try:
-        from utils.ai_generator import generate_page_content
-
-        with st.spinner("AI generating footer text with links + products + images..."):
-            result = generate_page_content(url)
-        st.session_state[f"_bottom_text_{stable_hash(url)}"] = result
-        from utils.persistence import save_ai_cache
-        save_ai_cache()
-        st.success("Footer text generated")
-    except Exception as e:
-        st.error(f"Error: {e}")
-
-
-def _generate_meta(url, audit_data):
-    """Generate meta title + description using the shared generator (same as Quick Wins)."""
-    if not has_anthropic_key():
-        st.error("Anthropic API key missing")
-        return
-    try:
-        from utils.ai_generator import get_client, generate_meta_suggestions
-        from utils.page_profile import build_page_profile
-
-        client = get_client(get_anthropic_key())
-        profile = build_page_profile(url)
-        target_kws = [q["query"] for q in profile.get("gsc_queries", [])[:5]]
-        site_context = st.session_state.get("site_context", "")
-        language = st.session_state.get("content_language", "Swedish")
-
-        with st.spinner("AI generating meta title + description..."):
-            result = generate_meta_suggestions(client, audit_data, target_kws, site_context, language)
-        st.session_state[f"_meta_suggestions_{stable_hash(url)}"] = result
-        from utils.persistence import save_ai_cache
-        save_ai_cache()
-        st.success("Meta generated")
-    except Exception as e:
-        st.error(f"Error: {e}")
-
-
-def _generate_intro(url, audit_data):
-    """Generate intro text (above product grid) using the shared generator (same as Quick Wins)."""
-    if not has_anthropic_key():
-        st.error("Anthropic API key missing")
-        return
-    try:
-        from utils.ai_generator import get_client, generate_intro_rewrite
-
-        client = get_client(get_anthropic_key())
-        site_context = st.session_state.get("site_context", "")
-        language = st.session_state.get("content_language", "Swedish")
-
-        # Pull missing keywords from content audit if available (same pattern as Quick Wins)
-        missing_kws = []
-        content_audit = audit_data.get("content_audit") or {}
-        kw_coverage = content_audit.get("keyword_coverage") or {}
-        missing_kws = (kw_coverage.get("missing", []) or [])[:8]
-
-        with st.spinner("AI generating intro text..."):
-            result = generate_intro_rewrite(
-                client,
-                missing_keywords=missing_kws,
-                existing_intro=audit_data.get("intro_text", "") or "",
-                page_type=audit_data.get("page_type", "category"),
-                url=url,
-                site_context=site_context,
-                language=language,
-            )
-        st.session_state[f"_intro_text_{stable_hash(url)}"] = result
-        from utils.persistence import save_ai_cache
-        save_ai_cache()
-        st.success("Intro generated")
-    except Exception as e:
-        st.error(f"Error: {e}")
 
 
 def _technical_section():
