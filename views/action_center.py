@@ -96,12 +96,32 @@ def _action_card(page, idx):
     badges_html = " · ".join(badges) if badges else "Not started"
 
     short_url = url.replace("https://", "").replace("http://", "")
-    expander_label = f"#{idx+1}  {short_url}  |  {ptype}  |  {lost:,} lost clicks  ·  {badges_html}"
+    # Streamlit forbids nested expanders. Quick Wins' shared card uses inner
+    # expanders heavily, so the outer collapse here is a button-toggled
+    # container instead of st.expander.
+    toggle_key = f"_ac_open_{url_hash}"
+    is_open = st.session_state.get(toggle_key, False)
 
-    with st.expander(expander_label, expanded=False):
+    border = "#ff4455" if lost > 1000 else "#ffaa33" if lost > 200 else "#2a2a40"
+    st.markdown(
+        f"<div style='background:#0d0d15; border-left:4px solid {border}; "
+        f"padding:0.6rem 0.8rem; border-radius:0 4px 4px 0; margin-bottom:0.2rem;'>"
+        f"<div style='font-size:0.85rem; color:#e8e8f0;'><strong>#{idx+1}</strong> "
+        f"<span style='color:#9b9bb8;'>{short_url}</span> "
+        f"<span style='color:#6b6b8a;'>· {ptype} · {lost:,} lost clicks · {badges_html}</span></div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    btn_label = "▾ Hide details" if is_open else "▸ Show details"
+    if st.button(btn_label, key=f"toggle_{url_hash}", use_container_width=True):
+        st.session_state[toggle_key] = not is_open
+        st.rerun()
+
+    if is_open:
         from views.quick_wins import render_page_actions_card
         render_page_actions_card(page, idx=idx, total_pages=None, on_skip=None)
-        return
+        st.markdown("---")
 
 
 def _generate_plan(url, audit_data):
