@@ -12,6 +12,65 @@ def stable_hash(text: str) -> str:
     return hashlib.md5(text.encode()).hexdigest()[:8]
 
 
+def show_ai_error(label: str, exc: Exception, context: dict | None = None):
+    """
+    Detailed AI error display: error class, API status, request ID, credit/rate-limit hint,
+    context data, and traceback — so failures aren't silent.
+    """
+    import json
+    import traceback
+
+    err_class = type(exc).__name__
+    msg = str(exc)
+
+    status_code = getattr(exc, "status_code", None)
+    request_id = getattr(exc, "request_id", None)
+    body = getattr(exc, "body", None)
+
+    low_msg = msg.lower()
+    hint = ""
+    if "credit" in low_msg or "insufficient" in low_msg or "balance" in low_msg:
+        hint = "Looks like your Anthropic account is out of credits — top up at https://console.anthropic.com/settings/billing."
+    elif "rate limit" in low_msg or status_code == 429:
+        hint = "Rate limit hit — wait a few seconds and try again. Consider reducing bulk-generation batch size."
+    elif "authentication" in low_msg or status_code == 401:
+        hint = "API key invalid — re-enter the Anthropic key in Setup."
+    elif "overloaded" in low_msg or status_code == 529:
+        hint = "Anthropic API is overloaded — retry in a moment."
+    elif status_code and status_code >= 500:
+        hint = "Anthropic server error — this is on their side, retry shortly."
+
+    st.error(f"**{label} failed** · `{err_class}`: {msg}")
+    if hint:
+        st.warning(hint)
+
+    lines = []
+    if status_code:
+        lines.append(f"- **HTTP status:** `{status_code}`")
+    if request_id:
+        lines.append(f"- **Request ID:** `{request_id}`  *(include when contacting Anthropic)*")
+    if body:
+        try:
+            body_str = json.dumps(body, indent=2, default=str)[:2000]
+        except Exception:
+            body_str = str(body)[:2000]
+        lines.append(f"- **API response body:**\n\n```json\n{body_str}\n```")
+    if context:
+        lines.append("- **Context:**")
+        for k, v in context.items():
+            v_str = str(v)
+            if len(v_str) > 400:
+                v_str = v_str[:400] + "…"
+            lines.append(f"  - `{k}` = `{v_str}`")
+    tb = traceback.format_exc()
+    if tb and tb.strip() != "NoneType: None":
+        lines.append(f"- **Traceback:**\n\n```\n{tb[-3000:]}\n```")
+
+    if lines:
+        with st.expander("Full error details (for debugging)", expanded=False):
+            st.markdown("\n".join(lines))
+
+
 def shorten_url(url: str) -> str:
     """Strip the domain from a URL, returning just the path."""
     parsed = urlparse(url)

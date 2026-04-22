@@ -5,7 +5,7 @@ For users who want fast wins without navigating multiple menus.
 
 import streamlit as st
 from config import get_anthropic_key, has_anthropic_key
-from utils.ui_helpers import stable_hash, normalize_url, shorten_url, extract_content_summary
+from utils.ui_helpers import stable_hash, normalize_url, shorten_url, extract_content_summary, show_ai_error
 
 
 def _get_top_pages(audit_results, top_n=20):
@@ -201,8 +201,25 @@ def _generate_all_fixes(page):
                 )
                 st.session_state[plan_key] = result
             except Exception as e:
-                st.error(f"Plan generation failed: {e}")
-                st.session_state[plan_key] = {"error": str(e), "steps": []}
+                import traceback as _tb
+                show_ai_error(
+                    "Implementation plan generation",
+                    e,
+                    context={
+                        "url": url,
+                        "page_type": page.get("page_type"),
+                        "site_urls_count": len(all_site_urls),
+                        "language": language,
+                    },
+                )
+                st.session_state[plan_key] = {
+                    "error": str(e),
+                    "error_class": type(e).__name__,
+                    "error_status_code": getattr(e, "status_code", None),
+                    "error_request_id": getattr(e, "request_id", None),
+                    "error_traceback": _tb.format_exc()[-3000:],
+                    "steps": [],
+                }
 
     # ── Bottom text + intro text are generated on-demand (not auto) to keep page load fast
     # They will be triggered by buttons in the page view below
@@ -875,6 +892,29 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
     has_text = bool(text_data and not text_data.get("error"))
     has_intro = bool(intro_data and not intro_data.get("error"))
 
+    # Render any cached AI failure so users see WHY the last attempt failed,
+    # not just a silent "not generated yet" state.
+    for _label, _cached in (
+        ("Implementation plan", plan_data),
+        ("Bottom text", text_data),
+        ("Intro text", intro_data),
+    ):
+        if _cached and _cached.get("error"):
+            _cls = _cached.get("error_class") or "Exception"
+            _msg = _cached.get("error", "")
+            _status = _cached.get("error_status_code")
+            _req = _cached.get("error_request_id")
+            _tb_txt = _cached.get("error_traceback", "")
+            st.error(f"**{_label} — previous attempt failed** · `{_cls}`: {_msg}")
+            with st.expander(f"{_label}: full error details", expanded=False):
+                if _status:
+                    st.markdown(f"- **HTTP status:** `{_status}`")
+                if _req:
+                    st.markdown(f"- **Request ID:** `{_req}`")
+                if _tb_txt:
+                    st.markdown("- **Traceback:**")
+                    st.code(_tb_txt, language="text")
+
     if not has_plan:
         st.markdown("### AI fixes — not generated yet")
         st.info("Click below to generate implementation plan for this page (~20 seconds)")
@@ -919,8 +959,19 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                         result = generate_page_content(url)
                         st.session_state[text_key] = result
                     except Exception as e:
-                        st.error(f"Text generation failed: {e}")
-                        st.session_state[text_key] = {"error": str(e)}
+                        import traceback as _tb
+                        show_ai_error(
+                            "Bottom text generation",
+                            e,
+                            context={"url": url, "page_type": page.get("page_type")},
+                        )
+                        st.session_state[text_key] = {
+                            "error": str(e),
+                            "error_class": type(e).__name__,
+                            "error_status_code": getattr(e, "status_code", None),
+                            "error_request_id": getattr(e, "request_id", None),
+                            "error_traceback": _tb.format_exc()[-3000:],
+                        }
                     from utils.persistence import save_ai_cache
                     save_ai_cache()
                 st.rerun()
@@ -1079,7 +1130,14 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                             st.session_state[meta_key] = result
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error: {e}")
+                            show_ai_error(
+                                "Meta title + description generation",
+                                e,
+                                context={
+                                    "url": page["url"],
+                                    "target_keywords": target_kws if "target_kws" in dir() else "(not computed)",
+                                },
+                            )
 
             # Description
             d_status = "⚠ TOO LONG" if desc_too_long else "⚠ TOO SHORT" if desc_too_short else "✓ OK"
@@ -1162,8 +1220,23 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                         )
                         st.session_state[intro_key] = result
                     except Exception as e:
-                        st.error(f"Intro generation failed: {e}")
-                        st.session_state[intro_key] = {"error": str(e)}
+                        import traceback as _tb
+                        show_ai_error(
+                            "Intro text generation",
+                            e,
+                            context={
+                                "url": url,
+                                "page_type": page["page_type"],
+                                "missing_keywords": missing_kws,
+                            },
+                        )
+                        st.session_state[intro_key] = {
+                            "error": str(e),
+                            "error_class": type(e).__name__,
+                            "error_status_code": getattr(e, "status_code", None),
+                            "error_request_id": getattr(e, "request_id", None),
+                            "error_traceback": _tb.format_exc()[-3000:],
+                        }
                     from utils.persistence import save_ai_cache
                     save_ai_cache()
                 st.rerun()
@@ -1247,7 +1320,16 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                             save_ai_cache()
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Article generation failed: {e}")
+                            show_ai_error(
+                                "Full article generation",
+                                e,
+                                context={
+                                    "article_title": art_title,
+                                    "keywords": art.get("target_keywords", []),
+                                    "link_from": art.get("link_from", url),
+                                    "content_type": art.get("type", "guide"),
+                                },
+                            )
                 st.markdown("")
             _approval_button("Articles", f"{url_hash}_articles")
             st.markdown("---")
