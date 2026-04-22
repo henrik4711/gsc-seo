@@ -1559,20 +1559,100 @@ def _technical_section():
             cols2[i].metric(key.replace("_", " ").title(), f"{count:,}")
 
     st.markdown("**Top issues to fix:**")
-    priority_order = ["broken_links", "near_duplicates", "canonical_issues", "orphan_pages", "faceted_urls"]
+    priority_order = ["broken_links", "non_indexable", "near_duplicates", "canonical_issues", "orphan_pages", "faceted_urls"]
+    # Build a canonical-target lookup from audit_results so non_indexable items can
+    # show WHY the page is flagged — the most common cause is "Canonicalised" (SF term
+    # for: this URL canonicals to a different URL), not a missing `index,follow`.
+    canonical_by_url = {}
+    for r in st.session_state.get("audit_results", []) or []:
+        u = r.get("url")
+        c = r.get("canonical") or r.get("canonical_url")
+        if u and c:
+            canonical_by_url[normalize_url(u)] = c
+
     for key in priority_order:
         if issues.get(key):
             with st.expander(f"{key.replace('_', ' ').title()} ({len(issues[key])} items)", expanded=False):
+                if key == "non_indexable":
+                    st.caption(
+                        "**Non-indexable** is reported by Screaming Frog based on its indexability rules. "
+                        "A page with `<meta name=\"robots\" content=\"index, follow\">` can still be flagged "
+                        "if its canonical tag points to a DIFFERENT URL (SF calls this 'Canonicalised'), "
+                        "if robots.txt blocks it, or if the HTTP status is not 200."
+                    )
                 for item in issues[key][:20]:
                     url_i = item.get("url", "")
                     action_i = item.get("action", "")
                     st.markdown(f"- `{url_i}` — {action_i}")
+                    if key == "non_indexable":
+                        reason = item.get("reason", "") or ""
+                        canonical = canonical_by_url.get(normalize_url(url_i))
+                        if canonical and normalize_url(canonical) != normalize_url(url_i):
+                            st.markdown(
+                                f"  <div style='font-size:0.75rem; color:#ffaa33; margin-left:1rem;'>"
+                                f"Canonical points to: <code>{canonical}</code> — "
+                                f"Google will show that URL, not this one.</div>",
+                                unsafe_allow_html=True,
+                            )
+                        elif "canonical" in reason.lower():
+                            st.markdown(
+                                f"  <div style='font-size:0.75rem; color:#ffaa33; margin-left:1rem;'>"
+                                f"SF reason: <code>{reason}</code> (canonical mismatch — see the page's "
+                                f"<code>&lt;link rel=\"canonical\"&gt;</code> tag).</div>",
+                                unsafe_allow_html=True,
+                            )
 
 
 def _render_per_page_tab():
-    """The per-page work tab — one page at a time with prev/next nav."""
+    """The per-page work tab — one page at a time with prev/next nav. Configurable top_n."""
     audit_results = st.session_state["audit_results"]
-    pages = _get_top_pages(audit_results, top_n=20)
+
+    # Configurable top_n — default 100 (what Action Center used to show)
+    top_n = int(st.session_state.get("_qw_top_n", 100))
+    pages = _get_top_pages(audit_results, top_n=top_n)
+
+    # ── Controls: how many top pages + bulk AI-plan generation ────
+    controls_col1, controls_col2, controls_col3 = st.columns([2, 2, 3])
+    with controls_col1:
+        new_top_n = st.number_input(
+            "Top N pages to work on",
+            min_value=5, max_value=500, value=top_n, step=10,
+            key="_qw_top_n_input",
+            help="Upper bound — the actual list may be shorter if you've marked pages done or excluded them via the ideal structure.",
+        )
+        if new_top_n != top_n:
+            st.session_state["_qw_top_n"] = int(new_top_n)
+            st.rerun()
+
+    uncached_pages = [p for p in pages if f"_ai_plan_{stable_hash(p['url'])}" not in st.session_state]
+    uncached_count = len(uncached_pages)
+
+    with controls_col2:
+        bulk_n = st.number_input(
+            "Bulk-generate AI plans for top N (uncached only)",
+            min_value=1, max_value=max(1, uncached_count), value=min(10, max(1, uncached_count)),
+            key="_qw_bulk_n",
+            disabled=(uncached_count == 0),
+            help="Runs the AI plan generator on the next N pages without a cached plan. ~20 sec per page.",
+        )
+
+    with controls_col3:
+        st.caption(f"Pages shown: {len(pages)} · With plan: {len(pages) - uncached_count}/{len(pages)} · "
+                   f"Uncached: {uncached_count}")
+        if uncached_count == 0:
+            st.caption("All visible pages already have a cached plan.")
+        else:
+            if st.button(f"⚡ Generate plans for next {int(bulk_n)} uncached pages", key="_qw_bulk_gen", type="primary"):
+                batch = uncached_pages[:int(bulk_n)]
+                progress = st.progress(0.0)
+                status_txt = st.empty()
+                for i, p in enumerate(batch):
+                    status_txt.text(f"[{i+1}/{len(batch)}] {p['url']}")
+                    _generate_all_fixes(p)
+                    progress.progress((i + 1) / len(batch))
+                status_txt.empty()
+                st.success(f"Generated {len(batch)} plans")
+                st.rerun()
 
     excluded_count = st.session_state.get("_qw_excluded_count", 0)
     if excluded_count > 0:
@@ -1581,6 +1661,8 @@ def _render_per_page_tab():
             f"{excluded_count} page(s) excluded (scheduled for merge/delete in ideal structure)</div>",
             unsafe_allow_html=True,
         )
+
+    st.markdown("---")
 
     if not pages:
         st.success("All top pages marked as done. Reset done status to start over.")
