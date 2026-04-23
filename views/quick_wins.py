@@ -1121,6 +1121,7 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                         try:
                             from utils.ai_generator import get_client, generate_meta_suggestions
                             from config import get_anthropic_key
+                            from utils.page_profile import build_page_profile
                             client = get_client(get_anthropic_key())
                             profile = build_page_profile(page["url"])
                             target_kws = [q["query"] for q in profile.get("gsc_queries", [])[:5]]
