@@ -1118,6 +1118,12 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                             st.markdown(f"**Suggested title:** `{variants[0].get('title', '')}` ({len(variants[0].get('title', ''))} chars)")
                 if meta_key not in st.session_state:
                     if st.button("🤖 Generate meta title + description", key=f"gen_meta_{stable_hash(page['url'])}"):
+                        if not has_anthropic_key():
+                            st.error(
+                                "Anthropic API key is missing. Set it in **1. Setup & Connect** "
+                                "or as the `ANTHROPIC_API_KEY` env var on Railway, then retry."
+                            )
+                            st.stop()
                         try:
                             from utils.ai_generator import get_client, generate_meta_suggestions
                             from config import get_anthropic_key
@@ -1200,6 +1206,12 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
         elif page["page_type"] == "category" and not has_intro:
             st.markdown(f"#### [INTRO] Intro text — not generated yet ({intro_words_current} words currently)")
             if st.button("Generate intro text", key=f"gen_intro_{url_hash}"):
+                if not has_anthropic_key():
+                    st.error(
+                        "Anthropic API key is missing. Set it in **1. Setup & Connect** "
+                        "or as the `ANTHROPIC_API_KEY` env var on Railway, then retry."
+                    )
+                    st.stop()
                 with st.spinner("Generating intro text..."):
                     try:
                         missing_kws = []
@@ -1800,6 +1812,20 @@ def render():
     if "audit_results" not in st.session_state or not st.session_state["audit_results"]:
         st.warning("No audit data. Go to **⚡ Run Pipeline** and run all steps first.")
         return
+
+    # ── Anthropic key check — surface upfront so AI calls don't all fail later ──
+    if not has_anthropic_key():
+        st.error(
+            "**Anthropic API key is not available.** AI generation (plans, meta, intro, "
+            "footer text) will fail until this is fixed.\n\n"
+            "Fix one of these ways:\n"
+            "1. Go to **1. Setup & Connect** and paste your Anthropic key in the field there, OR\n"
+            "2. Set the `ANTHROPIC_API_KEY` env var on Railway (Variables tab) and redeploy."
+        )
+        if st.button("Open Setup & Connect", type="primary"):
+            st.session_state["selected_page"] = "1. Setup & Connect"
+            st.rerun()
+        st.markdown("---")
 
     # ── Site validation card (above tabs — applies to all tabs) ─────
     site_validation = st.session_state.get("_site_validation")

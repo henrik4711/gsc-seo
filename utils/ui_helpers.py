@@ -29,7 +29,12 @@ def show_ai_error(label: str, exc: Exception, context: dict | None = None):
 
     low_msg = msg.lower()
     hint = ""
-    if "credit" in low_msg or "insufficient" in low_msg or "balance" in low_msg:
+    if "no anthropic api key" in low_msg or "anthropic_api_key" in low_msg or "no api key" in low_msg:
+        hint = (
+            "Anthropic API key is not set. Either set the `ANTHROPIC_API_KEY` env var "
+            "(Railway → Variables) and redeploy, OR open **1. Setup & Connect** and paste your key there."
+        )
+    elif "credit" in low_msg or "insufficient" in low_msg or "balance" in low_msg:
         hint = "Looks like your Anthropic account is out of credits — top up at https://console.anthropic.com/settings/billing."
     elif "rate limit" in low_msg or status_code == 429:
         hint = "Rate limit hit — wait a few seconds and try again. Consider reducing bulk-generation batch size."
