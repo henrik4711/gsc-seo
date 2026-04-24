@@ -1078,6 +1078,50 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                         f"{icon} {check['message']}</div>",
                         unsafe_allow_html=True,
                     )
+
+            # ── Regenerate with these fixes — feeds failing checks back to the AI prompt ──
+            if failed > 0 or warnings > 0:
+                failing_msgs = [
+                    c["message"] for c in val_results["checks"]
+                    if not c["passed"] and c.get("severity") in ("error", "warning")
+                ]
+                if failing_msgs:
+                    st.markdown(
+                        f"<div style='font-size:0.8rem; color:#c8b4ff; margin:0.3rem 0;'>"
+                        f"Regenerating will inject these {len(failing_msgs)} issue(s) into the prompt with 'fix these'.</div>",
+                        unsafe_allow_html=True,
+                    )
+                    if st.button(
+                        f"🔄 Regenerate bottom text — fix these {len(failing_msgs)} issue(s)",
+                        key=f"regen_bottom_{url_hash}",
+                        type="primary",
+                    ):
+                        if not has_anthropic_key():
+                            st.error("Anthropic API key missing — set it in **1. Setup & Connect** first.")
+                            st.stop()
+                        with st.spinner(f"Regenerating bottom text with {len(failing_msgs)} fixes…"):
+                            try:
+                                from utils.ai_generator import generate_page_content
+                                result = generate_page_content(url, validation_fixes=failing_msgs)
+                                st.session_state[text_key] = result
+                                from utils.persistence import save_ai_cache
+                                save_ai_cache()
+                                st.success("Regenerated — scroll up to review new text + validation.")
+                                st.rerun()
+                            except Exception as e:
+                                import traceback as _tb
+                                show_ai_error(
+                                    "Bottom text regeneration",
+                                    e,
+                                    context={"url": url, "validation_fixes": failing_msgs},
+                                )
+                                st.session_state[text_key] = {
+                                    "error": str(e),
+                                    "error_class": type(e).__name__,
+                                    "error_status_code": getattr(e, "status_code", None),
+                                    "error_request_id": getattr(e, "request_id", None),
+                                    "error_traceback": _tb.format_exc()[-3000:],
+                                }
             st.markdown("---")
 
         # ── Meta title + description (always show with assessment) ──

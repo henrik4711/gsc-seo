@@ -1371,7 +1371,7 @@ Language: {language}
 # UNIFIED page content generator — single source of truth for ALL views
 # ──────────────────────────────────────────────────────────────────────
 
-def generate_page_content(url: str, target_query: str = None) -> dict:
+def generate_page_content(url: str, target_query: str = None, validation_fixes: list | None = None) -> dict:
     """
     Generate COMPLETE body text (top + bottom + FAQ) for any page.
 
@@ -1385,6 +1385,10 @@ def generate_page_content(url: str, target_query: str = None) -> dict:
         The page URL to generate content for.
     target_query : str, optional
         Primary keyword to focus on. If None, uses profile's primary_query.
+    validation_fixes : list[str], optional
+        Issues detected in the previous generation (e.g. "Only 2 internal links",
+        "1/3 target keywords missing: finger vibrator", "LIX 47 — too difficult").
+        These are injected into the prompt as hard requirements to fix.
 
     Returns
     -------
@@ -1628,11 +1632,32 @@ def generate_page_content(url: str, target_query: str = None) -> dict:
         f"Has #category-description id: {struct.get('has_category_description_id', False)}"
     )
 
+    # ── Validation-feedback block — shown at top of prompt so model can't miss it ──
+    validation_block = ""
+    if validation_fixes:
+        lines = "\n".join(f"- {v}" for v in validation_fixes)
+        validation_block = f"""
+## RETRY — PREVIOUS ATTEMPT HAD THESE VALIDATION FAILURES
+Your previous output for THIS page was rejected because of these issues.
+You MUST fix ALL of them in this rewrite — the text will be validated again.
+
+{lines}
+
+Concretely, when you rewrite the text:
+- If "internal links" count was below target, add more internal links to related site pages — aim for the top of the 8–12 range.
+- If target keywords were missing, work each missing keyword into a natural sentence (ideally in an H2 or its first paragraph).
+- If LIX is too high (>40), shorten sentences (aim for 12–18 words avg), prefer common everyday words over compound/technical ones, and break up long compounds when natural. Target LIX 35–40.
+- If LIX is too low (<30), the text reads as childish — mix in some longer sentences and more varied vocabulary.
+- If FAQ was missing, include a real FAQ section with 4–6 Q&A pairs.
+- If broken/non-indexable URLs were linked, only link to URLs that appear in the allowed internal links list below.
+
+"""
+
     # ── Build the full prompt ──
     prompt = f"""{ANTI_HALLUCINATION_RULES}
 
 You are rewriting the BODY TEXT for an e-commerce category page.
-
+{validation_block}
 ## CRITICAL: KEYWORD FOCUS
 The PRIMARY keyword for this page is: **{query}**
 This keyword MUST:
