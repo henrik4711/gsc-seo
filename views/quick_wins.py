@@ -1170,8 +1170,11 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                             st.stop()
                         try:
                             from utils.ai_generator import get_client, generate_meta_suggestions
-                            from config import get_anthropic_key
                             from utils.page_profile import build_page_profile
+                            # NB: get_anthropic_key is imported at module top (line 7).
+                            # Do NOT re-import it inside this function — Python would
+                            # then treat it as local, and any earlier reference (e.g. the
+                            # intro generate button) would raise UnboundLocalError.
                             client = get_client(get_anthropic_key())
                             profile = build_page_profile(page["url"])
                             target_kws = [q["query"] for q in profile.get("gsc_queries", [])[:5]]
