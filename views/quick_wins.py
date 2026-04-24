@@ -1775,18 +1775,30 @@ def _render_per_page_tab():
         idx = 0
         st.session_state["_qw_page_idx"] = 0
 
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 6, 1])
+    nav_col1, nav_col2, nav_col3, nav_col4 = st.columns([1, 4, 2, 1])
     with nav_col1:
         if st.button("◀ Previous", disabled=idx == 0, use_container_width=True):
             st.session_state["_qw_page_idx"] = max(0, idx - 1)
             st.rerun()
     with nav_col2:
         st.markdown(
-            f"<div style='text-align:center; font-size:0.85rem; color:#9b9bb8;'>"
+            f"<div style='text-align:center; font-size:0.85rem; color:#9b9bb8; padding-top:0.5rem;'>"
             f"Page <strong>{idx+1}</strong> of <strong>{len(pages)}</strong> top opportunities</div>",
             unsafe_allow_html=True,
         )
     with nav_col3:
+        # Direct page jump — survives deploys/restarts so you don't have to click Next 96 times.
+        jump = st.number_input(
+            "Go to page",
+            min_value=1, max_value=len(pages), value=idx + 1, step=1,
+            key="_qw_page_jump",
+            label_visibility="collapsed",
+            help=f"Jump directly to any page (1–{len(pages)})",
+        )
+        if int(jump) - 1 != idx:
+            st.session_state["_qw_page_idx"] = int(jump) - 1
+            st.rerun()
+    with nav_col4:
         if st.button("Next ▶", disabled=idx >= len(pages) - 1, use_container_width=True):
             st.session_state["_qw_page_idx"] = min(len(pages) - 1, idx + 1)
             st.rerun()
