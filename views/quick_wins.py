@@ -1235,11 +1235,49 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                 "</div></div>",
                 unsafe_allow_html=True,
             )
-            new_intro = intro_data.get("optimized_text") or intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
+            new_intro = (
+                intro_data.get("optimized_text")
+                or intro_data.get("rewritten_intro")
+                or intro_data.get("html", "")
+                or intro_data.get("text", "")
+                or intro_data.get("intro", "")
+                or intro_data.get("intro_text", "")
+                or intro_data.get("paragraph", "")
+                or intro_data.get("content", "")
+            )
+            # Last resort: pick the longest string value in the dict
+            if not new_intro and isinstance(intro_data, dict):
+                strs = [(k, v) for k, v in intro_data.items() if isinstance(v, str) and len(v.split()) > 10]
+                if strs:
+                    longest = max(strs, key=lambda kv: len(kv[1]))
+                    new_intro = longest[1]
+                    st.caption(f"Pulled intro from unknown key `{longest[0]}` — please tell the dev so the keys list can be updated.")
+
             new_intro_wc = len(new_intro.split()) if new_intro else 0
             st.markdown(f"**New intro:** {new_intro_wc} words")
             with st.expander("View intro text", expanded=False):
-                st.code(new_intro[:1500], language="html")
+                st.code(new_intro[:1500] if new_intro else "(empty)", language="html")
+
+            # Show full raw response when we couldn't extract any content
+            if new_intro_wc == 0:
+                st.warning(
+                    "Could not find intro text in any expected key "
+                    "(optimized_text, rewritten_intro, html, text, intro, intro_text, paragraph, content). "
+                    "Raw AI response shown below — copy what you see and tell the dev which key to map."
+                )
+                with st.expander("Raw AI response (debug)", expanded=True):
+                    st.json(intro_data)
+                if st.button("🔄 Clear cache and regenerate intro", key=f"force_regen_intro_{url_hash}"):
+                    st.session_state.pop(intro_key, None)
+                    try:
+                        import os as _os
+                        _path = _os.path.join("/data/ai_cache", f"{intro_key}.json")
+                        if _os.path.exists(_path):
+                            _os.remove(_path)
+                    except Exception:
+                        pass
+                    st.rerun()
+
             _approval_button("Intro", f"{url_hash}_intro")
             st.markdown("---")
         elif intro_words_current >= 50:
