@@ -333,7 +333,7 @@ def _build_total_plan(page, plan_data, text_data, intro_data):
 
     # Priority 4: Replace intro text — only if current intro is thin or missing
     if intro_data and not intro_data.get("error"):
-        new_intro = intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
+        new_intro = intro_data.get("optimized_text") or intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
         if new_intro:
             intro_wc = len(new_intro.split())
             current_intro_words = audit.get("intro_word_count", 0)
@@ -639,7 +639,7 @@ def _export_page_as_markdown(page, plan_data, text_data, intro_data):
 
     # Intro text
     if intro_data and not intro_data.get("error"):
-        new_intro = intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
+        new_intro = intro_data.get("optimized_text") or intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
         if new_intro:
             md.append("## NEW INTRO TEXT (above product grid)")
             md.append("")
@@ -1235,7 +1235,7 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                 "</div></div>",
                 unsafe_allow_html=True,
             )
-            new_intro = intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
+            new_intro = intro_data.get("optimized_text") or intro_data.get("rewritten_intro") or intro_data.get("html", "") or intro_data.get("text", "")
             new_intro_wc = len(new_intro.split()) if new_intro else 0
             st.markdown(f"**New intro:** {new_intro_wc} words")
             with st.expander("View intro text", expanded=False):
