@@ -378,15 +378,16 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         cluster_pages = {c.get("topic", ""): set(_nu(p.get("page", "")) for p in c.get("pages", []) or [])
                          for c in clusters_list}
 
-        # Map: page → is_pillar (page_count >= 3 AND most queries in cluster)
+        # Map: page → is_pillar. Uses cluster_linking.detect_pillar so
+        # URL-hierarchy hubs (e.g. /dildos when /dildos/klassisk-dildo
+        # is also in the cluster) win over the page that currently
+        # ranks for the broad query.
+        from utils.cluster_linking import detect_pillar as _detect_pillar
         pillar_pages = set()
         for c in clusters_list:
-            pages = c.get("pages", []) or []
-            if len(pages) >= 3:
-                # Pillar = page with the most queries in the cluster
-                top_page = max(pages, key=lambda p: p.get("query_count", 0), default=None)
-                if top_page and top_page.get("query_count", 0) > 1:
-                    pillar_pages.add(_nu(top_page.get("page", "")))
+            pillar_url = _detect_pillar(c)
+            if pillar_url:
+                pillar_pages.add(_nu(pillar_url))
 
         # ── Intent + cluster matched LINK TARGET ──────────────
         # Priority order:

@@ -16,16 +16,65 @@ from utils.ui_helpers import normalize_url
 from utils.url_helpers import url_path
 
 
+def _url_hierarchy_pillar(pages: list) -> str:
+    """
+    Pick the cluster page that is a URL-parent of one or more other
+    cluster pages. Among candidates with descendants in the cluster,
+    prefer the LONGEST path — i.e. the most specific common parent.
+
+    Example: cluster contains /sexleksaker, /sexleksaker/dildos,
+    /sexleksaker/dildos/klassisk-dildo, /sexleksaker/dildos/strap-on.
+    Both /sexleksaker (3 descendants) and /sexleksaker/dildos (2
+    descendants) qualify — we pick /sexleksaker/dildos because it is
+    the topical hub, not the broader category root.
+    """
+    page_urls = [normalize_url(p.get("page", "")) for p in pages]
+    page_urls = [u for u in page_urls if u]
+    if len(page_urls) < 2:
+        return ""
+
+    candidates = []
+    for u in page_urls:
+        u_path = url_path(u).rstrip("/")
+        if not u_path or u_path == "/":
+            continue
+        descendants = sum(
+            1 for other in page_urls
+            if other != u and url_path(other).rstrip("/").startswith(u_path + "/")
+        )
+        if descendants > 0:
+            candidates.append((u, descendants, len(u_path)))
+
+    if not candidates:
+        return ""
+    # Longest path first (most specific hub), then most descendants as tiebreak.
+    candidates.sort(key=lambda x: (-x[2], -x[1]))
+    return candidates[0][0]
+
+
 def detect_pillar(cluster: dict) -> str:
     """
     Identify the pillar page in a cluster.
 
-    Pillar = page with the most queries in the cluster (and >1 query).
-    Tie-breaker: most clicks. Returns normalized URL or empty string.
+    Priority:
+    1. URL-hierarchy pillar — a cluster page that is a URL-parent of
+       other cluster pages (e.g. /dildos when /dildos/klassisk-dildo,
+       /dildos/strap-on are also in the cluster). This preserves the
+       site architecture even when Google currently ranks a sub-page
+       for the broad cluster query.
+    2. Fallback — page with the most queries in the cluster (>1 query),
+       tie-broken by most clicks.
+
+    Returns normalized URL or empty string.
     """
     pages = cluster.get("pages", []) or []
     if len(pages) < 3:
         return ""  # too small to have a meaningful pillar
+
+    hierarchy_pillar = _url_hierarchy_pillar(pages)
+    if hierarchy_pillar:
+        return hierarchy_pillar
+
     candidates = [p for p in pages if p.get("query_count", 0) > 1]
     if not candidates:
         return ""
@@ -47,12 +96,16 @@ def _existing_outbound_links(sf_link_map: dict, page_url: str) -> set:
     return out
 
 
-def _anchor_for(page_url: str, audit_lookup: dict, default: str = "") -> str:
+def anchor_for_url(page_url: str, audit_lookup: dict | None = None, default: str = "") -> str:
     """
     Pick a sensible anchor text for linking TO the given page.
-    Uses the audit's title (first part before pipe/dash) — falls back
-    to URL last segment.
+
+    Single source of truth — every view/util that needs to suggest an
+    anchor for a target URL should call this. Uses the audit's title
+    (first part before pipe/dash) when available, falls back to the
+    URL's last segment with hyphens turned into spaces.
     """
+    audit_lookup = audit_lookup or {}
     audit = audit_lookup.get(normalize_url(page_url), {}) or {}
     title = (audit.get("title") or "").strip()
     if title:
@@ -63,6 +116,10 @@ def _anchor_for(page_url: str, audit_lookup: dict, default: str = "") -> str:
     # fallback: last URL segment
     last = url_path(page_url).split("/")[-1].replace("-", " ").strip()
     return last or default
+
+
+# Back-compat alias — old name was private with underscore.
+_anchor_for = anchor_for_url
 
 
 def generate_cluster_link_recommendations(

@@ -27,6 +27,8 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
     page_keywords = {}
     page_types = {}
     audited_urls = set()
+    # Lookup used by anchor_for_url to pick natural anchors from titles.
+    audit_lookup = {_nu(r.get("url", "")): r for r in (audit_results or []) if isinstance(r, dict)}
 
     for r in audit_results:
         url = r.get("url", "")
@@ -211,11 +213,13 @@ def _build_action_list(audit_results, topic_clusters, sf_link_map=None):
                 else:
                     priority = "low"
 
-                # Generate NATURAL anchor text from the TARGET page's URL slug
-                target_slug = tgt_parts[-1] if tgt_parts else ""
-                suggested_anchor = target_slug.replace("-", " ").replace("_", " ")
-                if not suggested_anchor:
-                    suggested_anchor = "related page"
+                # Single source of truth — same anchor logic the cluster
+                # link recommender + AI prompt builder use, so anchors are
+                # consistent across every view.
+                from utils.cluster_linking import anchor_for_url
+                suggested_anchor = anchor_for_url(
+                    target_url, audit_lookup, default="related page",
+                )
 
                 actions.append({
                     "id": action_id,
