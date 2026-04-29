@@ -5,7 +5,7 @@ For users who want fast wins without navigating multiple menus.
 
 import streamlit as st
 from config import get_anthropic_key, has_anthropic_key
-from utils.ui_helpers import stable_hash, normalize_url, shorten_url, extract_content_summary, show_ai_error
+from utils.ui_helpers import stable_hash, normalize_url, shorten_url, extract_content_summary, show_ai_error, render_recommendation_diff
 
 
 def _get_top_pages(audit_results, top_n=20):
@@ -1147,66 +1147,75 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
             # Pre-compute meta cache key so both title + description sections can use it
             meta_key = f"_cannibal_meta_{stable_hash(page['url'])}"
 
-            # Title
-            t_status = "⚠ TOO LONG" if title_too_long else "⚠ TOO SHORT" if title_too_short else "✓ OK"
-            st.markdown(f"**Current title:** `{page['title']}` ({len(page['title'])} chars) {t_status}")
-            if new_title and new_title != page['title']:
-                st.markdown(f"**New title:** `{new_title}` ({len(new_title)} chars)")
-            else:
-                # Generate meta via AI instead of asking user to write manually
-                if meta_key in st.session_state:
-                    cached_meta = st.session_state[meta_key]
-                    if isinstance(cached_meta, dict):
-                        variants = cached_meta.get("variants", [])
-                        if variants:
-                            st.markdown(f"**Suggested title:** `{variants[0].get('title', '')}` ({len(variants[0].get('title', ''))} chars)")
-                if meta_key not in st.session_state:
-                    if st.button("🤖 Generate meta title + description", key=f"gen_meta_{stable_hash(page['url'])}"):
-                        if not has_anthropic_key():
-                            st.error(
-                                "Anthropic API key is missing. Set it in **1. Setup & Connect** "
-                                "or as the `ANTHROPIC_API_KEY` env var on Railway, then retry."
-                            )
-                            st.stop()
-                        try:
-                            from utils.ai_generator import get_client, generate_meta_suggestions
-                            from utils.page_profile import build_page_profile
-                            # NB: get_anthropic_key is imported at module top (line 7).
-                            # Do NOT re-import it inside this function — Python would
-                            # then treat it as local, and any earlier reference (e.g. the
-                            # intro generate button) would raise UnboundLocalError.
-                            client = get_client(get_anthropic_key())
-                            profile = build_page_profile(page["url"])
-                            target_kws = [q["query"] for q in profile.get("gsc_queries", [])[:5]]
-                            result = generate_meta_suggestions(client, page["audit"], target_kws,
-                                st.session_state.get("site_context", ""),
-                                st.session_state.get("content_language", "Swedish"))
-                            st.session_state[meta_key] = result
-                            st.rerun()
-                        except Exception as e:
-                            show_ai_error(
-                                "Meta title + description generation",
-                                e,
-                                context={
-                                    "url": page["url"],
-                                    "target_keywords": target_kws if "target_kws" in dir() else "(not computed)",
-                                },
-                            )
-
-            # Description
-            d_status = "⚠ TOO LONG" if desc_too_long else "⚠ TOO SHORT" if desc_too_short else "✓ OK"
-            st.markdown(f"**Current description:** `{(page['meta_description'] or '')[:100]}...` ({len(page['meta_description'] or '')} chars) {d_status}")
-            if new_desc and new_desc != page['meta_description']:
-                st.markdown(f"**New description:** `{new_desc}` ({len(new_desc)} chars)")
-            elif meta_key in st.session_state:
-                cached_meta = st.session_state.get(meta_key, {})
+            # Resolve recommended title — from action plan, or from cached AI meta
+            recommended_title = new_title if new_title and new_title != page['title'] else ""
+            recommended_desc = new_desc if new_desc and new_desc != page['meta_description'] else ""
+            if (not recommended_title or not recommended_desc) and meta_key in st.session_state:
+                cached_meta = st.session_state.get(meta_key) or {}
                 if isinstance(cached_meta, dict):
-                    variants = cached_meta.get("variants", [])
+                    variants = cached_meta.get("variants", []) or []
                     if variants:
-                        st.markdown(f"**Suggested description:** `{variants[0].get('description', '')}` ({len(variants[0].get('description', ''))} chars)")
+                        if not recommended_title:
+                            recommended_title = variants[0].get("title", "") or ""
+                        if not recommended_desc:
+                            recommended_desc = variants[0].get("description", "") or ""
 
-            if new_title and new_desc and (new_title != page['title'] or new_desc != page['meta_description']):
-                st.code(f"Title: {new_title}\nDescription: {new_desc}", language="text")
+            # Title — visible diff card
+            render_recommendation_diff(
+                "Meta title",
+                page["title"] or "",
+                recommended_title,
+                kind="title",
+                note="Aim for 30–65 chars. Front-load the primary keyword and add a benefit modifier.",
+            )
+
+            # Description — visible diff card
+            render_recommendation_diff(
+                "Meta description",
+                page["meta_description"] or "",
+                recommended_desc,
+                kind="description",
+                note="Aim for 120–165 chars. Lead with the keyword, end with a soft CTA.",
+            )
+
+            # AI generate button if nothing cached yet
+            if not recommended_title and not recommended_desc and meta_key not in st.session_state:
+                if st.button("🤖 Generate meta title + description", key=f"gen_meta_{stable_hash(page['url'])}"):
+                    if not has_anthropic_key():
+                        st.error(
+                            "Anthropic API key is missing. Set it in **1. Setup & Connect** "
+                            "or as the `ANTHROPIC_API_KEY` env var on Railway, then retry."
+                        )
+                        st.stop()
+                    try:
+                        from utils.ai_generator import get_client, generate_meta_suggestions
+                        from utils.page_profile import build_page_profile
+                        # NB: get_anthropic_key is imported at module top (line 7).
+                        # Do NOT re-import it inside this function — Python would
+                        # then treat it as local, and any earlier reference (e.g. the
+                        # intro generate button) would raise UnboundLocalError.
+                        client = get_client(get_anthropic_key())
+                        profile = build_page_profile(page["url"])
+                        target_kws = [q["query"] for q in profile.get("gsc_queries", [])[:5]]
+                        result = generate_meta_suggestions(client, page["audit"], target_kws,
+                            st.session_state.get("site_context", ""),
+                            st.session_state.get("content_language", "Swedish"))
+                        st.session_state[meta_key] = result
+                        st.rerun()
+                    except Exception as e:
+                        show_ai_error(
+                            "Meta title + description generation",
+                            e,
+                            context={
+                                "url": page["url"],
+                                "target_keywords": target_kws if "target_kws" in dir() else "(not computed)",
+                            },
+                        )
+
+            if recommended_title and recommended_desc:
+                with st.expander("Copy both as block", expanded=False):
+                    st.code(f"Title: {recommended_title}\nDescription: {recommended_desc}", language="text")
+
             _approval_button("Meta", f"{url_hash}_meta")
             st.markdown("---")
         else:
@@ -1254,9 +1263,32 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                     st.caption(f"Pulled intro from unknown key `{longest[0]}` — please tell the dev so the keys list can be updated.")
 
             new_intro_wc = len(new_intro.split()) if new_intro else 0
-            st.markdown(f"**New intro:** {new_intro_wc} words")
-            with st.expander("View intro text", expanded=False):
-                st.code(new_intro[:1500] if new_intro else "(empty)", language="html")
+
+            # Strip HTML for the visible diff so it reads as prose; the
+            # raw HTML is still available below in the "Copy raw" expander.
+            try:
+                from bs4 import BeautifulSoup as _Bs
+                intro_plain = _Bs(new_intro or "", "html.parser").get_text(separator=" ").strip()
+            except Exception:
+                intro_plain = new_intro or ""
+
+            current_intro_text = (
+                page["audit"].get("intro_text")
+                or page["audit"].get("body_text", "")[:600]
+                or ""
+            )
+            try:
+                current_intro_plain = _Bs(current_intro_text, "html.parser").get_text(separator=" ").strip()
+            except Exception:
+                current_intro_plain = current_intro_text
+
+            render_recommendation_diff(
+                "Intro text",
+                current_intro_plain,
+                intro_plain,
+                kind="intro",
+                note="Place above the product grid. Front-load the primary keyword in the first sentence.",
+            )
 
             # Show full raw response when we couldn't extract any content
             if new_intro_wc == 0:

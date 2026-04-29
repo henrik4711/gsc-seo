@@ -241,6 +241,109 @@ def lix_badge(lix: int) -> tuple[str, str, str]:
     return "#ff4455", f"LIX {lix} — too difficult, regenerate recommended", "bad"
 
 
+def render_recommendation_diff(
+    label: str,
+    current: str,
+    recommended: str,
+    *,
+    kind: str = "title",
+    ideal_min: int | None = None,
+    ideal_max: int | None = None,
+    note: str = "",
+):
+    """
+    Render a high-visibility before → after card for an AI recommendation.
+
+    Use everywhere we suggest a new title, meta description, intro, or any
+    short copy change so all views look identical and the user always sees
+    the recommendation prominently (not buried in inline code blocks).
+
+    Args:
+        label: Visible header, e.g. "META TITLE", "META DESCRIPTION", "INTRO TEXT".
+        current: The current copy on the page (may be empty).
+        recommended: The AI-generated replacement (may be empty).
+        kind: "title" | "description" | "intro" — affects the unit shown
+              (chars vs. words) and the default ideal range when not given.
+        ideal_min, ideal_max: Override the ideal range for the unit.
+        note: Optional small note rendered under the recommended block.
+
+    Renders nothing if both current and recommended are empty.
+    """
+    current = (current or "").strip()
+    recommended = (recommended or "").strip()
+    if not current and not recommended:
+        return
+
+    if kind == "title":
+        unit = "chars"
+        cur_count = len(current)
+        new_count = len(recommended)
+        if ideal_min is None: ideal_min = 30
+        if ideal_max is None: ideal_max = 65
+    elif kind == "description":
+        unit = "chars"
+        cur_count = len(current)
+        new_count = len(recommended)
+        if ideal_min is None: ideal_min = 120
+        if ideal_max is None: ideal_max = 165
+    else:  # intro / generic body copy — count words
+        unit = "words"
+        cur_count = len(current.split()) if current else 0
+        new_count = len(recommended.split()) if recommended else 0
+        if ideal_min is None: ideal_min = 80
+        if ideal_max is None: ideal_max = 200
+
+    def _len_color(n: int) -> str:
+        if n == 0:
+            return "#6b6b8a"
+        if n < ideal_min or n > ideal_max:
+            return "#ffaa33"
+        return "#33dd88"
+
+    import html as _html
+    cur_safe = _html.escape(current) if current else "<em style='color:#6b6b8a;'>(empty)</em>"
+    new_safe = _html.escape(recommended) if recommended else "<em style='color:#6b6b8a;'>(not generated yet)</em>"
+
+    # Bigger panel for intros — they're long-form text
+    rec_font = "1rem" if kind == "intro" else "1.05rem"
+    rec_max_height = "none" if kind == "intro" else "none"
+
+    st.markdown(
+        f"""
+<div style='border:2px solid #33dd88; border-radius:10px; padding:1rem 1.1rem; margin:0.6rem 0 1rem 0; background:linear-gradient(180deg,#0d1a0d 0%, #0a1410 100%);'>
+  <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:0.6rem;'>
+    <span style='font-family:"IBM Plex Mono",monospace; font-size:0.7rem; color:#33dd88; letter-spacing:0.12em; font-weight:700;'>
+      ✨ RECOMMENDED {label.upper()} CHANGE
+    </span>
+    <span style='font-family:"IBM Plex Mono",monospace; font-size:0.65rem; color:#6b6b8a;'>
+      ideal: {ideal_min}–{ideal_max} {unit}
+    </span>
+  </div>
+
+  <div style='background:#1a0d0d; border-left:3px solid #ff4455; border-radius:4px; padding:0.55rem 0.75rem; margin-bottom:0.5rem;'>
+    <div style='font-family:"IBM Plex Mono",monospace; font-size:0.6rem; color:#ff4455; letter-spacing:0.1em; margin-bottom:0.3rem;'>
+      CURRENT · <span style='color:{_len_color(cur_count)};'>{cur_count} {unit}</span>
+    </div>
+    <div style='font-size:0.95rem; color:#d8d8e8; line-height:1.55; word-wrap:break-word;'>{cur_safe}</div>
+  </div>
+
+  <div style='background:#0d1a0d; border-left:3px solid #33dd88; border-radius:4px; padding:0.65rem 0.85rem; max-height:{rec_max_height};'>
+    <div style='font-family:"IBM Plex Mono",monospace; font-size:0.6rem; color:#33dd88; letter-spacing:0.1em; margin-bottom:0.3rem;'>
+      NEW · <span style='color:{_len_color(new_count)};'>{new_count} {unit}</span>
+    </div>
+    <div style='font-size:{rec_font}; color:#e8e8f0; line-height:1.6; font-weight:500; word-wrap:break-word;'>{new_safe}</div>
+    {f"<div style='font-size:0.72rem; color:#9b9bb8; margin-top:0.45rem;'>{_html.escape(note)}</div>" if note else ""}
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    if recommended:
+        with st.expander(f"Copy raw {label.lower()}", expanded=False):
+            st.code(recommended, language="text")
+
+
 def extract_content_summary(text_data: dict) -> tuple[list, list, list]:
     """
     Pull (keywords, internal_links, products) from a generated-content payload.

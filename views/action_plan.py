@@ -368,32 +368,33 @@ def render():
                     current_title = page_r.get("title") or ""
                     current_desc = page_r.get("meta_description") or ""
 
-                    mt_color = "#33dd88" if 50 <= mt_chars <= 60 else "#ffaa33" if mt_chars > 0 else "#ff4455"
-                    md_color = "#33dd88" if 140 <= md_chars <= 160 else "#ffaa33" if md_chars > 0 else "#ff4455"
-
-                    change_label = "RECOMMENDED CHANGE" if meta_changed else "CURRENT (OK)"
-                    change_border = "#ffaa33" if meta_changed else "#33dd88"
-
-                    st.markdown(
-                        f"<div style='background:#12121f; border:2px solid {change_border}; border-radius:8px; padding:1rem; margin-bottom:1rem;'>"
-                        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:{change_border}; "
-                        f"margin-bottom:0.5rem;'>META TITLE & DESCRIPTION · {change_label}</div>"
-                        # Current
-                        f"{'<div style=\"font-size:0.72rem; color:#6b6b8a; margin-bottom:0.3rem;\">Current title: ' + current_title + ' (' + str(len(current_title)) + ' chars)</div>' if meta_changed and current_title else ''}"
-                        f"{'<div style=\"font-size:0.72rem; color:#6b6b8a; margin-bottom:0.5rem;\">Current desc: ' + current_desc[:80] + '... (' + str(len(current_desc)) + ' chars)</div>' if meta_changed and current_desc else ''}"
-                        # Recommended
-                        f"<div style='margin-bottom:0.4rem;'>"
-                        f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:{mt_color};'>TITLE · {mt_chars} chars</span><br>"
-                        f"<span style='font-size:0.95rem; color:#e8e8f0; font-weight:500;'>{meta_title}</span></div>"
-                        f"<div>"
-                        f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:{md_color};'>DESCRIPTION · {md_chars} chars</span><br>"
-                        f"<span style='font-size:0.85rem; color:#b8b8d0;'>{meta_desc_plan}</span></div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-
                     if meta_changed:
-                        st.code(f"Title: {meta_title}\nDescription: {meta_desc_plan}", language="text")
+                        from utils.ui_helpers import render_recommendation_diff
+                        render_recommendation_diff(
+                            "Meta title",
+                            current_title,
+                            meta_title,
+                            kind="title",
+                            note="Aim for 30–65 chars. Front-load the primary keyword.",
+                        )
+                        render_recommendation_diff(
+                            "Meta description",
+                            current_desc,
+                            meta_desc_plan,
+                            kind="description",
+                            note="Aim for 120–165 chars. Lead with the keyword, end with a soft CTA.",
+                        )
+                        with st.expander("Copy both as block", expanded=False):
+                            st.code(f"Title: {meta_title}\nDescription: {meta_desc_plan}", language="text")
+                    else:
+                        st.markdown(
+                            f"<div style='background:#0d1a0d; border:2px solid #33dd88; border-radius:8px; padding:0.8rem; margin-bottom:1rem;'>"
+                            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; color:#33dd88; margin-bottom:0.4rem;'>META TITLE & DESCRIPTION · CURRENT (OK — no change needed)</div>"
+                            f"<div style='font-size:0.85rem; color:#e8e8f0; margin-bottom:0.3rem;'>{current_title} <span style='color:#6b6b8a;'>({len(current_title)} chars)</span></div>"
+                            f"<div style='font-size:0.8rem; color:#b8b8d0;'>{current_desc} <span style='color:#6b6b8a;'>({len(current_desc)} chars)</span></div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
 
                 # ── (Re)generate meta via shared module (same as Quick Wins) ──
                 meta_sugg_key = f"_meta_suggestions_{url_hash}"
@@ -791,18 +792,25 @@ def render():
                             or intro_res.get("html", "")
                             or intro_res.get("text", "")
                         )
-                        st.markdown(
-                            f"<div style='background:#0d1a0d; border:2px solid #33dd88; border-radius:6px; padding:0.8rem; margin:0.5rem 0;'>"
-                            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#33dd88; margin-bottom:0.3rem;'>"
-                            f"NEW INTRO — PASTE ABOVE PRODUCT GRID ({len(new_intro_text.split())} words)</div>"
-                            f"<div style='font-size:0.9rem; color:#e8e8f0; line-height:1.6;'>{new_intro_text}</div>"
-                            f"</div>",
-                            unsafe_allow_html=True,
+                        try:
+                            from bs4 import BeautifulSoup as _Bs
+                            new_intro_plain = _Bs(new_intro_text or "", "html.parser").get_text(separator=" ").strip()
+                            current_intro_plain = _Bs(current_intro or "", "html.parser").get_text(separator=" ").strip()
+                        except Exception:
+                            new_intro_plain = new_intro_text or ""
+                            current_intro_plain = current_intro or ""
+
+                        from utils.ui_helpers import render_recommendation_diff
+                        render_recommendation_diff(
+                            "Intro text",
+                            current_intro_plain,
+                            new_intro_plain,
+                            kind="intro",
+                            note="Paste above the product grid. Front-load the primary keyword in the first sentence.",
                         )
                         kws = intro_res.get("keywords_integrated", [])
                         if kws:
-                            st.markdown(f"<span style='font-size:0.7rem; color:#33dd88;'>Keywords: {', '.join(kws)}</span>", unsafe_allow_html=True)
-                        st.code(new_intro_text, language="text")
+                            st.markdown(f"<span style='font-size:0.7rem; color:#33dd88;'>Keywords integrated: {', '.join(kws)}</span>", unsafe_allow_html=True)
 
                     st.markdown("---")
 
