@@ -474,7 +474,17 @@ def _validate_generated_content(page, text_data, plan_data):
             results["failed"] += 1
 
     audit = page["audit"]
-    html = (text_data.get("bottom_html") or text_data.get("html", "")) if text_data else ""
+    # Validate the FULL editorial output (top + bottom) — keywords/links
+    # may legitimately appear in either, so checking only bottom_html
+    # produces false negatives.
+    if text_data:
+        html = (
+            (text_data.get("top_html") or "")
+            + " "
+            + (text_data.get("bottom_html") or text_data.get("html", "") or "")
+        )
+    else:
+        html = ""
 
     # ── 1. Check all URLs in generated HTML exist on the site ──
     all_site_urls = set()
@@ -560,15 +570,43 @@ def _validate_generated_content(page, text_data, plan_data):
             has_faq = "vanliga frågor" in html.lower() or "<h2" in html.lower() and "faq" in html.lower()
             _check(has_faq, "FAQ section present" if has_faq else "FAQ section missing", "warning" if not has_faq else "info")
 
-        # ── 7. Check target keywords are present ──
-        target_keywords = audit.get("target_keywords", [])[:5]
-        if target_keywords:
-            html_lower = html.lower()
-            missing_kws = [kw for kw in target_keywords if kw.lower() not in html_lower]
-            if missing_kws:
-                _check(False, f"{len(missing_kws)}/{len(target_keywords)} target keywords missing: {', '.join(missing_kws[:3])}", "warning")
-            else:
-                _check(True, f"All {len(target_keywords)} target keywords present", "info")
+        # ── 7. Required keywords + links — single source of truth ──
+        # The generator stamps the result with _required_keywords +
+        # _required_links so validation matches exactly what the prompt
+        # demanded. Falls back to top-5 target_keywords for legacy results.
+        from utils.ai_generator import _missing_required
+        required_kws = (text_data or {}).get("_required_keywords") or []
+        required_links = (text_data or {}).get("_required_links") or []
+        if not required_kws:
+            required_kws = audit.get("target_keywords", [])[:5]
+
+        if required_kws or required_links:
+            missing_kws, missing_links = _missing_required(html, required_kws, required_links)
+
+            if required_kws:
+                if missing_kws:
+                    _check(
+                        False,
+                        f"{len(missing_kws)}/{len(required_kws)} REQUIRED keywords missing: "
+                        + ", ".join(missing_kws[:5]),
+                        "error",
+                    )
+                else:
+                    _check(True, f"All {len(required_kws)} required keywords present", "info")
+
+            if required_links:
+                if missing_links:
+                    miss_lines = ", ".join(
+                        f"{ml.get('anchor','?')} → {ml.get('url','?')}"
+                        for ml in missing_links[:3]
+                    )
+                    _check(
+                        False,
+                        f"{len(missing_links)}/{len(required_links)} REQUIRED links missing: {miss_lines}",
+                        "error",
+                    )
+                else:
+                    _check(True, f"All {len(required_links)} required internal links present", "info")
 
         # ── 8. LIX readability (target 35-40) ──
         from utils.ui_helpers import compute_lix

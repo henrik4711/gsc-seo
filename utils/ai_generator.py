@@ -1371,7 +1371,136 @@ Language: {language}
 # UNIFIED page content generator — single source of truth for ALL views
 # ──────────────────────────────────────────────────────────────────────
 
-def generate_page_content(url: str, target_query: str = None, validation_fixes: list | None = None) -> dict:
+def _required_items_for_page(prof: dict, audit_by_url: dict) -> tuple[list, list]:
+    """
+    Build the canonical "MUST appear" lists for the AI body-text prompt.
+
+    The prompt already has many sections (GSC queries, cluster links,
+    cannibal targets, hierarchy). This consolidates the most critical
+    items into two flat lists that get injected as a NON-NEGOTIABLE
+    checklist at the top of the prompt, AND validated programmatically
+    after generation so the system can auto-retry on misses.
+
+    Returns:
+        (required_keywords, required_links)
+        - required_keywords: list[str] — exact phrases that must appear
+          (case-insensitive) somewhere in top_html + bottom_html.
+        - required_links: list[dict] — each {"url", "anchor", "reason"}
+          where the URL must appear in an href= attribute.
+    """
+    from utils.ui_helpers import normalize_url as _nu
+
+    # ── Required KEYWORDS ────────────────────────────────────
+    # Source 1: top GSC queries this page already gets impressions for —
+    #           must keep covering them.
+    # Source 2: missing keywords from content_audit.keyword_coverage —
+    #           the audit explicitly flagged these as gaps.
+    # Source 3: primary query (always).
+    required_kws_raw = []
+    primary = (prof.get("primary_query") or "").strip()
+    if primary:
+        required_kws_raw.append(primary)
+
+    for q in prof.get("gsc_queries", [])[:8]:
+        kw = (q.get("query") or "").strip()
+        if kw:
+            required_kws_raw.append(kw)
+
+    # Pull missing keywords from the underlying audit row
+    page_audit = audit_by_url.get(prof.get("url", ""), {}) or {}
+    content_audit = page_audit.get("content_audit") or {}
+    kw_coverage = content_audit.get("keyword_coverage") or {}
+    for kw in (kw_coverage.get("missing") or [])[:10]:
+        if isinstance(kw, str) and kw.strip():
+            required_kws_raw.append(kw.strip())
+
+    # Dedup case-insensitively, preserve order, cap to keep prompt sane.
+    seen = set()
+    required_keywords = []
+    for kw in required_kws_raw:
+        k = kw.lower().strip()
+        if k and k not in seen:
+            seen.add(k)
+            required_keywords.append(kw)
+    required_keywords = required_keywords[:12]
+
+    # ── Required LINKS ──────────────────────────────────────
+    # Source 1: cluster_link_outgoing (architectural — spoke→pillar etc.)
+    # Source 2: cannibal_link_targets (resolves cannibalization conflicts)
+    # Source 3: hierarchy parent (when this page has a URL parent on site)
+    required_links = []
+    seen_urls = set()
+    self_norm = _nu(prof.get("url", ""))
+
+    for r in prof.get("cluster_link_outgoing", []) or []:
+        u = _nu(r.get("to_url", ""))
+        if not u or u == self_norm or u in seen_urls:
+            continue
+        seen_urls.add(u)
+        required_links.append({
+            "url": r.get("to_url", ""),
+            "anchor": r.get("anchor", ""),
+            "reason": f"cluster {r.get('type', '')} ({r.get('cluster_topic', '')})",
+        })
+
+    for r in prof.get("cannibal_link_targets", []) or []:
+        u = _nu(r.get("link_target", ""))
+        if not u or u == self_norm or u in seen_urls:
+            continue
+        seen_urls.add(u)
+        required_links.append({
+            "url": r.get("link_target", ""),
+            "anchor": r.get("query", ""),
+            "reason": f"cannibal target ({r.get('link_target_reason', '')})",
+        })
+
+    return required_keywords, required_links[:8]
+
+
+def _missing_required(html: str, required_keywords: list, required_links: list) -> tuple[list, list]:
+    """
+    Inspect generated HTML and return what's still missing.
+
+    Returns:
+        (missing_keywords, missing_links) — the items NOT found in html.
+        - keywords: case-insensitive substring match against full text
+        - links: substring match of normalized URL against any href= value
+    """
+    import re
+    from utils.ui_helpers import normalize_url as _nu
+
+    html_text = (html or "").lower()
+    # Strip tags for keyword checking — keywords should appear in prose,
+    # not just in alt= or hidden meta. But include hrefs/alt so an anchor
+    # like "klassisk dildo" still counts as keyword presence.
+    plain = re.sub(r"<[^>]+>", " ", html_text)
+    href_blob = " ".join(re.findall(r'href=["\']([^"\']+)["\']', html_text))
+    visible_blob = plain + " " + href_blob
+
+    missing_kws = []
+    for kw in required_keywords or []:
+        if kw and kw.lower() not in visible_blob:
+            missing_kws.append(kw)
+
+    href_norms = {_nu(h) for h in re.findall(r'href=["\']([^"\']+)["\']', html or "")}
+    missing_links = []
+    for link in required_links or []:
+        url = link.get("url", "")
+        if not url:
+            continue
+        if _nu(url) not in href_norms:
+            missing_links.append(link)
+
+    return missing_kws, missing_links
+
+
+def generate_page_content(
+    url: str,
+    target_query: str = None,
+    validation_fixes: list | None = None,
+    _attempt: int = 1,
+    _max_attempts: int = 3,
+) -> dict:
     """
     Generate COMPLETE body text (top + bottom + FAQ) for any page.
 
@@ -1632,6 +1761,57 @@ def generate_page_content(url: str, target_query: str = None, validation_fixes: 
         f"Has #category-description id: {struct.get('has_category_description_id', False)}"
     )
 
+    # ── Required keywords + links — programmatically validated post-generation ──
+    required_keywords, required_links = _required_items_for_page(prof, audit_by_url)
+
+    required_kw_block = ""
+    if required_keywords:
+        required_kw_block = (
+            "════════════════════════════════════════════════════════════\n"
+            "## ⛔ HARD REQUIREMENT — REQUIRED KEYWORDS (ALL MUST APPEAR)\n"
+            "════════════════════════════════════════════════════════════\n"
+            f"There are {len(required_keywords)} keywords below. Each one "
+            "MUST appear at least once (case-insensitive) inside top_html "
+            "or bottom_html. After you finish, the output is parsed and "
+            "checked — ANY missing keyword causes IMMEDIATE rejection and "
+            "regeneration. Do not skip even one. Treat this as a checklist:\n\n"
+            + "\n".join(f"  [ ] {kw}" for kw in required_keywords)
+            + "\n\nBefore returning your JSON, mentally tick each box and "
+            "confirm the keyword appears in your text. Weave each into a "
+            "natural sentence — do NOT keyword-stuff and do NOT just list "
+            "them. Where possible, use the keyword inside an H2 heading or "
+            "the first paragraph of its section.\n"
+            "════════════════════════════════════════════════════════════\n"
+        )
+
+    required_link_block = ""
+    if required_links:
+        link_lines = []
+        for r in required_links:
+            link_lines.append(
+                f"  [ ] <a href=\"{r['url']}\">{r['anchor']}</a>  "
+                f"— reason: {r['reason']}"
+            )
+        required_link_block = (
+            "════════════════════════════════════════════════════════════\n"
+            "## ⛔ HARD REQUIREMENT — REQUIRED INTERNAL LINKS (ALL MUST APPEAR)\n"
+            "════════════════════════════════════════════════════════════\n"
+            f"There are {len(required_links)} links below. Each ONE must "
+            "appear in your output as a real <a href=\"...\">anchor</a> tag "
+            "with the EXACT URL shown — copy the URL character-for-character. "
+            "The anchor text can be the suggestion or a close natural variant. "
+            "After generation the href values are programmatically checked — "
+            "any missing required URL triggers IMMEDIATE rejection and "
+            "regeneration. Treat this as a checklist:\n\n"
+            + "\n".join(link_lines)
+            + "\n\nBefore returning your JSON, mentally tick each box and "
+            "confirm the URL appears as an href. Place each link in a "
+            "contextually relevant sentence — never dump them in a list. "
+            "Vertical-up (spoke→pillar) goes in bottom_html. Horizontal "
+            "(sibling→sibling) goes wherever it fits naturally.\n"
+            "════════════════════════════════════════════════════════════\n"
+        )
+
     # ── Validation-feedback block — shown at top of prompt so model can't miss it ──
     validation_block = ""
     if validation_fixes:
@@ -1658,6 +1838,8 @@ Concretely, when you rewrite the text:
 
 You are rewriting the BODY TEXT for an e-commerce category page.
 {validation_block}
+{required_kw_block}
+{required_link_block}
 ## CRITICAL: KEYWORD FOCUS
 The PRIMARY keyword for this page is: **{query}**
 This keyword MUST:
@@ -1829,7 +2011,43 @@ ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
-    return _parse_ai_json(message)
+    result = _parse_ai_json(message) or {}
+
+    # Tag the result so callers (validation UI, missed-items display)
+    # can see exactly what was required regardless of whether the AI
+    # met every requirement.
+    if isinstance(result, dict):
+        result["_required_keywords"] = required_keywords
+        result["_required_links"] = required_links
+        result["_attempt"] = _attempt
+        result["_max_attempts"] = _max_attempts
+
+    # Auto-retry on missed required items — every caller (Quick Wins,
+    # Action Plan, batch flows) gets this for free.
+    if isinstance(result, dict) and not result.get("error") and _attempt < _max_attempts:
+        full_html = (result.get("top_html") or "") + " " + (result.get("bottom_html") or "")
+        missing_kws, missing_links = _missing_required(full_html, required_keywords, required_links)
+        if missing_kws or missing_links:
+            new_fixes = list(validation_fixes or [])
+            if missing_kws:
+                new_fixes.append(
+                    f"REQUIRED keyword(s) STILL missing — you MUST add each of these as natural prose: "
+                    + ", ".join(f"\"{k}\"" for k in missing_kws)
+                )
+            for ml in missing_links:
+                new_fixes.append(
+                    f"REQUIRED link STILL missing — add this exact href: "
+                    f"<a href=\"{ml['url']}\">{ml['anchor']}</a> (reason: {ml['reason']})"
+                )
+            return generate_page_content(
+                url,
+                target_query=target_query,
+                validation_fixes=new_fixes,
+                _attempt=_attempt + 1,
+                _max_attempts=_max_attempts,
+            )
+
+    return result
 
 
 # DEPRECATED: Use generate_page_content(url, target_query) instead.
