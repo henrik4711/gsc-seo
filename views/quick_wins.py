@@ -1098,6 +1098,233 @@ def _approval_button(label, key):
         st.markdown(f"<div style='font-size:0.75rem; color:{color}; font-weight:600;'>Status: {current.upper()}</div>", unsafe_allow_html=True)
 
 
+# ── Current SEO state card ────────────────────────────────────────────
+# Always-visible diagnosis of what Google sees on this page right now,
+# with a per-element verdict (OK / generate new + WHY) so the user never
+# has to dig through the AI plan to know if title/meta/h1 need work.
+
+_TITLE_MIN, _TITLE_MAX = 30, 65
+_DESC_MIN, _DESC_MAX = 120, 165
+
+
+def _primary_keyword_for_page(page) -> str:
+    """Best-effort top GSC query for this page (single token preferred)."""
+    try:
+        from utils.page_profile import build_page_profile
+        prof = build_page_profile(page["url"])
+        q = (prof or {}).get("primary_query") or ""
+        if q:
+            return q.strip()
+        gsc = (prof or {}).get("gsc_queries") or []
+        if gsc:
+            return (gsc[0].get("query") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _kw_present_in(primary_kw: str, text: str) -> bool:
+    """Substring-tolerant primary-keyword presence check.
+
+    Why substring (not token equality): GSC query "dildo" should be considered
+    present in titles like "Dildos" (plural) or "Favoritdildo" (compound).
+    A pure tokenizer-and-set-intersect approach gives too many false positives
+    for the "missing primary keyword" verdict.
+    """
+    if not primary_kw or not text:
+        return False
+    text_l = text.lower()
+    tokens = re.findall(r"\w+", primary_kw.lower())
+    if not tokens:
+        return False
+    long_toks = [t for t in tokens if len(t) >= 4]
+    if long_toks:
+        # >=4 char tokens use substring match — 'dildo' present in 'dildos',
+        # 'kukring' present in 'kukringar', '6000' present in 'cb-6000-chastity'.
+        return any(tok in text_l for tok in long_toks)
+    # All kw tokens are short (3 chars) — require word-boundary match to avoid
+    # false positives like 'rea' matching inside 'realistic'.
+    text_tokens = set(re.findall(r"\w+", text_l))
+    return any(t in text_tokens for t in tokens if len(t) >= 3)
+
+
+def _verdict_for_title(title: str, primary_kw: str) -> tuple:
+    """Returns (status, color, headline, reason). status: 'ok' | 'warn' | 'bad'."""
+    t = (title or "").strip()
+    n = len(t)
+    if not t:
+        return ("bad", "#ff4455", "Missing — must generate",
+                "No <title> tag means Google generates one from the page text. "
+                "You lose all control over the SERP click-through.")
+    if n < _TITLE_MIN:
+        return ("warn", "#ffaa33", f"Too short — generate new ({n} chars)",
+                f"Recommended {_TITLE_MIN}–{_TITLE_MAX} chars. "
+                f"At {n} chars you're wasting SERP real estate and likely missing "
+                f"either the primary keyword or a benefit modifier.")
+    if n > _TITLE_MAX:
+        return ("warn", "#ffaa33", f"Too long — generate new ({n} chars)",
+                f"Google truncates titles beyond ~{_TITLE_MAX} chars on desktop SERP. "
+                f"At {n} chars the end (often where the brand or USP sits) gets cut off as '…'.")
+    if primary_kw and not _kw_present_in(primary_kw, t):
+        return ("warn", "#ffaa33", f"Generate new — missing primary keyword '{primary_kw}'",
+                f"Top GSC query for this page is '{primary_kw}' but it doesn't appear in the title. "
+                f"Front-loading the primary keyword typically lifts CTR by 10–25 %.")
+    return ("ok", "#33dd88", "Looks OK — keep as-is",
+            f"{n} chars (within {_TITLE_MIN}–{_TITLE_MAX} window)"
+            + (f", primary keyword '{primary_kw}' present." if primary_kw else "."))
+
+
+def _verdict_for_description(desc: str, primary_kw: str) -> tuple:
+    d = (desc or "").strip()
+    n = len(d)
+    if not d:
+        return ("bad", "#ff4455", "Missing — must generate",
+                "No meta description means Google auto-generates a snippet from page text. "
+                "It's usually generic and CTR suffers vs. a hand-crafted snippet.")
+    if n < _DESC_MIN:
+        return ("warn", "#ffaa33", f"Too short — generate new ({n} chars)",
+                f"Recommended {_DESC_MIN}–{_DESC_MAX} chars. "
+                f"At {n} chars you're leaving SERP space empty and Google may "
+                f"override with its own auto-generated snippet anyway.")
+    if n > _DESC_MAX:
+        return ("warn", "#ffaa33", f"Too long — generate new ({n} chars)",
+                f"Google truncates beyond ~{_DESC_MAX} chars on desktop. "
+                f"Anything after that is cut as '…' and the CTA never makes it to the user.")
+    cta_words = {"köp", "kop", "shop", "se", "upptäck", "upptack", "läs", "las",
+                 "best", "bedst", "hitta", "find", "discover", "explore",
+                 "beställ", "bestall", "bestil", "fri frakt", "fri fragt"}
+    if not any(w in d.lower() for w in cta_words):
+        return ("warn", "#ffaa33", "Generate new — no call-to-action",
+                "The description reads like a label, not an invitation. "
+                "Add a soft CTA ('Köp', 'Se vårt sortiment', 'Upptäck …') at the end "
+                "to nudge clicks.")
+    if primary_kw and not _kw_present_in(primary_kw, d):
+        return ("warn", "#ffaa33", f"Generate new — missing primary keyword '{primary_kw}'",
+                f"Google bolds the primary keyword in the SERP snippet — without "
+                f"'{primary_kw}' anywhere in the description, you lose that visual cue.")
+    return ("ok", "#33dd88", "Looks OK — keep as-is",
+            f"{n} chars (within {_DESC_MIN}–{_DESC_MAX} window), CTA present"
+            + (f", primary keyword '{primary_kw}' present." if primary_kw else "."))
+
+
+def _verdict_for_h1(h1: str, title: str) -> tuple:
+    h = (h1 or "").strip()
+    if not h:
+        return ("bad", "#ff4455", "Missing — must add",
+                "No H1 tag found. Every page needs exactly one H1 for accessibility "
+                "and to tell Google the page's primary topic.")
+    if len(h) < 10:
+        return ("warn", "#ffaa33", f"Too short ({len(h)} chars)",
+                "An H1 should describe what's on the page — single-word H1s waste "
+                "the strongest on-page semantic signal.")
+    if title and h.strip().lower() == (title or "").strip().lower():
+        return ("warn", "#ffaa33", "Identical to <title>",
+                "H1 and <title> being byte-identical is a missed opportunity — "
+                "the title can lean on SERP-friendly modifiers ('Köp …', '— Brand'), "
+                "while the H1 should read more naturally as a page heading.")
+    return ("ok", "#33dd88", "Looks OK", f"{len(h)} chars, distinct from <title>.")
+
+
+def _render_seo_element_row(label: str, current_text: str, verdict: tuple,
+                            char_count_window: tuple = None):
+    """Render one row of the Current SEO State card."""
+    status, color, headline, reason = verdict
+    icon = {"ok": "✓", "warn": "⚠", "bad": "✗"}[status]
+    n = len(current_text or "")
+    range_str = ""
+    if char_count_window:
+        lo, hi = char_count_window
+        ok = lo <= n <= hi
+        range_color = "#33dd88" if ok else ("#ff4455" if n == 0 else "#ffaa33")
+        range_str = (
+            f"<span style='color:{range_color}; font-family:\"IBM Plex Mono\",monospace; "
+            f"font-size:0.7rem;'>{n} chars</span>"
+            f"<span style='color:#6b6b8a; font-size:0.7rem;'> / target {lo}–{hi}</span>"
+        )
+
+    # Escape angle brackets so titles like "<empty>" don't break HTML
+    display_text = (current_text or "(empty — nothing set)").replace("<", "&lt;").replace(">", "&gt;")
+    is_empty = not (current_text or "").strip()
+    text_color = "#6b6b8a" if is_empty else "#e8e8f0"
+    text_style = "italic" if is_empty else "normal"
+
+    st.markdown(
+        f"<div style='background:#0d0d15; border:1px solid #2a2a3a; border-left:4px solid {color}; "
+        f"border-radius:0 6px 6px 0; padding:0.7rem 0.9rem; margin-bottom:0.6rem;'>"
+        f"<div style='display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.3rem;'>"
+        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; "
+        f"color:#8a8aaa; letter-spacing:0.08em;'>{label.upper()}</div>"
+        f"<div>{range_str}</div>"
+        f"</div>"
+        f"<div style='font-size:0.9rem; color:{text_color}; font-style:{text_style}; "
+        f"margin:0.2rem 0 0.55rem 0; word-break:break-word; line-height:1.4;'>"
+        f"\"{display_text}\""
+        f"</div>"
+        f"<div style='font-size:0.78rem; color:{color}; font-weight:600; margin-bottom:0.15rem;'>"
+        f"{icon} {headline}"
+        f"</div>"
+        f"<div style='font-size:0.74rem; color:#9b9bb8; line-height:1.45;'>"
+        f"{reason}"
+        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_current_seo_state(page):
+    """Always-visible diagnosis card: current title/meta/H1 + per-element verdict."""
+    title = page.get("title") or ""
+    desc = page.get("meta_description") or ""
+    h1 = page.get("h1") or ""
+    primary_kw = _primary_keyword_for_page(page)
+
+    title_verdict = _verdict_for_title(title, primary_kw)
+    desc_verdict = _verdict_for_description(desc, primary_kw)
+    h1_verdict = _verdict_for_h1(h1, title)
+
+    needs_action = any(v[0] != "ok" for v in (title_verdict, desc_verdict, h1_verdict))
+    overall_color = "#ff4455" if any(v[0] == "bad" for v in (title_verdict, desc_verdict, h1_verdict)) \
+        else ("#ffaa33" if needs_action else "#33dd88")
+
+    if needs_action:
+        bad = sum(1 for v in (title_verdict, desc_verdict, h1_verdict) if v[0] == "bad")
+        warn = sum(1 for v in (title_verdict, desc_verdict, h1_verdict) if v[0] == "warn")
+        bits = []
+        if bad:
+            bits.append(f"{bad} missing")
+        if warn:
+            bits.append(f"{warn} need rewriting")
+        summary_text = " · ".join(bits)
+    else:
+        summary_text = "All three elements look healthy — no rewrite needed."
+
+    st.markdown(
+        f"<div style='background:#0d0d15; border:2px solid {overall_color}; border-radius:8px; "
+        f"padding:0.9rem 1rem 0.7rem 1rem; margin:1rem 0 1rem 0;'>"
+        f"<div style='display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.6rem;'>"
+        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; "
+        f"color:{overall_color}; letter-spacing:0.06em;'>WHAT GOOGLE SEES RIGHT NOW</div>"
+        f"<div style='font-size:0.78rem; color:{overall_color}; font-weight:600;'>{summary_text}</div>"
+        f"</div>"
+        + (f"<div style='font-size:0.72rem; color:#6b6b8a; margin-bottom:0.6rem;'>"
+           f"Primary GSC query for this page: <strong style='color:#c8b4ff;'>{primary_kw}</strong></div>"
+           if primary_kw else "")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    _render_seo_element_row("Meta title", title, title_verdict, char_count_window=(_TITLE_MIN, _TITLE_MAX))
+    _render_seo_element_row("Meta description", desc, desc_verdict, char_count_window=(_DESC_MIN, _DESC_MAX))
+    _render_seo_element_row("H1 heading", h1, h1_verdict, char_count_window=None)
+
+    if needs_action:
+        st.markdown(
+            "<div style='font-size:0.75rem; color:#9b9bb8; margin:0.2rem 0 0.4rem 0;'>"
+            "→ Click <strong>Generate plan</strong> below — the AI will produce concrete "
+            "rewrites for everything flagged ⚠ / ✗ above, plus a step-by-step plan for the rest of the page."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
@@ -1158,6 +1385,9 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
     c2.metric("Lost clicks", f"{page['lost_clicks']:,}")
     c3.metric("Meta score", f"{page['meta_score']}/100")
     c4.metric("Content score", f"{page['content_score']}/100")
+
+    # ── Current SEO state — what Google sees right now + per-element verdict ──
+    _render_current_seo_state(page)
 
     # ── DO THIS FIRST — clear, single top-priority action ──
     issues = _detect_issues(page)
