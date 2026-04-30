@@ -2604,14 +2604,18 @@ def render():
                         )
                         continue
 
-                    expander_label = {
-                        "assign_clusters": f"↳ Show the unclustered pages and which cluster each should join",
-                        "thin_pages": f"↳ Show the thin pages and exactly what to add to each",
-                        "expand_clusters": f"↳ Show which clusters need spokes and what to write",
-                        "informational_gap": f"↳ Show which clusters need blog/guide articles",
-                    }.get(cat, "↳ Show specific pages and per-page action")
+                    toggle_label = {
+                        "assign_clusters": "Show the unclustered pages and which cluster each should join",
+                        "thin_pages": "Show the thin pages and exactly what to add to each",
+                        "expand_clusters": "Show which clusters need spokes and what to write",
+                        "informational_gap": "Show which clusters need blog/guide articles",
+                    }.get(cat, "Show specific pages and per-page action")
 
-                    with st.expander(expander_label, expanded=False):
+                    # NB: Streamlit forbids expanders nested inside expanders, and
+                    # the whole Site Architecture card is itself an expander — so we
+                    # use a toggle here instead.
+                    show = st.toggle(toggle_label, key=f"_qw_drill_show_{pa_idx}", value=False)
+                    if show:
                         _render_priority_action_drilldown(
                             action_text, df_structure_for_drill, topic_clusters_state
                         )
