@@ -275,6 +275,258 @@ def _get_or_build_df_structure_cached():
         return None
 
 
+def _build_consolidated_action_plan(site_validation: dict, df_structure, topic_clusters: dict) -> list:
+    """Resolve every priority action into a flat list of (impact, action, page-row) entries.
+
+    Output is one row per page (or per cluster, for the cluster-level actions),
+    grouped/sorted so the user can read top-to-bottom and act.
+    """
+    entries = []
+    if not isinstance(site_validation, dict):
+        return entries
+    impact_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "?": 3}
+    seen_url_action = set()
+    for pa in site_validation.get("priority_actions", []) or []:
+        if isinstance(pa, dict):
+            action_text = pa.get("action", "")
+            impact = (pa.get("impact") or "?").upper()
+        else:
+            action_text = str(pa)
+            impact = "?"
+        cat = _classify_priority_action(action_text)
+        if cat == "other" or df_structure is None:
+            continue
+        resolved = _resolve_priority_action(action_text, df_structure, topic_clusters)
+        for row in resolved.get("pages", []):
+            url = row.get("url", "") or ""
+            cluster = row.get("cluster", "") or ""
+            key = (url, cluster, action_text)
+            if key in seen_url_action:
+                continue
+            seen_url_action.add(key)
+            entries.append({
+                "impact": impact,
+                "impact_rank": impact_rank.get(impact, 3),
+                "category": cat,
+                "action_label": action_text,
+                "url": url,
+                "cluster": cluster,
+                "page_type": row.get("page_type", ""),
+                "impressions": row.get("impressions", 0) or 0,
+                "clicks": row.get("clicks", 0) or 0,
+                "words": row.get("words", 0) or 0,
+                "suggested_cluster": row.get("suggested_cluster"),
+                "suggested_action": row.get("suggested_action", ""),
+            })
+    # Sort: by impact (HIGH first), then impressions desc
+    entries.sort(key=lambda e: (e["impact_rank"], -e["impressions"]))
+    return entries
+
+
+_CATEGORY_LABEL = {
+    "assign_clusters": "Assign to a topical cluster",
+    "thin_pages": "Thicken thin category page",
+    "expand_clusters": "Expand under-served cluster",
+    "informational_gap": "Add blog / buying-guide content",
+}
+
+
+def _action_plan_to_markdown(entries: list, site_validation: dict) -> str:
+    """Render the consolidated plan as a single markdown document for export."""
+    out = []
+    health = site_validation.get("overall_health_score", 0) if isinstance(site_validation, dict) else 0
+    summary = site_validation.get("summary", "") if isinstance(site_validation, dict) else ""
+    out.append(f"# Site Action Plan — Health {health}/100\n")
+    if summary:
+        out.append(f"> {summary}\n")
+    out.append(f"_Total actionable items: **{len(entries)}**, sorted by impact and impressions._\n")
+    out.append("")
+
+    # Group by category for readable export
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for e in entries:
+        grouped[e["category"]].append(e)
+
+    for cat in ("assign_clusters", "thin_pages", "expand_clusters", "informational_gap"):
+        rows = grouped.get(cat, [])
+        if not rows:
+            continue
+        out.append(f"\n## {_CATEGORY_LABEL.get(cat, cat)} — {len(rows)} item(s)\n")
+        for i, e in enumerate(rows, 1):
+            target = e["url"] or (f"Cluster: {e['cluster']}" if e["cluster"] else "(no target)")
+            out.append(f"### {i}. [{e['impact']}] {target}")
+            meta_bits = []
+            if e["page_type"]:
+                meta_bits.append(e["page_type"])
+            if e["words"]:
+                meta_bits.append(f"{e['words']} words")
+            if e["impressions"]:
+                meta_bits.append(f"{e['impressions']:,} impr/30d")
+            if e["clicks"]:
+                meta_bits.append(f"{e['clicks']:,} clicks/30d")
+            if meta_bits:
+                out.append(f"_{' · '.join(meta_bits)}_\n")
+            out.append(f"**Action:** {e['suggested_action']}\n")
+            out.append(f"_Site-wide priority this addresses:_ {e['action_label']}\n")
+    return "\n".join(out)
+
+
+def _render_site_action_plan_tab():
+    """Tab renderer: one screen with every actionable page + per-page concrete action."""
+    st.markdown("### 📋 Site Action Plan")
+    st.markdown(
+        "<p style='color:#9b9bb8; font-size:0.85rem; margin-bottom:1rem;'>"
+        "Every page that the AI flagged as part of a site-wide priority, "
+        "expanded into a concrete per-page action. Sorted by impact, then traffic. "
+        "Work top-to-bottom or hand the markdown export to a team member.</p>",
+        unsafe_allow_html=True,
+    )
+
+    site_validation = st.session_state.get("_site_validation")
+    if not site_validation or not isinstance(site_validation, dict):
+        st.warning(
+            "Site structure validation not yet run. Go to **⚡ Run Pipeline → Step 10: Site Validation** first."
+        )
+        return
+
+    topic_clusters = st.session_state.get("topic_clusters", {}) or {}
+    df_structure = _get_or_build_df_structure_cached()
+    if df_structure is None:
+        err = st.session_state.get("_qw_df_structure_error", "")
+        st.error(
+            f"Could not build the site-structure dataframe needed for the action plan. "
+            f"Re-run the pipeline (Step 1–9). {('Error: ' + err) if err else ''}"
+        )
+        return
+
+    entries = _build_consolidated_action_plan(site_validation, df_structure, topic_clusters)
+    if not entries:
+        st.info(
+            "No site-wide priority actions resolve to specific pages right now. Either the AI's "
+            "priority actions are purely architectural this run, or required pipeline data is missing."
+        )
+        return
+
+    # ── Top bar: counts + filters + export ─────────────────────────
+    bar_l, bar_m, bar_r = st.columns([2, 2, 1])
+    with bar_l:
+        impact_counts = {}
+        for e in entries:
+            impact_counts[e["impact"]] = impact_counts.get(e["impact"], 0) + 1
+        bits = []
+        for k in ("HIGH", "MEDIUM", "LOW"):
+            if k in impact_counts:
+                color = {"HIGH": "#ff4455", "MEDIUM": "#ffaa33", "LOW": "#5bb4d4"}[k]
+                bits.append(f"<span style='color:{color}; font-weight:600;'>{impact_counts[k]} {k}</span>")
+        st.markdown(
+            f"<div style='font-size:0.85rem; color:#9b9bb8;'>"
+            f"<strong style='color:#e8e8f0;'>{len(entries)} actionable items</strong>"
+            f"{' — ' + ' · '.join(bits) if bits else ''}</div>",
+            unsafe_allow_html=True,
+        )
+
+    with bar_m:
+        cat_options = ["All categories"] + [
+            _CATEGORY_LABEL[c] for c in ("assign_clusters", "thin_pages", "expand_clusters", "informational_gap")
+            if any(e["category"] == c for e in entries)
+        ]
+        cat_pick = st.selectbox(
+            "Filter by action type",
+            cat_options,
+            key="_qw_plan_cat_filter",
+            label_visibility="collapsed",
+        )
+
+    with bar_r:
+        md_export = _action_plan_to_markdown(entries, site_validation)
+        st.download_button(
+            "📄 Export markdown",
+            data=md_export,
+            file_name="site_action_plan.md",
+            mime="text/markdown",
+            key="_qw_plan_export",
+            use_container_width=True,
+        )
+
+    # ── Filter ──
+    if cat_pick != "All categories":
+        rev_label = {v: k for k, v in _CATEGORY_LABEL.items()}
+        wanted_cat = rev_label.get(cat_pick)
+        filtered = [e for e in entries if e["category"] == wanted_cat]
+    else:
+        filtered = entries
+
+    impact_filter = st.radio(
+        "Impact",
+        ["All impacts", "HIGH only", "HIGH + MEDIUM"],
+        horizontal=True,
+        key="_qw_plan_impact_filter",
+    )
+    if impact_filter == "HIGH only":
+        filtered = [e for e in filtered if e["impact"] == "HIGH"]
+    elif impact_filter == "HIGH + MEDIUM":
+        filtered = [e for e in filtered if e["impact"] in ("HIGH", "MEDIUM")]
+
+    if not filtered:
+        st.caption("No entries match the current filters.")
+        return
+
+    st.markdown(f"<div style='font-size:0.78rem; color:#6b6b8a; margin:0.4rem 0 0.8rem 0;'>"
+                f"Showing {len(filtered)} of {len(entries)} items.</div>", unsafe_allow_html=True)
+
+    # ── Render the list (group within categories for readability) ─
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for e in filtered:
+        grouped[e["category"]].append(e)
+
+    for cat in ("assign_clusters", "thin_pages", "expand_clusters", "informational_gap"):
+        rows = grouped.get(cat, [])
+        if not rows:
+            continue
+        st.markdown(
+            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; "
+            f"color:#5533ff; letter-spacing:0.08em; margin:1.2rem 0 0.5rem 0;'>"
+            f"{_CATEGORY_LABEL[cat].upper()} · {len(rows)} ITEM(S)</div>",
+            unsafe_allow_html=True,
+        )
+        for i, e in enumerate(rows[:200], 1):
+            impact_color = {"HIGH": "#ff4455", "MEDIUM": "#ffaa33", "LOW": "#5bb4d4"}.get(e["impact"], "#6b6b8a")
+            target = e["url"] or (f"Cluster: {e['cluster']}" if e["cluster"] else "(no target)")
+            display_target = shorten_url(target) if e["url"] else target
+            meta_bits = []
+            if e["page_type"]:
+                meta_bits.append(str(e["page_type"]))
+            if e["words"]:
+                meta_bits.append(f"{e['words']} words")
+            if e["impressions"]:
+                meta_bits.append(f"{e['impressions']:,} impr")
+            if e["clicks"]:
+                meta_bits.append(f"{e['clicks']:,} clicks")
+            meta = " · ".join(meta_bits)
+            st.markdown(
+                f"<div style='background:#0d0d15; border:1px solid #2a2a3a; "
+                f"border-left:3px solid {impact_color}; border-radius:0 6px 6px 0; "
+                f"padding:0.6rem 0.8rem; margin-bottom:0.5rem;'>"
+                f"<div style='display:flex; justify-content:space-between; align-items:baseline; gap:0.5rem;'>"
+                f"<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; word-break:break-word;'>"
+                f"<span style='color:{impact_color}; font-family:\"IBM Plex Mono\",monospace; "
+                f"font-size:0.65rem; margin-right:0.5rem;'>[{e['impact']}]</span>"
+                f"{i}. {display_target}</div>"
+                f"<div style='color:#6b6b8a; font-size:0.7rem; white-space:nowrap;'>{meta}</div>"
+                f"</div>"
+                f"<div style='font-size:0.78rem; color:#c8b4ff; margin-top:0.4rem; line-height:1.5;'>"
+                f"→ {e['suggested_action']}</div>"
+                f"<div style='font-size:0.68rem; color:#6b6b8a; margin-top:0.35rem;'>"
+                f"<em>Addresses site-wide priority:</em> {e['action_label']}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        if len(rows) > 200:
+            st.caption(f"… plus {len(rows) - 200} more items in this category. Use the markdown export for the full list.")
+
+
 def _render_priority_action_drilldown(action_text: str, df_structure, topic_clusters: dict):
     """Render the per-page drill-down for one priority action."""
     resolution = _resolve_priority_action(action_text, df_structure, topic_clusters)
@@ -2622,14 +2874,18 @@ def render():
             st.info("These site-wide issues should be addressed BEFORE or ALONGSIDE per-page work. Per-page recommendations below are informed by this context.")
 
     # ── Tabs: everything from former Action Center now lives here ───
-    tab_page, tab_articles, tab_tech = st.tabs([
+    tab_page, tab_plan, tab_articles, tab_tech = st.tabs([
         "🎯 Per-page work",
+        "📋 Site Action Plan",
         "📝 New Articles",
         "⚙ Technical Issues",
     ])
 
     with tab_page:
         _render_per_page_tab()
+
+    with tab_plan:
+        _render_site_action_plan_tab()
 
     with tab_articles:
         _new_articles_section()
