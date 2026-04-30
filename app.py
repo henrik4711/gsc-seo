@@ -362,6 +362,7 @@ STEPS = [
     ("Dashboard",             "dashboard",    "dashboard_viewed",  "What to do next"),
     ("⚡ Run Pipeline",        "run_pipeline", "_run_pipeline_viewed", "One-click run all steps"),
     ("⚡ Quick Wins",          "quick_wins",   "_quick_wins_viewed", "One page at a time + new articles + technical — everything in one place"),
+    ("🗺 Topical Map",         "topical_map",  "_topical_map_viewed", "Diagram of clusters, URLs, keywords, and link architecture"),
     ("🧹 Site Cleanup",        "site_cleanup", "_site_cleanup_viewed", "All site-wide fixes: merge, delete, redirect, noindex, create, clusters"),
     ("1. Setup & Connect",    "setup",        "gsc_data",          "Connect GSC + API keys"),
     ("2. Upload Ahrefs",      "ahrefs",       "page_authority",    "Upload backlink data"),
@@ -482,6 +483,9 @@ elif "Run Pipeline" in selected:
 elif "Quick Wins" in selected:
     from views import quick_wins
     quick_wins.render()
+elif "Topical Map" in selected:
+    from views import topical_map
+    topical_map.render()
 elif "Site Cleanup" in selected:
     from views import site_cleanup
     site_cleanup.render()
