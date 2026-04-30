@@ -1579,6 +1579,119 @@ def _render_current_seo_state(page):
         )
 
 
+def _render_topical_scope_panel(page):
+    """
+    Show which GSC queries this page should OWN vs. queries that belong to
+    its hub. Renders only when the page is a SPOKE in a cluster with a
+    detectable URL-hierarchy hub — otherwise the page has no topical
+    boundary to enforce.
+    """
+    topic_clusters = st.session_state.get("topic_clusters", {}) or {}
+    if not topic_clusters:
+        return
+    try:
+        from utils.topical_scope import get_topical_scope, deoptimization_action_text
+    except Exception:
+        return
+
+    scope = get_topical_scope(page["url"], topic_clusters)
+    if not scope:
+        return  # not in any cluster, or cluster has no hub
+
+    if scope.get("is_hub"):
+        owned = scope.get("owned", []) or []
+        spoke_count = scope.get("spoke_count", 0)
+        topic = scope.get("cluster_topic", "")
+        if not owned:
+            return
+        owned_html = " ".join(
+            f"<span style='display:inline-block; background:#0d2d1a; color:#33dd88; "
+            f"font-size:0.72rem; padding:0.15rem 0.5rem; border-radius:3px; "
+            f"margin:0.1rem 0.2rem 0.1rem 0;'>{q}</span>"
+            for q in owned[:12]
+        )
+        st.markdown(
+            f"<div style='background:#0d0d15; border:2px solid #33dd88; border-radius:8px; "
+            f"padding:0.9rem 1rem; margin:0.8rem 0;'>"
+            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; "
+            f"color:#33dd88; letter-spacing:0.06em; margin-bottom:0.4rem;'>"
+            f"TOPICAL SCOPE — THIS PAGE IS THE HUB ({topic})</div>"
+            f"<div style='font-size:0.78rem; color:#c8b4ff; margin-bottom:0.5rem;'>"
+            f"This page owns the head terms for cluster <strong>{topic}</strong>. "
+            f"{spoke_count} sub-page(s) defer to it. Keep these queries front-and-center "
+            f"in title/H1/meta:</div>"
+            f"<div>{owned_html}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    # Spoke case — show what to own and what to avoid
+    owned = scope.get("owned", []) or []
+    do_not_compete = scope.get("do_not_compete", []) or []
+    hub_url = scope.get("hub_url", "")
+    topic = scope.get("cluster_topic", "")
+    if not do_not_compete and not owned:
+        return  # nothing useful to surface
+
+    has_conflict = bool(do_not_compete)
+    border_color = "#ffaa33" if has_conflict else "#5bb4d4"
+    headline_color = border_color
+
+    owned_html = " ".join(
+        f"<span style='display:inline-block; background:#0d2d1a; color:#33dd88; "
+        f"font-size:0.72rem; padding:0.15rem 0.5rem; border-radius:3px; "
+        f"margin:0.1rem 0.2rem 0.1rem 0;'>✓ {q}</span>"
+        for q in owned[:8]
+    )
+    avoid_html = " ".join(
+        f"<span style='display:inline-block; background:#2d0d0d; color:#ff6644; "
+        f"font-size:0.72rem; padding:0.15rem 0.5rem; border-radius:3px; "
+        f"margin:0.1rem 0.2rem 0.1rem 0;'>✗ {q}</span>"
+        for q in do_not_compete[:8]
+    )
+
+    action_text = deoptimization_action_text(
+        scope,
+        page_title=page.get("title", ""),
+        page_h1=page.get("h1", ""),
+        page_meta_desc=page.get("meta_description", ""),
+    )
+
+    parts = [
+        f"<div style='background:#0d0d15; border:2px solid {border_color}; border-radius:8px; "
+        f"padding:0.9rem 1rem; margin:0.8rem 0;'>"
+        f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; "
+        f"color:{headline_color}; letter-spacing:0.06em; margin-bottom:0.5rem;'>"
+        f"TOPICAL SCOPE — THIS PAGE IS A SPOKE IN CLUSTER \"{topic}\"</div>"
+    ]
+
+    if owned_html:
+        parts.append(
+            f"<div style='font-size:0.74rem; color:#9b9bb8; margin:0.3rem 0 0.2rem 0;'>"
+            f"This page owns:</div><div>{owned_html}</div>"
+        )
+
+    if avoid_html:
+        parts.append(
+            f"<div style='font-size:0.74rem; color:#9b9bb8; margin:0.6rem 0 0.2rem 0;'>"
+            f"Do <strong>not</strong> compete for "
+            f"(owned by hub <code style='color:#c8b4ff;'>{hub_url}</code>):</div>"
+            f"<div>{avoid_html}</div>"
+        )
+
+    if action_text:
+        parts.append(
+            f"<div style='font-size:0.76rem; color:#c8b4ff; margin-top:0.7rem; "
+            f"line-height:1.55; padding:0.55rem 0.7rem; background:#12121f; "
+            f"border-left:3px solid {border_color}; border-radius:0 4px 4px 0;'>"
+            f"{action_text}</div>"
+        )
+
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
 def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
     """
     Render the full per-page SEO action card.
@@ -1640,6 +1753,9 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
 
     # ── Current SEO state — what Google sees right now + per-element verdict ──
     _render_current_seo_state(page)
+
+    # ── Topical scope — which queries this page should/shouldn't target ──
+    _render_topical_scope_panel(page)
 
     # ── DO THIS FIRST — clear, single top-priority action ──
     issues = _detect_issues(page)

@@ -1895,6 +1895,44 @@ def generate_page_content(
             "════════════════════════════════════════════════════════════\n"
         )
 
+    # ── Topical boundary block — head terms owned by hub page ──
+    # When this page is a SPOKE in a cluster with a clear hub, the hub
+    # owns the head term and this page must NOT compete for it.
+    topical_boundary_block = ""
+    try:
+        from utils.topical_scope import get_topical_scope
+        _topic_clusters = st.session_state.get("topic_clusters", {}) or {}
+        _scope = get_topical_scope(url, _topic_clusters)
+        if _scope and not _scope.get("is_hub"):
+            _do_not = _scope.get("do_not_compete", []) or []
+            _owned = _scope.get("owned", []) or []
+            _hub = _scope.get("hub_url", "")
+            if _do_not:
+                _avoid = ", ".join(f"\"{q}\"" for q in _do_not[:8])
+                _own = ", ".join(f"\"{q}\"" for q in _owned[:6]) or f"\"{query}\""
+                topical_boundary_block = f"""
+## ⛔ TOPICAL BOUNDARY — DO NOT COMPETE WITH THE HUB
+This page is a SPOKE in its topic cluster. The HUB page is:
+  {_hub}
+
+The HUB owns these head-term queries: {_avoid}
+
+For THIS page (a spoke):
+- DO own these modifier-specific queries: {_own}
+- The bare head term may appear naturally in body text where context
+  demands, but NEVER as the primary keyword in title, H1, or meta.
+- Lead title/H1/meta with the spoke's modifier-specific phrase, not the
+  bare head term.
+- In body text, prefer the modifier-specific phrase over the bare head
+  term roughly 70/30 — don't strip the head term entirely, but don't
+  let it dominate either.
+- This page must clearly read as a SPOKE complementing the hub, not as
+  a competitor. Anchor text when linking up to the hub should use a
+  variant of the hub's head term.
+"""
+    except Exception:
+        pass
+
     # ── Validation-feedback block — shown at top of prompt so model can't miss it ──
     validation_block = ""
     if validation_fixes:
@@ -1920,6 +1958,7 @@ Concretely, when you rewrite the text:
     prompt = f"""{ANTI_HALLUCINATION_RULES}
 
 You are rewriting the BODY TEXT for an e-commerce category page.
+{topical_boundary_block}
 {validation_block}
 {required_kw_block}
 {required_link_block}

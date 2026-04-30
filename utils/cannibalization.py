@@ -3,6 +3,7 @@ Cannibalization detection from GSC data.
 Identifies keywords where multiple pages compete for the same query.
 """
 
+import re as _re
 import pandas as pd
 import numpy as np
 from utils.url_helpers import (
@@ -12,6 +13,96 @@ from utils.url_helpers import (
     normalize_url as _nu,
     path_is_descendant,
 )
+
+
+# ── Slug-match helpers (used by winner selection) ──────────────────────
+# The winner for a cannibalized query is the page whose URL tail best
+# matches the query tokens — NOT the page Google currently ranks. Head
+# terms must go to the parent category; modifier terms go to the
+# corresponding sub-category. This protects site architecture from being
+# overruled by transient SERP rankings.
+
+def _slug_tokens(slug: str) -> set:
+    """Tokenize a URL slug. Lowercase, split on hyphens/underscores/dots,
+    drop tokens shorter than 3 chars."""
+    if not slug:
+        return set()
+    raw = _re.split(r"[-_./]+", slug.lower())
+    return {t for t in raw if len(t) >= 3}
+
+
+def _query_tokens(query: str) -> set:
+    if not query:
+        return set()
+    return {t for t in _re.findall(r"\w+", query.lower()) if len(t) >= 3}
+
+
+def _url_tail_segment(url: str) -> str:
+    """Return the last non-empty path segment of url."""
+    path = _url_path(url).rstrip("/")
+    if not path:
+        return ""
+    parts = [p for p in path.split("/") if p]
+    return parts[-1] if parts else ""
+
+
+def _slug_match_score(url: str, query: str) -> float:
+    """
+    Score how well a URL's tail slug matches a query (0.0 to 1.0).
+
+    Substring-tolerant on both sides (handles Scandinavian plurals like
+    'dildos' ↔ 'dildo', 'vibratorer' ↔ 'vibrator', 'penisringar' ↔
+    'penisring' without explicit stemming):
+
+      query tokens covered if any tail token contains the query token,
+      OR the query token contains any tail token (whichever stem is
+      embedded in the other).
+
+    A tail token that doesn't match any query token is an "extra"
+    modifier (e.g. 'klassisk' in /dildos/klassisk-dildo for the head
+    query 'dildo') — extras dilute the score.
+    """
+    qtoks = _query_tokens(query)
+    ttoks = _slug_tokens(_url_tail_segment(url))
+    if not qtoks or not ttoks:
+        return 0.0
+
+    def _stem_match(a: str, b: str) -> bool:
+        return a in b or b in a
+
+    covered = sum(1 for q in qtoks if any(_stem_match(q, t) for t in ttoks))
+    extras = sum(1 for t in ttoks if not any(_stem_match(t, q) for q in qtoks))
+    coverage = covered / len(qtoks)
+    if coverage < 1.0:
+        return coverage * 0.5  # incomplete coverage caps at 0.5
+    if extras == 0:
+        return 1.0  # perfect match
+    return max(0.5, 1.0 - extras * 0.2)
+
+
+def _url_hierarchy_winner_among(urls: list) -> str:
+    """If exactly one of the given URLs is a strict URL-ancestor of one or
+    more of the others, return that ancestor. Else return ''."""
+    if not urls or len(urls) < 2:
+        return ""
+    candidates = []
+    for u in urls:
+        u_path = _url_path(u).rstrip("/")
+        if not u_path or u_path == "/":
+            continue
+        descendants = sum(
+            1 for other in urls
+            if other != u and _url_path(other).rstrip("/").startswith(u_path + "/")
+        )
+        if descendants > 0:
+            candidates.append((u, descendants, len(u_path)))
+    if not candidates:
+        return ""
+    # Most-specific ancestor wins (longest path among those with descendants).
+    # Mirrors cluster_linking._url_hierarchy_pillar so winner selection and
+    # pillar selection stay consistent.
+    candidates.sort(key=lambda x: (-x[2], -x[1]))
+    return candidates[0][0]
 
 
 def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
@@ -269,10 +360,25 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                     pd_item["referring_domains"] = int(match.iloc[0].get("referring_domains", 0))
                     pd_item["authority_score"] = int(match.iloc[0].get("authority_score", 0))
 
-        # Pick winner: prefer CATEGORY pages over products for generic queries.
-        # Category pages are better owners of generic queries because they serve
-        # browse/explore intent and link to products.
-        # Detection: use audit_results page_type if available, else use URL depth.
+        # ── Pick winner ─────────────────────────────────────────────
+        # The winner is the page that should rank for THIS query — not the
+        # page Google currently ranks. Selection priority:
+        #
+        #   1. SLUG MATCH. The page whose URL tail tokens best match the
+        #      query tokens wins. Head term "dildo" → /sexleksaker/dildos
+        #      (slug "dildos" tokens={dildo}, perfect match) beats
+        #      /sexleksaker/dildos/klassisk-dildo (tokens={klassisk, dildo},
+        #      one extra modifier) — even if the deeper page currently has
+        #      more clicks. Modifier query "klassisk dildo" then correctly
+        #      flips the winner to the deeper page.
+        #
+        #   2. URL HIERARCHY. If no page has a clearly better slug match,
+        #      and one of the conflict pages is a URL-ancestor of the
+        #      others, the ancestor wins. Preserves site architecture.
+        #
+        #   3. WEIGHTED SCORE (current logic). Falls back to clicks +
+        #      backlinks + authority + category + shallow-depth bonus when
+        #      neither slug match nor hierarchy resolve cleanly.
         audit_results = _st.session_state.get("audit_results", [])
         from urllib.parse import urlparse as _urlparse
         _audit_types = {}
@@ -280,19 +386,53 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
             from utils.ui_helpers import normalize_url as _nu2
             _audit_types[_nu2(ar.get("url", ""))] = ar.get("page_type", "unknown")
 
-        winner_score = -1
-        winner_page = best_page["page"]
+        # Stage 1: slug-match. Compute slug-match score for each candidate.
+        slug_scored = []
         for pd_item in pages_detail:
-            page_url = pd_item["page"]
-            page_type = _audit_types.get(_nu(page_url), "unknown")
-            category_bonus = 500 if page_type == "category" else 0
-            url_depth = len(_url_segments(page_url))
-            depth_bonus = max(0, (5 - url_depth) * 50)
-            score = (pd_item["clicks"] * 2 + pd_item["referring_domains"] * 10
-                     + pd_item["authority_score"] + category_bonus + depth_bonus)
-            if score > winner_score:
-                winner_score = score
-                winner_page = page_url
+            sscore = _slug_match_score(pd_item["page"], query)
+            slug_scored.append((pd_item, sscore))
+        # Best slug score
+        best_slug = max(s for _, s in slug_scored) if slug_scored else 0.0
+        slug_winners = [pd_item for pd_item, s in slug_scored if s == best_slug and s >= 0.95]
+
+        winner_page = None
+        winner_selection_reason = ""
+
+        if len(slug_winners) == 1:
+            winner_page = slug_winners[0]["page"]
+            winner_selection_reason = "exact slug-match for query"
+        elif len(slug_winners) > 1:
+            # Multiple perfect slug matches — pick shallowest URL (closer to root = canonical)
+            slug_winners.sort(key=lambda p: len(_url_segments(p["page"])))
+            winner_page = slug_winners[0]["page"]
+            winner_selection_reason = "shallowest among multiple perfect slug-matches"
+        else:
+            # Stage 2: URL hierarchy — is one conflict page a URL-ancestor of the others?
+            hierarchy_winner = _url_hierarchy_winner_among([p["page"] for p in pages_detail])
+            if hierarchy_winner:
+                winner_page = hierarchy_winner
+                winner_selection_reason = "URL-ancestor of competing pages"
+
+        if not winner_page:
+            # Stage 3: weighted score (legacy fallback). Includes a partial
+            # slug-match bonus so even when no page is a perfect match, the
+            # closest-matching slug gets a leg up.
+            winner_score = -1
+            winner_page = best_page["page"]
+            winner_selection_reason = "weighted score (clicks + authority + depth)"
+            for pd_item, sscore in slug_scored:
+                page_url = pd_item["page"]
+                page_type = _audit_types.get(_nu(page_url), "unknown")
+                category_bonus = 500 if page_type == "category" else 0
+                url_depth = len(_url_segments(page_url))
+                depth_bonus = max(0, (5 - url_depth) * 50)
+                slug_partial_bonus = sscore * 800  # 0..800 based on partial match quality
+                score = (pd_item["clicks"] * 2 + pd_item["referring_domains"] * 10
+                         + pd_item["authority_score"] + category_bonus + depth_bonus
+                         + slug_partial_bonus)
+                if score > winner_score:
+                    winner_score = score
+                    winner_page = page_url
 
         # Generate merge instruction — context-aware
         loser_pages = [p["page"] for p in pages_detail if p["page"] != winner_page]

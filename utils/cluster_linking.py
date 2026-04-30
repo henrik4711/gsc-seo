@@ -100,10 +100,8 @@ def anchor_for_url(page_url: str, audit_lookup: dict | None = None, default: str
     """
     Pick a sensible anchor text for linking TO the given page.
 
-    Single source of truth — every view/util that needs to suggest an
-    anchor for a target URL should call this. Uses the audit's title
-    (first part before pipe/dash) when available, falls back to the
-    URL's last segment with hyphens turned into spaces.
+    Title-based fallback used when no cluster context is available. For
+    cluster-aware diverse anchor selection use ``pick_diverse_anchor``.
     """
     audit_lookup = audit_lookup or {}
     audit = audit_lookup.get(normalize_url(page_url), {}) or {}
@@ -120,6 +118,130 @@ def anchor_for_url(page_url: str, audit_lookup: dict | None = None, default: str
 
 # Back-compat alias — old name was private with underscore.
 _anchor_for = anchor_for_url
+
+
+def _spoke_primary_kw(page_url: str, audit_lookup: dict | None = None,
+                      default: str = "") -> str:
+    """
+    Best single keyword phrase to describe a spoke page — used as anchor
+    when linking TO that spoke. Tries the page's actual primary GSC
+    query first (most authentic), falls back to title-derived anchor.
+    """
+    try:
+        from utils.page_profile import build_page_profile
+        prof = build_page_profile(page_url) or {}
+        pq = (prof.get("primary_query") or "").strip()
+        if 3 <= len(pq) <= 60:
+            return pq
+    except Exception:
+        pass
+    return anchor_for_url(page_url, audit_lookup, default=default)
+
+
+def _hub_anchor_pool(cluster: dict, hub_url: str,
+                     audit_lookup: dict | None = None) -> list:
+    """
+    Build an ordered, deduplicated pool of anchor variants for linking
+    UP to a cluster hub.
+
+    Order of preference (Google rewards anchor diversity — uniform anchor
+    profiles look unnatural since Penguin):
+      1. Top GSC queries the cluster ranks for (real user phrasings)
+      2. Hub's title-derived anchor (single-token canonical)
+      3. Cluster topic name (last-resort generic)
+    """
+    pool: list = []
+    seen: set = set()
+
+    def _add(candidate: str):
+        c = (candidate or "").strip()
+        if not c or len(c) < 3 or len(c) > 60:
+            return
+        key = c.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        pool.append(c)
+
+    # 1. Cluster's actual GSC queries — naturally varied by user phrasing
+    queries = cluster.get("queries", []) or []
+    for q in queries[:20]:  # cap pool to keep diversity meaningful
+        _add(q)
+
+    # 2. Hub's title-derived anchor
+    if hub_url:
+        _add(anchor_for_url(hub_url, audit_lookup))
+
+    # 3. Cluster topic as final fallback
+    _add(cluster.get("topic", ""))
+
+    return pool
+
+
+def pick_diverse_anchor(target_url: str,
+                        source_url: str,
+                        cluster: dict | None,
+                        audit_lookup: dict | None,
+                        used_anchors_for_target: set,
+                        link_type: str = "vertical-up") -> str:
+    """
+    Pick an anchor text for ``source_url -> target_url`` that:
+
+    - Reads naturally given target's topical profile
+    - Differs from anchors already used to point to the same target
+      (Google detects exact-match anchor saturation as spam since 2012)
+
+    ``link_type`` selects the anchor pool:
+      - ``vertical-up``   (spoke → hub):        rotate through cluster.queries
+      - ``vertical-down`` (hub → spoke):        spoke's primary kw
+      - ``horizontal``    (spoke → sibling):    target spoke's primary kw
+
+    ``used_anchors_for_target`` is mutated — pass the same set across
+    calls for the same target so different sources get different anchors.
+    """
+    audit_lookup = audit_lookup or {}
+    used_lower = {a.lower() for a in used_anchors_for_target}
+
+    if link_type == "vertical-up" and cluster:
+        pool = _hub_anchor_pool(cluster, target_url, audit_lookup)
+    elif link_type == "vertical-down":
+        primary = _spoke_primary_kw(target_url, audit_lookup,
+                                    default=anchor_for_url(target_url, audit_lookup))
+        pool = [primary] if primary else []
+        # Add secondary variants from cluster (but only those that match the spoke)
+        if cluster:
+            spoke_path = url_path(target_url).rstrip("/").lower()
+            spoke_tail = spoke_path.split("/")[-1] if spoke_path else ""
+            for q in (cluster.get("queries", []) or [])[:15]:
+                if not q or len(q) < 3 or len(q) > 60:
+                    continue
+                # Keep cluster queries that contain the spoke's tail token
+                # (= they're modifier variants of this specific spoke)
+                if spoke_tail and any(tok in q.lower() for tok in spoke_tail.split("-") if len(tok) >= 3):
+                    if q.lower() not in {p.lower() for p in pool}:
+                        pool.append(q)
+    elif link_type == "horizontal":
+        primary = _spoke_primary_kw(target_url, audit_lookup,
+                                    default=anchor_for_url(target_url, audit_lookup))
+        pool = [primary] if primary else []
+    else:
+        pool = []
+
+    # Always include title fallback so we never return empty
+    title_anchor = anchor_for_url(target_url, audit_lookup)
+    if title_anchor and title_anchor.lower() not in {p.lower() for p in pool}:
+        pool.append(title_anchor)
+
+    # Pick first unused; if all used, cycle (rare — only when clusters
+    # are tiny + many spokes share one target).
+    for a in pool:
+        if a.lower() not in used_lower:
+            used_anchors_for_target.add(a)
+            return a
+    if pool:
+        used_anchors_for_target.add(pool[0])
+        return pool[0]
+    return target_url.rsplit("/", 1)[-1].replace("-", " ")
 
 
 def generate_cluster_link_recommendations(
@@ -142,6 +264,13 @@ def generate_cluster_link_recommendations(
     audit_lookup = {normalize_url(r.get("url", "")): r for r in (audit_results or [])}
     recommendations = []
     seen_pairs = set()
+    # Tracks which anchors we've already used pointing to each target so
+    # the rec set hands out diverse anchors (Google flags uniform anchor
+    # profiles as unnatural).
+    used_anchors_per_target: dict[str, set] = {}
+
+    def _used(target: str) -> set:
+        return used_anchors_per_target.setdefault(target, set())
 
     for cluster in (clusters or []):
         topic = cluster.get("topic", "")
@@ -155,8 +284,9 @@ def generate_cluster_link_recommendations(
         spokes = [u for u in page_urls if u != pillar] if pillar else page_urls
 
         # ── 1. VERTICAL-UP: every spoke must link to pillar ─────
+        # Each spoke gets a DIFFERENT anchor variant from the cluster's
+        # query pool — no two spokes link up with the same exact anchor.
         if pillar:
-            pillar_anchor = _anchor_for(pillar, audit_lookup, default=topic)
             for spoke in spokes:
                 pair = (spoke, pillar)
                 if pair in seen_pairs:
@@ -165,10 +295,18 @@ def generate_cluster_link_recommendations(
                 if pillar in existing_out:
                     continue  # already linked
                 seen_pairs.add(pair)
+                anchor = pick_diverse_anchor(
+                    target_url=pillar,
+                    source_url=spoke,
+                    cluster=cluster,
+                    audit_lookup=audit_lookup,
+                    used_anchors_for_target=_used(pillar),
+                    link_type="vertical-up",
+                )
                 recommendations.append({
                     "from_url": spoke,
                     "to_url": pillar,
-                    "anchor": pillar_anchor,
+                    "anchor": anchor,
                     "type": "vertical-up",
                     "cluster_topic": topic,
                     "priority": 1,
@@ -192,10 +330,18 @@ def generate_cluster_link_recommendations(
                 if spoke in existing_out:
                     continue
                 seen_pairs.add(pair)
+                anchor = pick_diverse_anchor(
+                    target_url=spoke,
+                    source_url=pillar,
+                    cluster=cluster,
+                    audit_lookup=audit_lookup,
+                    used_anchors_for_target=_used(spoke),
+                    link_type="vertical-down",
+                )
                 recommendations.append({
                     "from_url": pillar,
                     "to_url": spoke,
-                    "anchor": _anchor_for(spoke, audit_lookup),
+                    "anchor": anchor,
                     "type": "vertical-down",
                     "cluster_topic": topic,
                     "priority": 2,
@@ -222,10 +368,18 @@ def generate_cluster_link_recommendations(
                     if s_to in existing_out:
                         continue
                     seen_pairs.add(pair)
+                    anchor = pick_diverse_anchor(
+                        target_url=s_to,
+                        source_url=s_from,
+                        cluster=cluster,
+                        audit_lookup=audit_lookup,
+                        used_anchors_for_target=_used(s_to),
+                        link_type="horizontal",
+                    )
                     recommendations.append({
                         "from_url": s_from,
                         "to_url": s_to,
-                        "anchor": _anchor_for(s_to, audit_lookup),
+                        "anchor": anchor,
                         "type": "horizontal",
                         "cluster_topic": topic,
                         "priority": 3,
