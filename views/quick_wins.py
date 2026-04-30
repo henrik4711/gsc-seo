@@ -3,9 +3,323 @@ Quick Wins — One page at a time, fully generated, approve/reject workflow.
 For users who want fast wins without navigating multiple menus.
 """
 
+import re
 import streamlit as st
 from config import get_anthropic_key, has_anthropic_key
 from utils.ui_helpers import stable_hash, normalize_url, shorten_url, extract_content_summary, show_ai_error, render_recommendation_diff
+
+
+# ── Site-action drilldown helpers ─────────────────────────────────────
+# Convert AI's high-level priority actions ("Audit and assign 329 unclustered
+# pages…") into concrete per-page todos so the user never has to figure out
+# "which 329 pages?" themselves.
+
+_MATCH_TOKEN_RE = re.compile(r"[a-zåäöæøéèà0-9]+")
+_MATCH_STOP = {
+    "and", "the", "for", "with", "this", "that", "from", "are", "was",
+    "och", "att", "att", "som", "med", "till", "kop", "kopa", "kob",
+    "sex", "sexleksaker",  # ubiquitous in this niche, drowns out signal
+    "html", "www", "com", "https", "http",
+}
+
+
+def _tokenize_for_match(text: str) -> set:
+    if not text:
+        return set()
+    return {t for t in _MATCH_TOKEN_RE.findall(text.lower()) if len(t) >= 3 and t not in _MATCH_STOP}
+
+
+def _suggest_cluster_for_page(url: str, title: str, clusters: list, top_n: int = 1) -> list:
+    """Score each cluster against URL/title tokens; return top matches with overlap terms."""
+    page_tokens = _tokenize_for_match(f"{url} {title}")
+    if not page_tokens:
+        return []
+    scored = []
+    for c in clusters:
+        topic = c.get("topic", "") or ""
+        core_terms = c.get("core_terms", []) or []
+        queries = c.get("queries", []) or []
+        sig_text = topic + " " + " ".join(core_terms) + " " + " ".join(queries[:30])
+        sig = _tokenize_for_match(sig_text)
+        if not sig:
+            continue
+        overlap = page_tokens & sig
+        if not overlap:
+            continue
+        # Score = overlap size weighted by inverse cluster signature size (favor specific clusters)
+        score = len(overlap) * 100 / max(8, len(sig))
+        scored.append((score, len(overlap), topic, sorted(overlap)[:4]))
+    scored.sort(key=lambda x: (-x[0], -x[1]))
+    return [{"cluster": t[2], "score": round(t[0], 1), "match_terms": t[3]} for t in scored[:top_n]]
+
+
+def _classify_priority_action(action_text: str) -> str:
+    """Categorize a site-wide priority action by keywords."""
+    s = (action_text or "").lower()
+    if any(k in s for k in ["unclustered", "outside cluster", "without cluster",
+                            "no cluster", "fragment", "topical authority"]):
+        return "assign_clusters"
+    if any(k in s for k in ["informational", "buying guide", "blog post", "blog content",
+                            "educational", "guides and educational"]):
+        return "informational_gap"
+    if any(k in s for k in ["thin", "consolidate"]):
+        return "thin_pages"
+    if any(k in s for k in ["expand", "underrepresented", "additional relevant",
+                            "underserved", "underdeveloped"]):
+        return "expand_clusters"
+    return "other"
+
+
+def _resolve_priority_action(action_text: str, df_structure, topic_clusters: dict) -> dict:
+    """Map a site-wide priority action to concrete per-page suggestions."""
+    cat = _classify_priority_action(action_text)
+    clusters = (topic_clusters or {}).get("clusters", []) or []
+    out = {"category": cat, "pages": [], "note": ""}
+    if df_structure is None or len(df_structure) == 0:
+        return out
+
+    df = df_structure
+
+    if cat == "assign_clusters":
+        if "Cluster(s)" not in df.columns:
+            return out
+        unclustered = df[df["Cluster(s)"].fillna("") == ""].copy()
+        if unclustered.empty:
+            return out
+        if "Impressions" in unclustered.columns:
+            unclustered = unclustered.sort_values("Impressions", ascending=False)
+        rows = []
+        for _, r in unclustered.head(80).iterrows():
+            url = r["URL"]
+            title = (r.get("Title") or "")
+            suggestions = _suggest_cluster_for_page(url, title, clusters, top_n=2)
+            if suggestions:
+                top = suggestions[0]
+                action = (
+                    f"Assign to cluster **{top['cluster']}** "
+                    f"(matched on: {', '.join(top['match_terms'])}). "
+                    f"Add 1 link from this page to the cluster's hub URL in intro, "
+                    f"and 2-3 contextual links to sibling spokes in body."
+                )
+                if len(suggestions) > 1:
+                    action += f" Alt cluster if better fit: **{suggestions[1]['cluster']}**."
+            else:
+                impressions = int(r.get("Impressions", 0) or 0)
+                if impressions < 50:
+                    action = ("No matching cluster found. Low impressions (<50/30d) "
+                              "→ schedule for **delete or 301 redirect** to nearest parent category.")
+                else:
+                    action = ("No matching cluster found, but page has traffic. "
+                              "→ **Create a new cluster** seeded with this page's primary keyword, "
+                              "or merge into the closest existing cluster manually.")
+            rows.append({
+                "url": url,
+                "page_type": r.get("Page Type", ""),
+                "impressions": int(r.get("Impressions", 0) or 0),
+                "clicks": int(r.get("Clicks", 0) or 0),
+                "words": int(r.get("Word Count", 0) or 0),
+                "suggested_cluster": suggestions[0]["cluster"] if suggestions else None,
+                "suggested_action": action,
+            })
+        out["pages"] = rows
+        out["note"] = f"Showing top {len(rows)} unclustered pages by impressions (highest-leverage first)."
+        return out
+
+    if cat == "thin_pages":
+        if "Word Count" not in df.columns:
+            return out
+        thin = df[df["Word Count"].fillna(0) < 300].copy()
+        if "Page Type" in thin.columns:
+            thin = thin[thin["Page Type"].isin(["category", "subcategory", "brand"])]
+        if thin.empty:
+            return out
+        if "Impressions" in thin.columns:
+            thin = thin.sort_values("Impressions", ascending=False)
+        rows = []
+        for _, r in thin.head(60).iterrows():
+            words = int(r.get("Word Count", 0) or 0)
+            ptype = r.get("Page Type", "")
+            target = 600 if ptype in ("category", "subcategory") else 400
+            need = max(0, target - words)
+            impressions = int(r.get("Impressions", 0) or 0)
+            if impressions < 30 and words < 100:
+                action = ("Almost empty AND no traffic → **mark for delete or merge** "
+                          "into the parent category. Open Site Cleanup → Merge/Delete to schedule.")
+            else:
+                action = (
+                    f"Add ~{need} words: **intro (60-100 words) + buying-guide (200-300) + "
+                    f"FAQ (3-5 Q&A) + bottom text (150-200)**. "
+                    f"Open this URL in **Per-page work** tab → Quick Wins panel auto-generates all four."
+                )
+            rows.append({
+                "url": r["URL"],
+                "page_type": ptype,
+                "impressions": impressions,
+                "clicks": int(r.get("Clicks", 0) or 0),
+                "words": words,
+                "suggested_action": action,
+            })
+        out["pages"] = rows
+        out["note"] = f"Showing thin category/brand pages (<300 words), top {len(rows)} by impressions."
+        return out
+
+    if cat == "expand_clusters":
+        # Pull cluster names mentioned explicitly inside parens, else fall back
+        # to the smallest clusters by page count.
+        mentioned_raw = re.findall(r"\(([^)]+)\)", action_text)
+        mentioned_tokens = set()
+        for m in mentioned_raw:
+            for piece in re.split(r"[,;]| and ", m):
+                p = piece.strip().lower()
+                if len(p) >= 3:
+                    mentioned_tokens.add(p)
+        rows = []
+        for c in clusters:
+            topic = (c.get("topic") or "").lower()
+            page_count = c.get("page_count", 0)
+            in_mentioned = any(tok in topic or topic in tok for tok in mentioned_tokens) if mentioned_tokens else False
+            is_small = page_count <= 2
+            if not (in_mentioned or (not mentioned_tokens and is_small)):
+                continue
+            pages = c.get("pages", []) or []
+            page_urls = [p.get("page", "") for p in pages]
+            queries = c.get("queries", []) or []
+            existing = ", ".join(shorten_url(u) for u in page_urls[:3]) or "(no pages yet)"
+            top_queries = ", ".join(queries[:5]) or "(no queries indexed)"
+            action = (
+                f"Cluster **{c.get('topic')}** has {page_count} page(s): {existing}. "
+                f"→ Create **2-3 new spoke articles** (use **New Articles** tab) targeting these queries: "
+                f"_{top_queries}_. Each new spoke must link to the cluster hub, and the hub must "
+                f"add a contextual link back to each new spoke."
+            )
+            rows.append({
+                "url": page_urls[0] if page_urls else "",
+                "page_type": "cluster",
+                "impressions": c.get("total_impressions", 0),
+                "clicks": c.get("total_clicks", 0),
+                "words": 0,
+                "cluster": c.get("topic", ""),
+                "suggested_action": action,
+            })
+        rows.sort(key=lambda r: -r["impressions"])
+        out["pages"] = rows[:15]
+        out["note"] = (f"Underrepresented clusters identified: {len(out['pages'])}."
+                       if out["pages"] else "")
+        return out
+
+    if cat == "informational_gap":
+        rows = []
+        for c in clusters[:25]:
+            pages = c.get("pages", []) or []
+            has_blog = any(
+                "/blog/" in (p.get("page", "") or "").lower()
+                or "/artikel" in (p.get("page", "") or "").lower()
+                or "/guide" in (p.get("page", "") or "").lower()
+                for p in pages
+            )
+            if has_blog:
+                continue
+            if (c.get("total_impressions", 0) or 0) < 100:
+                continue
+            queries = c.get("queries", []) or []
+            informational = [q for q in queries if any(
+                kw in q.lower() for kw in ("hur", "vad", "varför", "guide", "bäst",
+                                           "hvordan", "hvad", "hvorfor", "bedst",
+                                           "how", "what", "why", "best")
+            )]
+            target_queries = informational[:4] if informational else queries[:4]
+            if not target_queries:
+                continue
+            action = (
+                f"Cluster **{c.get('topic')}** has product/category pages but **no blog/guide content** "
+                f"({c.get('total_impressions', 0)} impressions/30d). "
+                f"→ Create **1 buying guide + 1 how-to article** in **New Articles** tab. "
+                f"Suggested target queries: _{', '.join(target_queries)}_. "
+                f"Link both new articles → cluster hub category, and add a 'Read more' card on the hub → both articles."
+            )
+            rows.append({
+                "url": "",
+                "page_type": "blog_gap",
+                "impressions": c.get("total_impressions", 0),
+                "clicks": c.get("total_clicks", 0),
+                "words": 0,
+                "cluster": c.get("topic", ""),
+                "suggested_action": action,
+            })
+        rows.sort(key=lambda r: -r["impressions"])
+        out["pages"] = rows[:10]
+        out["note"] = (f"Top {len(out['pages'])} commercial clusters lacking informational content."
+                       if out["pages"] else "")
+        return out
+
+    return out
+
+
+def _get_or_build_df_structure_cached():
+    """Lazy build the Site Structure dataframe used by drilldown — once per session."""
+    df = st.session_state.get("_qw_df_structure_cache")
+    if df is not None:
+        return df
+    try:
+        from views.site_map_export import _build_site_structure
+        df = _build_site_structure(
+            st.session_state.get("audit_results", []),
+            st.session_state.get("gsc_data"),
+            st.session_state.get("topic_clusters", {}),
+            st.session_state.get("page_authority"),
+        )
+        st.session_state["_qw_df_structure_cache"] = df
+        return df
+    except Exception as e:
+        st.session_state["_qw_df_structure_error"] = str(e)
+        return None
+
+
+def _render_priority_action_drilldown(action_text: str, df_structure, topic_clusters: dict):
+    """Render the per-page drill-down for one priority action."""
+    resolution = _resolve_priority_action(action_text, df_structure, topic_clusters)
+    pages = resolution["pages"]
+    if not pages:
+        st.caption(
+            "_No specific pages could be auto-mapped to this action. Either it is a high-level "
+            "architectural recommendation, or required pipeline data is missing — re-run the full "
+            "pipeline (audit + topic clusters + site validation) and reopen this card._"
+        )
+        return
+    if resolution["note"]:
+        st.caption(resolution["note"])
+    for i, row in enumerate(pages[:30]):
+        url = row.get("url", "") or ""
+        cluster = row.get("cluster", "")
+        if url:
+            header = f"**{i+1}. {shorten_url(url)}**"
+            meta_bits = []
+            if row.get("page_type"):
+                meta_bits.append(str(row["page_type"]))
+            if row.get("words"):
+                meta_bits.append(f"{row['words']} words")
+            if row.get("impressions"):
+                meta_bits.append(f"{row['impressions']:,} impr")
+            if row.get("clicks"):
+                meta_bits.append(f"{row['clicks']:,} clicks")
+            meta = " · ".join(meta_bits)
+        elif cluster:
+            header = f"**{i+1}. Cluster: {cluster}**"
+            meta = f"{row.get('impressions', 0):,} impressions · {row.get('clicks', 0):,} clicks"
+        else:
+            header = f"**{i+1}.**"
+            meta = ""
+        st.markdown(
+            f"<div style='padding:0.5rem 0.6rem; border-left:2px solid #5a4a8a; "
+            f"background:#0d0d15; margin-bottom:0.4rem; border-radius:0 4px 4px 0;'>"
+            f"<div style='font-size:0.85rem;'>{header}</div>"
+            f"<div style='color:#8a8aaa; font-size:0.72rem; margin:0.15rem 0 0.35rem 0;'>{meta}</div>"
+            f"<div style='font-size:0.78rem; color:#c8b4ff;'>→ {row['suggested_action']}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    if len(pages) > 30:
+        st.caption(f"… plus {len(pages) - 30} more. Work through the top 30 first; the rest are typically lower-leverage.")
 
 
 def _get_top_pages(audit_results, top_n=20):
@@ -2026,12 +2340,51 @@ def render():
                 for issue in critical_issues[:5]:
                     st.markdown(f"- {issue}")
             if priority_actions:
-                st.markdown("**Site-wide priority actions:**")
-                for pa in priority_actions[:5]:
+                st.markdown("**Site-wide priority actions — open each to see exactly which pages and what to do:**")
+                topic_clusters_state = st.session_state.get("topic_clusters", {}) or {}
+                df_structure_for_drill = _get_or_build_df_structure_cached()
+                if df_structure_for_drill is None:
+                    err = st.session_state.get("_qw_df_structure_error", "")
+                    st.caption(
+                        f"_Could not build site-structure dataframe for drill-down. "
+                        f"Re-run the full pipeline (Step 1-9). {('Error: ' + err) if err else ''}_"
+                    )
+
+                for pa_idx, pa in enumerate(priority_actions[:5]):
                     if isinstance(pa, dict):
-                        st.markdown(f"- **[{pa.get('impact', '?').upper()}]** {pa.get('action', '')} ({pa.get('pages_affected', 0)} pages affected)")
+                        action_text = pa.get("action", "")
+                        impact = pa.get("impact", "?").upper()
+                        affected = pa.get("pages_affected", 0)
+                        label = (
+                            f"**[{impact}]** {action_text}  "
+                            f"<span style='color:#8a8aaa;'>({affected} pages affected)</span>"
+                        )
                     else:
-                        st.markdown(f"- {pa}")
+                        action_text = str(pa)
+                        impact = "?"
+                        label = action_text
+
+                    st.markdown(f"<div style='margin-top:0.7rem;'>{label}</div>", unsafe_allow_html=True)
+
+                    cat = _classify_priority_action(action_text)
+                    if cat == "other" or df_structure_for_drill is None:
+                        st.caption(
+                            "_This is a high-level architectural recommendation — no specific "
+                            "pages auto-mapped. Address it via Site Cleanup / Topic Clusters tabs._"
+                        )
+                        continue
+
+                    expander_label = {
+                        "assign_clusters": f"↳ Show the unclustered pages and which cluster each should join",
+                        "thin_pages": f"↳ Show the thin pages and exactly what to add to each",
+                        "expand_clusters": f"↳ Show which clusters need spokes and what to write",
+                        "informational_gap": f"↳ Show which clusters need blog/guide articles",
+                    }.get(cat, "↳ Show specific pages and per-page action")
+
+                    with st.expander(expander_label, expanded=False):
+                        _render_priority_action_drilldown(
+                            action_text, df_structure_for_drill, topic_clusters_state
+                        )
             st.info("These site-wide issues should be addressed BEFORE or ALONGSIDE per-page work. Per-page recommendations below are informed by this context.")
 
     # ── Tabs: everything from former Action Center now lives here ───
