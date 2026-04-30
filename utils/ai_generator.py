@@ -35,27 +35,64 @@ CRITICAL — ACCURACY RULES (never violate these):
 
 HUMAN_WRITING_STYLE = """
 WRITING STYLE — the text MUST read like a real person wrote it, NOT AI.
+This is a HARD requirement. Output that contains any banned pattern below
+fails the brief and must be rewritten.
 
-BANNED PATTERNS (never use):
-- "Sammanfattningsvis" / "Avslutningsvis" / "I slutändan" / "In conclusion"
-- "Det är viktigt att notera/komma ihåg" / "It is important to note"
-- "Oavsett om du ... eller ..." / "Whether you ... or ..."
-- "Denna guide" / "I denna artikel" / "In this guide"
-- "Utforska vår/vårt" / "Discover our" as opening
-- "Perfekt för dig som..." / "Perfect for those who..."
-- Starting 3+ sentences with the same word
-- Bullet points that all follow identical structure
-- "Upptäck" / "Discover" as first word
-- Generic filler: "Vi förstår att..." / "Vi erbjuder..." / "We understand..."
+BANNED OPENERS / CLOSERS (never use):
+- "Sammanfattningsvis" / "Avslutningsvis" / "I slutändan" / "In conclusion" / "To sum up"
+- "Det är viktigt att notera/komma ihåg" / "It is important to note" / "Worth noting"
+- "Oavsett om du ... eller ..." / "Whether you ... or ..." / "No matter if you …"
+- "Denna guide" / "I denna artikel" / "In this guide" / "In this article"
+- "Utforska vår/vårt" / "Discover our" / "Upptäck" / "Discover" as opening word
+- "Perfekt för dig som..." / "Perfect for those who..." / "Ideal for anyone who…"
+- "I dagens..." / "I dagens snabba..." / "In today's fast-paced …"
+- "Indeed," / "Faktum är att" as a sentence opener
+- "Are you looking for …?" as opener — never open with a rhetorical question
+- "Welcome to" / "Välkommen till"
+
+BANNED VOCABULARY (AI tells — never use):
+- delve, leverage, utilize (use 'use'), navigate (in figurative sense),
+  embark, unleash, harness, foster, facilitate, synergy, tapestry, realm,
+  resonates with, paramount, plethora, myriad, robust (figurative),
+  seamless, holistic, game-changer, cutting-edge, revolutionary,
+  state-of-the-art, world-class, world of, in the realm of,
+  testament to, treasure trove, kaleidoscope, symphony, journey
+  (in figurative sense), elevate, transform (in figurative sense)
+- "It's not just X, it's Y" sentence pattern — banned in ALL forms
+- "Whether you're a beginner or an expert" and any "X or Y" hedge
+- Hedging phrases: "It's worth noting", "Keep in mind that",
+  "It goes without saying", "Needless to say", "Suffice it to say"
+
+BANNED STRUCTURE (these scream AI):
+- Em-dashes (—) used more than ONCE per ~150 words. Prefer commas, periods,
+  parentheses. AI famously over-uses em-dashes.
+- Three-item parallel lists in body prose ("X, Y, and Z") more than once
+  per paragraph
+- Every paragraph the same length (3-4 sentences each = AI tell)
+- Every bullet point the same length and grammatical structure
+- Every H2/H3 starting with the same part of speech (all gerunds, or all
+  imperatives, or all nouns)
+- Closing every section with a summary sentence
+- Ending the whole article with "In conclusion / To sum up / Overall"
 
 REQUIRED:
-- Write like a knowledgeable friend, not a brochure or textbook
-- Mix short punchy sentences (5 words) with longer ones (25 words)
-- Use "du/dig" / "you" — talk TO the reader
-- Share opinions: "Vi gillar X för att..." / "Ärligt talat är Y bättre"
-- Include unexpected expert details that show real product knowledge
-- Vary paragraph length: some 2 sentences, some 5 sentences
+- Write like a knowledgeable friend who actually uses the product, NOT a
+  brochure, textbook, or "content marketer". One specific, lived-in detail
+  beats five generic claims.
+- Sentence-length variance: mix 4-word jabs with 25-word ones, sometimes
+  even a fragment. Don't average everything to 12-15 words.
+- Use "du/dig" / "you" — talk TO the reader, not ABOUT them
+- Real opinions: "Vi gillar X för att …" / "Ärligt talat är Y bättre" /
+  "Honestly, Z is overrated" / "We don't recommend …"
+- Include at least one unexpected expert detail per ~300 words — a tip,
+  caveat, or counter-intuitive fact a generalist wouldn't know
+- Vary paragraph length: some 1 sentence, some 4-5 sentences. Single-
+  sentence paragraphs are fine when emphatic.
+- Occasional contractions are fine in casual contexts ("don't", "it's")
 - NEVER include specific prices (they change)
+- Don't start adjacent sentences with the same word ("The" after "The")
+- It's OK — preferred, even — to leave a sentence imperfect or slightly
+  asymmetric. AI polishes everything to glassy uniformity; humans don't.
 - For FAQ: use FAQPage schema microdata (itemscope/itemprop attributes)"""
 
 
@@ -709,6 +746,8 @@ def generate_link_text(
     """Generate a natural paragraph containing an internal link with proper anchor text."""
     prompt = f"""You are a senior SEO copywriter. Write a short, natural paragraph (2-3 sentences) that can be inserted into an existing page to create an internal link.
 
+{HUMAN_WRITING_STYLE}
+
 ## CONTEXT
 Source page: {source_url}
 Target page to link to: {target_url}
@@ -723,6 +762,7 @@ Language: {language}
 - Include the link with the exact anchor text provided
 - Do NOT be spammy or over-optimized
 - Write in {language}
+- Apply the WRITING STYLE rules above without exception
 
 ## OUTPUT FORMAT (JSON only, no markdown wrapping):
 {{
@@ -760,6 +800,8 @@ def generate_keyword_text(
 
     prompt = f"""You are a senior SEO copywriter. Rewrite or extend the following text to naturally integrate missing keywords.
 
+{HUMAN_WRITING_STYLE}
+
 ## CONTEXT
 Page type: {page_type}{type_guide}
 Site context: {site_context}
@@ -776,6 +818,8 @@ Current text (excerpt):
 - Do NOT keyword-stuff or make the text sound forced
 - Add 1-3 new paragraphs if needed to cover the keywords
 - Write in {language}
+- Apply the WRITING STYLE rules above without exception — output that
+  contains banned patterns must be rewritten
 
 ## OUTPUT FORMAT (JSON only, no markdown wrapping):
 {{
@@ -814,6 +858,8 @@ def generate_intro_rewrite(
 
     prompt = f"""You are a senior SEO copywriter. Rewrite ONLY the intro paragraph of this page.
 
+{HUMAN_WRITING_STYLE}
+
 ## CONTEXT
 URL: {url}
 Page type: {page_type}
@@ -833,6 +879,9 @@ Current intro text:
 - Make it engaging — this is the first thing the customer reads
 - Do NOT be spammy. The text must sound natural and helpful.
 - Write in {language}
+- Apply the WRITING STYLE rules above without exception. Critically:
+  do NOT open with "Upptäck/Discover", "I dagens", "Välkommen",
+  "Are you looking for", or any banned opener.
 
 ## OUTPUT FORMAT (JSON only, no markdown wrapping):
 {{
@@ -863,6 +912,8 @@ def generate_keyword_faq(
 
     prompt = f"""You are a senior SEO content specialist. Generate FAQ items targeting subtopics that are missing or poorly covered on the page.
 
+{HUMAN_WRITING_STYLE}
+
 ## CONTEXT
 Site context: {site_context}
 Language: {language}
@@ -876,6 +927,9 @@ Related keywords to include: {', '.join(keywords[:15])}
 - Each answer should naturally include relevant keywords
 - Answers should be 2-4 sentences, informative and helpful
 - Write in {language}
+- Apply the WRITING STYLE rules above. Vary answer length — don't make
+  every answer the same number of sentences or the same structure.
+  Real-person FAQs have some short blunt answers and some longer ones.
 
 ## OUTPUT FORMAT (JSON only, no markdown wrapping):
 {{
@@ -906,6 +960,8 @@ def generate_article_outline(
     """Generate a detailed article outline with H2/H3 structure and word targets."""
     prompt = f"""You are a senior SEO content strategist. Create a detailed article outline.
 
+{HUMAN_WRITING_STYLE}
+
 ## ARTICLE DETAILS
 Title: {title}
 Content type: {content_type}
@@ -920,6 +976,11 @@ Language: {language}
 - Note which keywords to include in each section
 - The outline should support the hub page through internal linking
 - Content type "{content_type}" should guide the structure (e.g. how-to = step-by-step, comparison = feature table, etc.)
+- H2 / H3 headings must follow the WRITING STYLE rules: do NOT make every
+  heading start with the same part of speech (e.g. all gerunds), do NOT
+  use banned vocabulary in headings, and avoid the AI listicle look ("5
+  Best …", "Top 7 …", "Ultimate Guide to …"). Headings should look like
+  what a domain expert would actually write.
 
 ## OUTPUT FORMAT (JSON only, no markdown wrapping):
 {{
@@ -963,6 +1024,9 @@ def generate_article_full(
 
     prompt = f"""You are a senior SEO copywriter. Write a complete, high-quality article.
 
+{ANTI_HALLUCINATION_RULES}
+{HUMAN_WRITING_STYLE}
+
 ## ARTICLE DETAILS
 Title: {title}
 Content type: {content_type}
@@ -973,12 +1037,18 @@ Language: {language}
 
 ## REQUIREMENTS
 - Write in markdown format with proper H1, H2, H3 headings
-- Include an engaging intro, well-structured sections, and a conclusion
-- Naturally integrate target keywords (1-2% density)
+- Include an engaging intro, well-structured sections, and a conclusion-
+  style closing paragraph (but do NOT label it "Conclusion" / "Slutsats"
+  / "Avslutningsvis" — just close the topic naturally)
+- Naturally integrate target keywords (1-2% density). NEVER stuff.
 - Include a FAQ section at the end with 3-5 relevant questions
 - Write in {language}
 - Aim for 1000-2000 words depending on content type
-- Make it genuinely useful and well-written, not SEO spam
+- Apply the WRITING STYLE rules above without exception. The article will
+  be reviewed by AI-detection tools — if it contains banned vocabulary,
+  banned openers, em-dash overuse, or uniform paragraph/sentence rhythm,
+  it fails the brief. Genuine expertise and real, specific details are
+  the strongest signals of human authorship — include them.
 
 ## OUTPUT FORMAT (JSON only, no markdown wrapping):
 {{
@@ -1008,6 +1078,8 @@ def generate_article_meta(
     """Generate optimized meta title and description for a new article."""
     prompt = f"""You are a senior SEO specialist. Generate an optimized meta title and description for a new article.
 
+{HUMAN_WRITING_STYLE}
+
 ## ARTICLE
 Title: {title}
 Target keywords: {', '.join(keywords[:10])}
@@ -1015,8 +1087,11 @@ Site context: {site_context}
 Language: {language}
 
 ## REQUIREMENTS
-Title: 50-60 chars, primary keyword early, compelling
-Description: 140-160 chars, includes primary keyword, has CTA
+Title: 50-60 chars, primary keyword early, compelling. NO banned openers
+("Upptäck/Discover", "I dagens", "Welcome to"). NO listicle clichés
+("5 Best …", "Ultimate …"). Don't start with "Buy/Köp" either.
+Description: 140-160 chars, includes primary keyword, has CTA. NO banned
+vocabulary, NO em-dash overuse, NO "It's not just X, it's Y" pattern.
 Write in {language}
 
 ## OUTPUT FORMAT (JSON only, no markdown wrapping):
@@ -1324,6 +1399,9 @@ Feature 3-5 of these products naturally in the article using the product card HT
     prompt = f"""You are a senior content writer for an e-commerce site.
 Write a complete, CMS-ready article following the EXACT HTML format specified below.
 
+{ANTI_HALLUCINATION_RULES}
+{HUMAN_WRITING_STYLE}
+
 ## ARTICLE DETAILS
 Title: {title}
 Content type: {content_type}
@@ -1338,14 +1416,19 @@ Language: {language}
 
 ## CONTENT REQUIREMENTS
 - 1500-2500 words total
-- Intro paragraph (100-150 words) — NO H1 tag
+- Intro paragraph (100-150 words) — NO H1 tag, NO banned openers
 - 3-5 H2 main sections with H3 subsections for product categories
 - Each H3 subsection: product description + expert recommendation (xmx--high-emphasis)
 - Product carousel cards after recommendation sections using real product data
-- FAQ at the end (3-5 questions as regular H3 + p, not accordion)
-- Conclusion with CTA mentioning discreet shipping and customer service
+- FAQ at the end (3-5 questions as regular H3 + p, not accordion). Vary
+  answer length — short blunt answers and longer ones, not all uniform.
+- Closing paragraph with a soft CTA mentioning discreet shipping and
+  customer service. Do NOT label it "Slutsats" / "Conclusion" / "To sum up".
 - Internal links to related categories using real URLs
-- Naturally integrate target keywords (1-2% density)
+- Naturally integrate target keywords (1-2% density). NEVER stuff.
+- Apply the WRITING STYLE rules above without exception. This article will
+  be read by Google and by AI-detection tools — banned vocabulary, em-dash
+  overuse, listicle clichés, or uniform rhythm fail the brief.
 
 ## OUTPUT FORMAT (JSON only):
 {{
