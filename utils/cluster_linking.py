@@ -155,6 +155,7 @@ def detect_pillar(cluster: dict, audit_lookup: dict | None = None) -> str:
         cluster_page_norms = {normalize_url(p.get("page", "")) for p in pages}
         best_score = 0.0
         best_url = ""
+        best_desc_count = 0
         best_path_len = 0
         for url in audit_lookup.keys():
             score = _slug_match_score(url, topic)
@@ -171,13 +172,13 @@ def detect_pillar(cluster: dict, audit_lookup: dict | None = None) -> str:
             if not (in_cluster or desc_count > 0):
                 continue  # slug matches but page is unrelated to cluster pages
             # Tiebreak: highest score, then most descendants, then longest path
-            this_path_len = len(u_path)
-            this_key = (score, desc_count, this_path_len)
-            best_key = (best_score, 0, best_path_len)  # rebuilt for compare
+            this_key = (score, desc_count, len(u_path))
+            best_key = (best_score, best_desc_count, best_path_len)
             if this_key > best_key:
                 best_score = score
                 best_url = url
-                best_path_len = this_path_len
+                best_desc_count = desc_count
+                best_path_len = len(u_path)
         if best_url:
             return best_url
 
