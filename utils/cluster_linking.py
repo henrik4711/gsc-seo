@@ -152,13 +152,21 @@ def detect_pillar(cluster: dict, audit_lookup: dict | None = None) -> str:
     # Priority 1: slug-match against entire site
     if audit_lookup:
         topic = (cluster.get("topic", "") or "").replace("_", " ").strip()
+        # Topic names are auto-derived (e.g. "sexleksaker_män") and may not
+        # slug-match any URL because of synonyms ("män" vs URL "for-honom").
+        # Real GSC queries the cluster ranks for usually DO match a URL
+        # slug, since they reflect how users — and Google's URL designers —
+        # phrase the topic. Try topic + top 10 cluster queries.
+        cluster_queries = cluster.get("queries", []) or []
+        candidate_terms = [t for t in [topic] + cluster_queries[:10] if t]
         cluster_page_norms = {normalize_url(p.get("page", "")) for p in pages}
         best_score = 0.0
         best_url = ""
         best_desc_count = 0
         best_path_len = 0
         for url in audit_lookup.keys():
-            score = _slug_match_score(url, topic)
+            score = max((_slug_match_score(url, t) for t in candidate_terms),
+                        default=0.0)
             if score < 0.95:
                 continue
             u_path = url_path(url).rstrip("/")

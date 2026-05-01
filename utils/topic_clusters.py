@@ -102,6 +102,31 @@ def build_topic_clusters(df: pd.DataFrame, min_cluster_size: int = 2) -> dict:
 
     enriched_clusters.sort(key=lambda x: -x["total_impressions"])
 
+    # Step 5b: Assign each page to ONE primary cluster (the cluster where
+    # this page contributes the most queries). A page that ranks for queries
+    # from multiple clusters is "topically confused" — Google rewards
+    # pages with one clear topical focus. We keep the page only as a spoke
+    # in its primary cluster, but cluster.queries / total_clicks remain
+    # untouched (so cluster reach is still accurate).
+    page_cluster_strength: dict = defaultdict(list)
+    for ci, cluster in enumerate(enriched_clusters):
+        for p in cluster["pages"]:
+            page_cluster_strength[p["page"]].append(
+                (ci, p.get("query_count", 0), p.get("total_clicks", 0))
+            )
+    primary_of: dict = {}
+    for page, entries in page_cluster_strength.items():
+        # Highest query_count wins; tiebreak by clicks, then earliest cluster.
+        entries.sort(key=lambda x: (-x[1], -x[2], x[0]))
+        primary_of[page] = entries[0][0]
+
+    # Drop non-primary page rows from each cluster.pages list.
+    for ci, cluster in enumerate(enriched_clusters):
+        kept = [p for p in cluster["pages"] if primary_of.get(p["page"]) == ci]
+        cluster["pages"] = kept
+        cluster["page_count"] = len(kept)
+        cluster["is_split"] = len(kept) > 1
+
     # Step 6: Build page-topic mapping
     page_topics = defaultdict(list)
     for cluster in enriched_clusters:
