@@ -8,6 +8,25 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 import re
+from urllib.parse import urlparse
+
+
+def _is_homepage(url: str) -> bool:
+    """Homepage urls — never spokes/hubs in topical clusters.
+    Google may rank the homepage for cluster head terms (especially for
+    brand/category queries), but structurally the homepage isn't a
+    spoke under any category — it's its own traffic magnet."""
+    if not url:
+        return False
+    try:
+        path = urlparse(url).path or ""
+    except Exception:
+        path = url
+    path = path.strip()
+    if path in ("", "/"):
+        return True
+    # Strip trailing slash, common query/fragment artifacts already gone.
+    return path.rstrip("/") == ""
 
 
 def build_topic_clusters(df: pd.DataFrame, min_cluster_size: int = 2) -> dict:
@@ -56,6 +75,11 @@ def build_topic_clusters(df: pd.DataFrame, min_cluster_size: int = 2) -> dict:
             total_impressions=("impressions", "sum"),
             avg_position=("position", "mean"),
         ).reset_index().sort_values("total_clicks", ascending=False)
+        # Drop homepage rows — homepage is never a spoke. Google ranks it
+        # for cluster head terms (esp. brand/category), but structurally it
+        # isn't part of any topical hierarchy.
+        if not pages.empty:
+            pages = pages[~pages["page"].apply(_is_homepage)].reset_index(drop=True)
 
         # Robust click sum: try multiple sources, take the maximum
         # (defensive against dtype issues, missing values, etc.)
