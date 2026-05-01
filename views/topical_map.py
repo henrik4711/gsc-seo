@@ -197,7 +197,7 @@ def _build_cluster_dot(cluster: dict,
     if not page_urls:
         return "digraph G { label=\"empty cluster\"; }"
 
-    hub = detect_pillar(cluster) or ""
+    hub = detect_pillar(cluster, audit_lookup=audit_lookup) or ""
     spokes = [u for u in page_urls if u != hub] if hub else page_urls
 
     lines = ["digraph G {",
@@ -285,7 +285,7 @@ def _render_cluster_side_table(cluster: dict,
     pages = cluster.get("pages", []) or []
     page_urls = [normalize_url(p.get("page", "")) for p in pages if p.get("page")]
     page_urls = [u for u in page_urls if u]
-    hub = detect_pillar(cluster) or ""
+    hub = detect_pillar(cluster, audit_lookup=audit_lookup) or ""
     ideal = _ideal_links_for_cluster(cluster, audit_lookup)
 
     # Per-URL: count outbound recommended + outbound existing-of-recommended
@@ -328,7 +328,7 @@ def _cluster_to_markdown(cluster: dict,
     pages = cluster.get("pages", []) or []
     page_urls = [normalize_url(p.get("page", "")) for p in pages if p.get("page")]
     page_urls = [u for u in page_urls if u]
-    hub = detect_pillar(cluster) or ""
+    hub = detect_pillar(cluster, audit_lookup=audit_lookup) or ""
     topic = cluster.get("topic", "(unnamed)")
     ideal = _ideal_links_for_cluster(cluster, audit_lookup)
 
@@ -381,12 +381,14 @@ def _all_clusters_to_markdown(clusters, audit_lookup, sf_link_map,
 # ── Overview metrics ───────────────────────────────────────────────────
 
 def _render_overview(clusters, audit_results, sf_link_map):
+    audit_lookup = {normalize_url(r.get("url", "")): r for r in audit_results
+                    if r.get("url")}
     page_urls_clustered = set()
     clusters_with_hub = 0
     clusters_without_hub = 0
     total_pages_in_clusters = 0
     for c in clusters:
-        hub = detect_pillar(c)
+        hub = detect_pillar(c, audit_lookup=audit_lookup)
         if hub:
             clusters_with_hub += 1
         else:
@@ -423,7 +425,7 @@ def _render_issues(clusters, audit_results, sf_link_map):
 
     for c in clusters:
         topic = c.get("topic", "(unnamed)")
-        hub = detect_pillar(c)
+        hub = detect_pillar(c, audit_lookup=audit_lookup)
         page_urls = [normalize_url(p.get("page", "")) for p in c.get("pages", []) or []
                      if p.get("page")]
         page_urls = [u for u in page_urls if u]
@@ -564,7 +566,7 @@ def render():
     for c in sorted_clusters:
         topic = c.get("topic", "(unnamed)")
         n = len(c.get("pages", []) or [])
-        hub = detect_pillar(c)
+        hub = detect_pillar(c, audit_lookup=audit_lookup)
         marker = "🟢" if hub else "⚠"
         cluster_options.append(f"{marker} {topic} · {n} pages")
     cluster_idx_by_label = {label: i for i, label in enumerate(cluster_options)}

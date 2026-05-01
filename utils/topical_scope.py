@@ -24,17 +24,32 @@ from utils.cluster_linking import detect_pillar
 # Kept local to avoid circular import. Same semantics: substring-tolerant
 # token match, returns 0.0–1.0.
 
+# Scandinavian/European umlaut → ASCII map (mirror of utils/cluster_linking
+# and utils/cannibalization). URLs are typically transliterated, so we
+# normalize both sides to ASCII before tokenizing.
+_UMLAUT_MAP = str.maketrans({
+    "ä": "a", "Ä": "A", "ö": "o", "Ö": "O",
+    "å": "a", "Å": "A", "ø": "o", "Ø": "O",
+    "æ": "a", "Æ": "A", "é": "e", "É": "E",
+    "ü": "u", "Ü": "U",
+})
+
+
+def _normalize_chars(s: str) -> str:
+    return s.translate(_UMLAUT_MAP) if s else s
+
+
 def _slug_tokens(slug: str) -> set:
     if not slug:
         return set()
-    raw = _re.split(r"[-_./]+", slug.lower())
+    raw = _re.split(r"[-_./]+", _normalize_chars(slug.lower()))
     return {t for t in raw if len(t) >= 3}
 
 
 def _query_tokens(query: str) -> set:
     if not query:
         return set()
-    return {t for t in _re.findall(r"\w+", query.lower()) if len(t) >= 3}
+    return {t for t in _re.findall(r"\w+", _normalize_chars(query.lower())) if len(t) >= 3}
 
 
 def _url_tail_segment(url: str) -> str:
@@ -88,13 +103,30 @@ def get_topical_scope(page_url: str, topic_clusters: dict) -> dict | None:
         return None
     page_norm = normalize_url(page_url)
 
+    # Build audit_lookup for slug-match-aware hub detection. Reads from
+    # session_state so callers don't have to thread audit_results through.
+    audit_lookup = None
+    try:
+        import streamlit as _st
+        _audit = _st.session_state.get("audit_results") or []
+        if _audit:
+            audit_lookup = {normalize_url(r.get("url", "")): r for r in _audit
+                            if r.get("url")}
+    except Exception:
+        pass
+
     for cluster in topic_clusters.get("clusters", []) or []:
         page_urls = {normalize_url(p.get("page", ""))
                      for p in cluster.get("pages", []) or []}
-        if page_norm not in page_urls:
+        if page_norm not in page_urls and audit_lookup is None:
             continue
+        # Allow page_norm to NOT be in cluster.pages if it's the slug-
+        # match hub we're about to return — still relevant scope info.
 
-        hub = detect_pillar(cluster)
+        hub = detect_pillar(cluster, audit_lookup=audit_lookup)
+        # Skip if neither this page nor the hub is in this cluster
+        if page_norm not in page_urls and normalize_url(hub) != page_norm:
+            continue
         cluster_queries = cluster.get("queries", []) or []
         topic = cluster.get("topic", "")
 

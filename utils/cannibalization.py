@@ -22,19 +22,35 @@ from utils.url_helpers import (
 # corresponding sub-category. This protects site architecture from being
 # overruled by transient SERP rankings.
 
+# Scandinavian/European umlaut → ASCII map (mirror of utils/cluster_linking
+# and utils/topical_scope). URLs are typically transliterated (e.g.
+# mshop.se uses /sexleksaker-for-man even though the Swedish word is "män"),
+# so we normalize both sides to ASCII before tokenizing.
+_UMLAUT_MAP = str.maketrans({
+    "ä": "a", "Ä": "A", "ö": "o", "Ö": "O",
+    "å": "a", "Å": "A", "ø": "o", "Ø": "O",
+    "æ": "a", "Æ": "A", "é": "e", "É": "E",
+    "ü": "u", "Ü": "U",
+})
+
+
+def _normalize_chars(s: str) -> str:
+    return s.translate(_UMLAUT_MAP) if s else s
+
+
 def _slug_tokens(slug: str) -> set:
     """Tokenize a URL slug. Lowercase, split on hyphens/underscores/dots,
     drop tokens shorter than 3 chars."""
     if not slug:
         return set()
-    raw = _re.split(r"[-_./]+", slug.lower())
+    raw = _re.split(r"[-_./]+", _normalize_chars(slug.lower()))
     return {t for t in raw if len(t) >= 3}
 
 
 def _query_tokens(query: str) -> set:
     if not query:
         return set()
-    return {t for t in _re.findall(r"\w+", query.lower()) if len(t) >= 3}
+    return {t for t in _re.findall(r"\w+", _normalize_chars(query.lower())) if len(t) >= 3}
 
 
 def _url_tail_segment(url: str) -> str:
@@ -523,9 +539,15 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         # is also in the cluster) win over the page that currently
         # ranks for the broad query.
         from utils.cluster_linking import detect_pillar as _detect_pillar
+        # Build audit_lookup so slug-match hub detection can scan whole
+        # site, not just cluster.pages. Fixes the case where a head-term-
+        # owning page (e.g. /sexleksaker/dildos) isn't in its own cluster.
+        _audit_lookup_for_pillar = {
+            _nu(ar.get("url", "")): ar for ar in audit_results if ar.get("url")
+        }
         pillar_pages = set()
         for c in clusters_list:
-            pillar_url = _detect_pillar(c)
+            pillar_url = _detect_pillar(c, audit_lookup=_audit_lookup_for_pillar)
             if pillar_url:
                 pillar_pages.add(_nu(pillar_url))
 

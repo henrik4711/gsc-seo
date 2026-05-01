@@ -12,8 +12,71 @@ Reads existing links from sf_link_map and only recommends links that
 are MISSING. Used by Internal Linking view + AI plans.
 """
 
+import re as _re
+
 from utils.ui_helpers import normalize_url
 from utils.url_helpers import url_path
+
+
+# ── Slug-match helpers (local copy to avoid circular imports with
+# topical_scope and cannibalization, which both also expose these). ─────
+
+# Scandinavian/European umlaut → ASCII map. URLs are usually transliterated
+# (mshop.se uses /sexleksaker-for-man even though the Swedish word is "män"),
+# so we normalize both sides to a common ASCII form before tokenizing.
+_UMLAUT_MAP = str.maketrans({
+    "ä": "a", "Ä": "A", "ö": "o", "Ö": "O",
+    "å": "a", "Å": "A", "ø": "o", "Ø": "O",
+    "æ": "a", "Æ": "A", "é": "e", "É": "E",
+    "ü": "u", "Ü": "U",
+})
+
+
+def _normalize_chars(s: str) -> str:
+    return s.translate(_UMLAUT_MAP) if s else s
+
+
+def _slug_tokens(slug: str) -> set:
+    if not slug:
+        return set()
+    raw = _re.split(r"[-_./]+", _normalize_chars(slug.lower()))
+    return {t for t in raw if len(t) >= 3}
+
+
+def _query_tokens(query: str) -> set:
+    if not query:
+        return set()
+    return {t for t in _re.findall(r"\w+", _normalize_chars(query.lower())) if len(t) >= 3}
+
+
+def _url_tail_segment(url: str) -> str:
+    path = url_path(url).rstrip("/")
+    if not path:
+        return ""
+    parts = [p for p in path.split("/") if p]
+    return parts[-1] if parts else ""
+
+
+def _slug_match_score(url: str, query: str) -> float:
+    """0.0–1.0. Substring-tolerant on both sides (handles plurals like
+    dildos↔dildo, vibratorer↔vibrator). Mirror of the helpers in
+    utils/cannibalization.py + utils/topical_scope.py."""
+    qtoks = _query_tokens(query)
+    ttoks = _slug_tokens(_url_tail_segment(url))
+    if not qtoks or not ttoks:
+        return 0.0
+
+    def _stem_match(a: str, b: str) -> bool:
+        return a in b or b in a
+
+    covered = sum(1 for q in qtoks if any(_stem_match(q, t) for t in ttoks))
+    extras = sum(1 for t in ttoks if not any(_stem_match(t, q) for q in qtoks))
+    coverage = covered / len(qtoks)
+    if coverage < 1.0:
+        return coverage * 0.5
+    if extras == 0:
+        return 1.0
+    return max(0.5, 1.0 - extras * 0.2)
 
 
 def _url_hierarchy_pillar(pages: list) -> str:
@@ -52,29 +115,78 @@ def _url_hierarchy_pillar(pages: list) -> str:
     return candidates[0][0]
 
 
-def detect_pillar(cluster: dict) -> str:
+def detect_pillar(cluster: dict, audit_lookup: dict | None = None) -> str:
     """
     Identify the pillar page in a cluster.
 
     Priority:
-    1. URL-hierarchy pillar — a cluster page that is a URL-parent of
-       other cluster pages (e.g. /dildos when /dildos/klassisk-dildo,
-       /dildos/strap-on are also in the cluster). This preserves the
-       site architecture even when Google currently ranks a sub-page
-       for the broad cluster query.
-    2. Fallback — page with the most queries in the cluster (>1 query),
-       tie-broken by most clicks.
+    0. is_structural_hub flag — set by prior enrichment when a hub was
+       chosen but isn't naturally in cluster.pages.
+    1. SLUG-MATCH across the whole site (audit_lookup). The page whose
+       URL tail-slug best matches the cluster topic wins — even if it's
+       not currently in cluster.pages, as long as it's a real page on
+       the site AND is either in the cluster or a URL-ancestor of
+       cluster pages. This fixes the chicken-and-egg case where the
+       head-term-owning page (e.g. /sexleksaker/dildos) doesn't get
+       naturally clustered with its own sub-categories because Google
+       currently ranks the sub-pages instead.
+    2. URL-HIERARCHY pillar — a cluster page that is a URL-parent of
+       other cluster pages.
+    3. Most-queries fallback — page with the most queries in the
+       cluster (>1 query), tie-broken by most clicks.
 
-    Returns normalized URL or empty string.
+    Returns normalized URL or empty string. Pass ``audit_lookup`` (a
+    dict keyed by normalize_url) to enable Stage 1; without it, the
+    function falls back to Stage 2+3 only (legacy behaviour).
     """
     pages = cluster.get("pages", []) or []
+
+    # Priority 0: explicit structural-hub flag from a prior enrichment step
+    for p in pages:
+        if p.get("is_structural_hub"):
+            return normalize_url(p.get("page", ""))
+
     if len(pages) < 3:
         return ""  # too small to have a meaningful pillar
 
+    # Priority 1: slug-match against entire site
+    if audit_lookup:
+        topic = (cluster.get("topic", "") or "").replace("_", " ").strip()
+        cluster_page_norms = {normalize_url(p.get("page", "")) for p in pages}
+        best_score = 0.0
+        best_url = ""
+        best_path_len = 0
+        for url in audit_lookup.keys():
+            score = _slug_match_score(url, topic)
+            if score < 0.95:
+                continue
+            u_path = url_path(url).rstrip("/")
+            if not u_path or u_path == "/":
+                continue  # never pick the homepage as a topical hub
+            in_cluster = normalize_url(url) in cluster_page_norms
+            desc_count = sum(
+                1 for p in pages
+                if url_path(p.get("page", "")).rstrip("/").startswith(u_path + "/")
+            )
+            if not (in_cluster or desc_count > 0):
+                continue  # slug matches but page is unrelated to cluster pages
+            # Tiebreak: highest score, then most descendants, then longest path
+            this_path_len = len(u_path)
+            this_key = (score, desc_count, this_path_len)
+            best_key = (best_score, 0, best_path_len)  # rebuilt for compare
+            if this_key > best_key:
+                best_score = score
+                best_url = url
+                best_path_len = this_path_len
+        if best_url:
+            return best_url
+
+    # Priority 2: URL-hierarchy parent within cluster.pages
     hierarchy_pillar = _url_hierarchy_pillar(pages)
     if hierarchy_pillar:
         return hierarchy_pillar
 
+    # Priority 3: query-count fallback
     candidates = [p for p in pages if p.get("query_count", 0) > 1]
     if not candidates:
         return ""
@@ -280,7 +392,7 @@ def generate_cluster_link_recommendations(
 
         page_urls = [normalize_url(p.get("page", "")) for p in pages if p.get("page")]
         page_urls = [u for u in page_urls if u]
-        pillar = detect_pillar(cluster)
+        pillar = detect_pillar(cluster, audit_lookup=audit_lookup)
         spokes = [u for u in page_urls if u != pillar] if pillar else page_urls
 
         # ── 1. VERTICAL-UP: every spoke must link to pillar ─────
