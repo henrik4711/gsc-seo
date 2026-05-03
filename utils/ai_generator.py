@@ -2306,9 +2306,77 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                     if _re_count.search(rf'\b{_re_count.escape(t)}\b', low):
                         faq_typo_hits.append((h3, t, brand))
 
+        # Detect anchor↔target mismatches — anchor text and the target URL
+        # must share at least one meaningful word stem. Catches cases like
+        # anchor "billiga sexleksaker" pointing to /vara-butiker, or anchor
+        # "Vuxenleksak" pointing to /ullared (a physical store location).
+        # Soft prompt rules alone don't enforce this reliably; the validator
+        # makes it a hard requirement.
+        _stop_anchor = {
+            "och", "att", "som", "med", "till", "för", "den", "det", "sex",
+            "html", "www", "com", "https", "http", "the", "and", "for",
+            "from", "with", "this", "that",
+        }
+        def _word_tokens(_t: str) -> set:
+            if not _t:
+                return set()
+            return {
+                w.lower() for w in _re_count.findall(r'[a-zåäöæøéèà]+', _t)
+                if len(w) >= 4 and w.lower() not in _stop_anchor
+            }
+        def _slug_tokens(_u: str) -> set:
+            try:
+                _p = _up_dupe(_u).path if "://" in _u else _u
+            except Exception:
+                _p = _u
+            return {
+                s.lower() for s in _re_count.split(r'[/_\-\.]', _p or "")
+                if len(s) >= 4 and s.lower() not in _stop_anchor
+            }
+        def _anchor_relates(anchor_tok: set, target_tok: set) -> bool:
+            if not anchor_tok or not target_tok:
+                return True  # cannot decide → don't flag
+            if anchor_tok & target_tok:
+                return True
+            # Substring match handles compound-word variants
+            # (e.g. "leksaker" ↔ "sexleksaker").
+            for a in anchor_tok:
+                for t in target_tok:
+                    if len(a) >= 5 and (a in t or t in a):
+                        return True
+            return False
+        anchor_link_re = _re_count.compile(
+            r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+            flags=_re_count.IGNORECASE | _re_count.DOTALL,
+        )
+        anchor_target_mismatches = []
+        for m in anchor_link_re.finditer(full_html):
+            href = m.group(1)
+            anchor_html = m.group(2)
+            anchor_text = _re_count.sub(r'<[^>]+>', '', anchor_html).strip()
+            if not anchor_text:
+                continue
+            if not (href.startswith("/") or site_host in (href or "").lower()):
+                continue
+            target_title = ""
+            try:
+                _ta = audit_by_url.get(normalize_url(href), {}) or {}
+                target_title = _ta.get("title", "") or _ta.get("h1", "") or ""
+            except Exception:
+                pass
+            target_tok = _slug_tokens(href) | _word_tokens(target_title)
+            anchor_tok = _word_tokens(anchor_text)
+            if not _anchor_relates(anchor_tok, target_tok):
+                anchor_target_mismatches.append({
+                    "anchor": anchor_text[:60],
+                    "href": href,
+                    "target_title": target_title[:60],
+                })
+
         if (missing_kws or missing_links or link_count_too_low
                 or price_violations or bold_overuse
-                or dupe_slug_links or faq_typo_hits):
+                or dupe_slug_links or faq_typo_hits
+                or anchor_target_mismatches):
             new_fixes = list(validation_fixes or [])
             if missing_kws:
                 new_fixes.append(
@@ -2394,6 +2462,25 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                     f"CORRECT brand spelling. Misspellings may stay in "
                     f"the answer body for SEO, but the question itself "
                     f"is user-facing and must read as professional."
+                )
+            if anchor_target_mismatches:
+                # Quote the worst examples back so the AI can see exactly
+                # what went wrong instead of guessing.
+                examples = "; ".join(
+                    f"anchor \"{m['anchor']}\" → {m['href']}"
+                    + (f" (target page: \"{m['target_title']}\")" if m["target_title"] else "")
+                    for m in anchor_target_mismatches[:5]
+                )
+                new_fixes.append(
+                    f"Anchor↔target mismatch(es) — anchor text and the URL "
+                    f"the link points to share NO meaningful word: {examples}. "
+                    f"For EACH of these, do ONE of: (a) change the anchor "
+                    f"text so it actually describes the destination page "
+                    f"(e.g. anchor for /vara-butiker should say 'butiker' "
+                    f"or 'fysiska butiker', not 'billiga sexleksaker'), or "
+                    f"(b) replace the link with a different URL whose slug "
+                    f"matches the anchor's meaning. Never wrap a sentence "
+                    f"about topic X with an anchor pointing at topic Y."
                 )
             return generate_page_content(
                 url,
