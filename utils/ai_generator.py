@@ -2143,6 +2143,15 @@ about.
 6. Language: {language}
 7. For /rea/ sale pages: describe the CATEGORY of products on sale and WHY
    they're good value, NOT specific sale items or rotating discounts
+8. SPECIFIC PRODUCT NAMES — strict: when you reference a product by its
+   full model name (brand + model), the EXACT product MUST appear in
+   the REAL PRODUCTS list at the top of this prompt. Do NOT invent
+   plausible-sounding names like "Pleasure Steel Plug With Crystal" or
+   "Tenga Spinner Masturbator Tetra" if they aren't in that list —
+   customers will click, find nothing, and lose trust. If you want to
+   reference products in general, use generic phrasing ("vissa
+   premium-modeller", "populära varianter från Tenga", "flera
+   metallvarianter") instead of made-up model names.
 
 ## FAQ FORMAT
 The FAQ in bottom_html must use visible HTML markup like this:
@@ -2373,10 +2382,68 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                     "target_title": target_title[:60],
                 })
 
+        # Detect hallucinated brand-named products. AI sometimes invents
+        # plausible-looking model names ("Pleasure Steel Plug With Crystal",
+        # "Tenga Spinner Masturbator Tetra") that aren't in the page's real
+        # product list. Heuristic: any phrase of <known brand> + 2+ more
+        # capitalised/numeric tokens must appear in the real products list
+        # (substring match either way handles minor name drift).
+        # Conservative on purpose — brand alone or brand+1 word is allowed
+        # so casual mentions like "Lovense är populära" don't false-fire.
+        known_brands_for_check = [
+            "Fleshlight", "Tenga", "Satisfyer", "Womanizer", "Lovense",
+            "We-Vibe", "Lelo", "Fun Factory", "Doll King", "Njoy", "Pjur",
+            "FleshLube", "Fleshwash", "PicoBong", "Pico Bong", "Nexus",
+            "Aneros", "Joydivision", "Magic Wand", "Rocks-Off", "Doc Johnson",
+            "Calexotics", "CalExotics", "Hot Octopuss", "Pipedream",
+            "Penthouse", "You2Toys", "Intimate Earth", "Shibari", "Easytoys",
+            "Screaming O", "ScreamingO", "Bijoux Indiscrets",
+            "Adrien Lastic", "Je Joue", "B-Vibe", "Oxballs", "MyHixel",
+            "Sliquid", "Tracy's Dog", "Dorcel", "Sqweel", "Crazy Bull",
+            "Cave Master", "Bondage Boutique", "Fetish Fantasy",
+            "Anal Fantasy", "Booty", "Bootylicious", "Pleasure",
+            "Clone a Willy", "LoveBoxxx", "Monogamy",
+        ]
+        real_products_lower = []
+        for prod in prof.get("products", []) or []:
+            if isinstance(prod, dict):
+                _name = (prod.get("name") or "").lower().strip()
+                if len(_name) >= 3:
+                    real_products_lower.append(_name)
+        # Strip HTML tags for cleaner phrase matching.
+        plain_text = _re_count.sub(r'<[^>]+>', ' ', full_html)
+        plain_text = _re_count.sub(r'\s+', ' ', plain_text)
+        hallucinated_products = []
+        seen_hallu = set()
+        for brand in known_brands_for_check:
+            # Brand + 2 to 5 additional tokens (capitalised word, all-caps,
+            # or digits). Hyphens between tokens are allowed.
+            pattern = (
+                rf'\b{_re_count.escape(brand)}'
+                r'(?:[\s\-]+(?:[A-Z][a-zåäöéèà]+|[A-Z]{2,}|\d+[A-Za-z]*))'
+                r'(?:[\s\-]+(?:[A-Z][a-zåäöéèà]+|[A-Z]{2,}|\d+[A-Za-z]*)){1,4}'
+                r'\b'
+            )
+            for m in _re_count.finditer(pattern, plain_text):
+                cand = m.group(0).strip()
+                low = cand.lower()
+                if low in seen_hallu:
+                    continue
+                seen_hallu.add(low)
+                # Substring match either way — handles "Lovense Hush" vs
+                # "Lovense Hush 2" and similar near-matches.
+                matched = False
+                for prod_name in real_products_lower:
+                    if low in prod_name or prod_name in low:
+                        matched = True
+                        break
+                if not matched:
+                    hallucinated_products.append(cand)
+
         if (missing_kws or missing_links or link_count_too_low
                 or price_violations or bold_overuse
                 or dupe_slug_links or faq_typo_hits
-                or anchor_target_mismatches):
+                or anchor_target_mismatches or hallucinated_products):
             new_fixes = list(validation_fixes or [])
             if missing_kws:
                 new_fixes.append(
@@ -2481,6 +2548,23 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                     f"(b) replace the link with a different URL whose slug "
                     f"matches the anchor's meaning. Never wrap a sentence "
                     f"about topic X with an anchor pointing at topic Y."
+                )
+            if hallucinated_products:
+                shown = ", ".join(f"\"{p}\"" for p in hallucinated_products[:6])
+                # Build a short list of real product names so the AI has
+                # something concrete to substitute in.
+                real_list = "; ".join(
+                    f"\"{p}\"" for p in (real_products_lower[:8])
+                ) or "(no product data available — use generic phrasing instead)"
+                new_fixes.append(
+                    f"Possibly hallucinated product name(s): {shown}. None "
+                    f"of these match any product in the page's real product "
+                    f"list. EITHER replace each one with a real product "
+                    f"name from this list: {real_list} — OR drop the "
+                    f"specific name and use a generic phrasing (e.g. \"vissa "
+                    f"premium-modeller\", \"flera populära varianter\"). "
+                    f"Never invent a model name: customers click and find "
+                    f"nothing, which kills trust."
                 )
             return generate_page_content(
                 url,
