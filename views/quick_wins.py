@@ -15,7 +15,7 @@ from utils.ui_helpers import stable_hash, normalize_url, shorten_url, extract_co
 # "which 329 pages?" themselves.
 
 _MATCH_TOKEN_RE = re.compile(r"[a-zåäöæøéèà0-9]+")
-_MATCH_STOP = {
+_MATCH_STOP_BASE = {
     "and", "the", "for", "with", "this", "that", "from", "are", "was",
     "och", "att", "att", "som", "med", "till", "kop", "kopa", "kob",
     "sex", "sexleksaker",  # ubiquitous in this niche, drowns out signal
@@ -23,10 +23,50 @@ _MATCH_STOP = {
 }
 
 
+def _get_site_brand_tokens() -> set:
+    """Tokens derived from the site's own domain name (e.g. www.mshop.se → {"mshop"}).
+    These appear in nearly every page title because of the "| Mshop" suffix
+    and would otherwise dominate cluster matching, sending every page into
+    a noise cluster like "brand_mshop". Filtered both from page tokens and
+    from cluster signatures."""
+    site = (st.session_state.get("gsc_site") or "").lower()
+    if not site:
+        return set()
+    try:
+        from urllib.parse import urlparse
+        netloc = urlparse(site).netloc or site
+    except Exception:
+        netloc = site
+    netloc = netloc.replace("https://", "").replace("http://", "")
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    stem = netloc.split(".")[0] if netloc else ""
+    if not stem or len(stem) < 3:
+        return set()
+    return {stem}
+
+
 def _tokenize_for_match(text: str) -> set:
     if not text:
         return set()
-    return {t for t in _MATCH_TOKEN_RE.findall(text.lower()) if len(t) >= 3 and t not in _MATCH_STOP}
+    stop = _MATCH_STOP_BASE | _get_site_brand_tokens()
+    return {t for t in _MATCH_TOKEN_RE.findall(text.lower()) if len(t) >= 3 and t not in stop}
+
+
+def _is_site_brand_cluster(cluster_topic: str) -> bool:
+    """True if the cluster is just the site's own brand (e.g. 'brand_mshop').
+    These are noise — visitors searching the site name should land on the
+    homepage, not need their own topical cluster. Filtered from drilldowns."""
+    if not cluster_topic:
+        return False
+    t = cluster_topic.lower().strip()
+    brands = _get_site_brand_tokens()
+    if not brands:
+        return False
+    for b in brands:
+        if t == b or t == f"brand_{b}":
+            return True
+    return False
 
 
 def _suggest_cluster_for_page(url: str, title: str, clusters: list, top_n: int = 1) -> list:
@@ -37,6 +77,9 @@ def _suggest_cluster_for_page(url: str, title: str, clusters: list, top_n: int =
     scored = []
     for c in clusters:
         topic = c.get("topic", "") or ""
+        # Site-brand cluster ('brand_mshop') is noise — never suggest it.
+        if _is_site_brand_cluster(topic):
+            continue
         core_terms = c.get("core_terms", []) or []
         queries = c.get("queries", []) or []
         sig_text = topic + " " + " ".join(core_terms) + " " + " ".join(queries[:30])
@@ -84,6 +127,20 @@ def _resolve_priority_action(action_text: str, df_structure, topic_clusters: dic
         if "Cluster(s)" not in df.columns:
             return out
         unclustered = df[df["Cluster(s)"].fillna("") == ""].copy()
+        if unclustered.empty:
+            return out
+        # Drop the homepage — it doesn't belong in a topical cluster
+        # (it's the architecture root). It was showing up in this list
+        # with empty path and tens of thousands of impressions because
+        # GSC traffic for the site name lands there.
+        from urllib.parse import urlparse as _up_clusters
+        def _is_homepage(_u: str) -> bool:
+            try:
+                p = _up_clusters(str(_u or "")).path
+            except Exception:
+                p = str(_u or "")
+            return p.strip("/") == ""
+        unclustered = unclustered[~unclustered["URL"].apply(_is_homepage)]
         if unclustered.empty:
             return out
         if "Impressions" in unclustered.columns:
@@ -176,6 +233,9 @@ def _resolve_priority_action(action_text: str, df_structure, topic_clusters: dic
         rows = []
         for c in clusters:
             topic = (c.get("topic") or "").lower()
+            # Site-brand cluster is noise — never recommend "expand" it.
+            if _is_site_brand_cluster(topic):
+                continue
             page_count = c.get("page_count", 0)
             in_mentioned = any(tok in topic or topic in tok for tok in mentioned_tokens) if mentioned_tokens else False
             is_small = page_count <= 2
@@ -210,6 +270,10 @@ def _resolve_priority_action(action_text: str, df_structure, topic_clusters: dic
     if cat == "informational_gap":
         rows = []
         for c in clusters[:25]:
+            # Skip the site-brand noise cluster — visitors searching the
+            # site name go to the homepage; they don't need a buying guide.
+            if _is_site_brand_cluster(c.get("topic", "") or ""):
+                continue
             pages = c.get("pages", []) or []
             has_blog = any(
                 "/blog/" in (p.get("page", "") or "").lower()
