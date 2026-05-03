@@ -31,7 +31,25 @@ CRITICAL — ACCURACY RULES (never violate these):
 - If body text/content excerpt is provided, READ it before assessing content quality.
 - NEVER say a page is "completely empty" unless word count is literally 0 AND title is "" AND meta description is "".
 - When stating what is wrong, quote the ACTUAL current value. Example: "Title is 85 chars (too long)" not just "title needs fixing".
-- If something looks fine, say it is fine. Do NOT invent problems."""
+- If something looks fine, say it is fine. Do NOT invent problems.
+
+OPERATIONAL FACTS — NEVER INVENT THESE (only use values from Site context):
+- Sender name on packages / shipping label
+- Exact return window (days)
+- Exact warranty period
+- Specific delivery time guarantees
+- Specific free-shipping threshold
+- Loyalty program details, discount codes, exact promotions
+- Founding year / employee count / number of customers (unless given)
+- Specific sourcing/manufacturing partners
+If a fact like the above is NOT provided in the Site context section,
+write generically. Examples:
+  GOOD: "diskret leverans i anonyma kartonger"
+  BAD:  "Avsändaren står som 'Mshop'" (only OK if explicitly given)
+  GOOD: "snabb leverans"
+  BAD:  "leverans inom 24 timmar" (only OK if explicitly given)
+  GOOD: "öppet köp enligt svensk konsumentlag"
+  BAD:  "30 dagars öppet köp" (only OK if explicitly given)"""
 
 HUMAN_WRITING_STYLE = """
 WRITING STYLE — the text MUST read like a real person wrote it, NOT AI.
