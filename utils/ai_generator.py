@@ -2440,10 +2440,18 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                 if not matched:
                     hallucinated_products.append(cand)
 
+        # Surface possible hallucinations on the result for UI display.
+        # Warning-only (not retry-blocking) because the page-level
+        # product list is incomplete — a real product on the site that
+        # simply doesn't appear in *this* page's product grid would
+        # false-positive otherwise.
+        if isinstance(result, dict) and hallucinated_products:
+            result["_potential_hallucinations"] = list(hallucinated_products)
+
         if (missing_kws or missing_links or link_count_too_low
                 or price_violations or bold_overuse
                 or dupe_slug_links or faq_typo_hits
-                or anchor_target_mismatches or hallucinated_products):
+                or anchor_target_mismatches):
             new_fixes = list(validation_fixes or [])
             if missing_kws:
                 new_fixes.append(
@@ -2548,23 +2556,6 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                     f"(b) replace the link with a different URL whose slug "
                     f"matches the anchor's meaning. Never wrap a sentence "
                     f"about topic X with an anchor pointing at topic Y."
-                )
-            if hallucinated_products:
-                shown = ", ".join(f"\"{p}\"" for p in hallucinated_products[:6])
-                # Build a short list of real product names so the AI has
-                # something concrete to substitute in.
-                real_list = "; ".join(
-                    f"\"{p}\"" for p in (real_products_lower[:8])
-                ) or "(no product data available — use generic phrasing instead)"
-                new_fixes.append(
-                    f"Possibly hallucinated product name(s): {shown}. None "
-                    f"of these match any product in the page's real product "
-                    f"list. EITHER replace each one with a real product "
-                    f"name from this list: {real_list} — OR drop the "
-                    f"specific name and use a generic phrasing (e.g. \"vissa "
-                    f"premium-modeller\", \"flera populära varianter\"). "
-                    f"Never invent a model name: customers click and find "
-                    f"nothing, which kills trust."
                 )
             return generate_page_content(
                 url,

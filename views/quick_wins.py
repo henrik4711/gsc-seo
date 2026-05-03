@@ -1238,6 +1238,20 @@ def _validate_generated_content(page, text_data, plan_data):
                 else:
                     _check(True, f"All {len(required_links)} required internal links present", "info")
 
+        # ── Potential product-name hallucinations (warning only) ──
+        # Brand-anchored model names that don't appear in the page's real
+        # product list. May be a real product on another page — review
+        # before pushing to verify each name actually exists in the store.
+        potential_hallu = (text_data or {}).get("_potential_hallucinations") or []
+        if potential_hallu:
+            shown = ", ".join(f"\"{p}\"" for p in potential_hallu[:5])
+            extra = f" (+{len(potential_hallu) - 5} more)" if len(potential_hallu) > 5 else ""
+            _check(
+                False,
+                f"Verify these product names exist in your catalog: {shown}{extra}",
+                "warning",
+            )
+
         # ── 8. LIX readability (target 35-40) ──
         from utils.ui_helpers import compute_lix
         lix = compute_lix(html)
