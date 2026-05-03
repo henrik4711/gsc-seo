@@ -2114,6 +2114,22 @@ NEVER use the same anchor text for different link targets.
 NEVER use just the generic primary keyword as anchor for sub-pages.
 Each anchor should help Google understand what the TARGET page is about.
 
+NEVER link to a URL whose final path segment is the SAME slug as the
+current page's final path segment — those are duplicate categories
+covering the same topic, and linking between them dilutes both pages
+and confuses Google. Example: from /alla/satisfyer do NOT link to
+/sexleksaker/vibratorer/satisfyer — they share the slug "satisfyer"
+and target the same intent. Pick a parent, sibling, or thematically
+related page instead.
+
+ANCHOR–SENTENCE CONSISTENCY: the anchor text must match the meaning
+of the sentence around it. If a sentence talks about brands A, B, C,
+do NOT wrap it with an anchor for brand X. If you find yourself
+writing "...other brands like We-Vibe and Lovense in our [satisfyer]
+selection", rewrite either the anchor or the sentence so they agree
+— never let the anchor word point at something the sentence is not
+about.
+
 ## CONTENT RULES
 1. NO keyword stuffing — primary keyword max 2x in top, max 5-6x in bottom (natural use across 1000 words)
 2. Mention product NAMES and BRANDS — but NEVER specific prices (they change).
@@ -2141,6 +2157,15 @@ The FAQ in bottom_html must use visible HTML markup like this:
 </div>
 
 ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
+
+FAQ QUESTION SPELLING — strict: every brand name in an <h3> question
+MUST be spelled CORRECTLY. Headlines are user-facing and reading
+"satesfyer", "satifyer", "satysfier", "satisfyier" or any other
+typo of a real brand reads as unprofessional. If you want to capture
+misspelling traffic for SEO, place the misspelled variants ONLY in
+the answer body (the <p itemprop="text">), never in the question.
+Apply this to every brand: Satisfyer, Womanizer, We-Vibe, Lovense,
+Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
 
 ## OUTPUT (JSON):
 {{
@@ -2223,7 +2248,67 @@ ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
         strong_tags = _re_count.findall(r'<(?:strong|b)\b[^>]*>', full_html, flags=_re_count.IGNORECASE)
         bold_overuse = len(strong_tags) > 4
 
-        if missing_kws or missing_links or link_count_too_low or price_violations or bold_overuse:
+        # Detect duplicate-slug links — linking from /alla/satisfyer to
+        # /sexleksaker/vibratorer/satisfyer dilutes both pages because
+        # they cover the same topic. Heuristic: any internal href whose
+        # final non-empty path segment equals the current page's final
+        # segment is a duplicate-category link.
+        from urllib.parse import urlparse as _up_dupe
+        def _final_slug(u: str) -> str:
+            try:
+                p = _up_dupe(u).path if "://" in u else u
+            except Exception:
+                p = u
+            parts = [s for s in (p or "").rstrip("/").split("/") if s]
+            return parts[-1].lower() if parts else ""
+        own_slug = _final_slug(url)
+        dupe_slug_links = []
+        if own_slug:
+            for h in href_matches:
+                if not (h.startswith("/") or site_host in (h or "").lower()):
+                    continue
+                # Skip the page linking to itself with anchors / queries
+                # — those are caught by other rules.
+                if _final_slug(h) == own_slug and normalize_url(h) != normalize_url(url):
+                    dupe_slug_links.append(h)
+
+        # Detect brand-name typos in FAQ <h3> question headlines.
+        # Misspellings in ANSWER bodies are intentional SEO; misspellings
+        # in QUESTION headlines look unprofessional. We only flag h3s.
+        bottom_html_local = result.get("bottom_html") or ""
+        h3_questions = _re_count.findall(
+            r'<h3[^>]*>(.*?)</h3>',
+            bottom_html_local,
+            flags=_re_count.IGNORECASE | _re_count.DOTALL,
+        )
+        # Strip any inner tags from each h3 to compare plain text only.
+        h3_texts = [_re_count.sub(r'<[^>]+>', '', q).strip() for q in h3_questions]
+        # Brand → typo variants. Variants are common AI-generated misspellings
+        # observed in real outputs. Edit-distance check would be more general
+        # but also more brittle; an explicit list keeps false positives at zero.
+        brand_typos = {
+            "satisfyer": ["satesfyer", "satesfier", "satifyer", "satysfier",
+                          "satisfyier", "satysfyer", "satifyier", "satesfyier"],
+            "womanizer": ["womenizer", "wonanizer", "womanyzer"],
+            "we-vibe":   ["wevibe", "we vibe", "wewive", "we-wive"],
+            "lovense":   ["lovens", "lovesense", "lovensee"],
+            "fleshlight":["flashlight", "fleshlite", "fleshligt"],
+            "tenga":     ["tengo", "tenge"],
+            "lelo":      ["lello", "leelo"],
+            "fun factory": ["funfactory", "fun-factory"],
+        }
+        faq_typo_hits = []
+        for h3 in h3_texts:
+            low = h3.lower()
+            for brand, typos in brand_typos.items():
+                for t in typos:
+                    # Word-boundary match so "lovens" doesn't fire on "lovenshe"
+                    if _re_count.search(rf'\b{_re_count.escape(t)}\b', low):
+                        faq_typo_hits.append((h3, t, brand))
+
+        if (missing_kws or missing_links or link_count_too_low
+                or price_violations or bold_overuse
+                or dupe_slug_links or faq_typo_hits):
             new_fixes = list(validation_fixes or [])
             if missing_kws:
                 new_fixes.append(
@@ -2283,6 +2368,32 @@ ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
                     f"penalizes it. Keep bold ONLY on the primary phrase at first mention "
                     f"plus at most 1-2 genuinely critical terms. Strip <strong>/<b> from "
                     f"all other keyword variants — leave them as plain prose."
+                )
+            if dupe_slug_links:
+                # Show the offending URLs back to the AI verbatim so it
+                # cannot mis-parse the rule.
+                shown = ", ".join(set(dupe_slug_links[:5]))
+                new_fixes.append(
+                    f"Duplicate-category link(s) found — you linked to "
+                    f"{shown}. The current page URL ends in slug "
+                    f"\"{own_slug}\" and so does each of those targets, "
+                    f"meaning they cover the same topic. REMOVE every "
+                    f"link whose final path segment equals \"{own_slug}\" "
+                    f"and replace with a parent, sibling, or genuinely "
+                    f"different sub-category. Linking duplicate categories "
+                    f"to each other dilutes both pages."
+                )
+            if faq_typo_hits:
+                examples = "; ".join(
+                    f"\"{h}\" (use \"{brand}\", not \"{typo}\")"
+                    for (h, typo, brand) in faq_typo_hits[:4]
+                )
+                new_fixes.append(
+                    f"FAQ question(s) contain misspelled brand names: "
+                    f"{examples}. Rewrite each <h3> question with the "
+                    f"CORRECT brand spelling. Misspellings may stay in "
+                    f"the answer body for SEO, but the question itself "
+                    f"is user-facing and must read as professional."
                 )
             return generate_page_content(
                 url,
