@@ -2840,29 +2840,87 @@ def _render_per_page_tab():
 
     with controls_col2:
         bulk_n = st.number_input(
-            "Bulk-generate AI plans for top N (uncached only)",
+            "Bulk-generate plan + bottom text + intro for top N (uncached only)",
             min_value=1, max_value=max(1, uncached_count), value=min(10, max(1, uncached_count)),
             key="_qw_bulk_n",
             disabled=(uncached_count == 0),
-            help="Runs the AI plan generator on the next N pages without a cached plan. ~20 sec per page.",
+            help="Runs plan + bottom text + intro for the next N pages without a cached plan. ~60-90 sec per page.",
         )
 
     with controls_col3:
+        approx_min = int(bulk_n) * 75 // 60
+        approx_cost = int(bulk_n) * 0.05
         st.caption(f"Pages shown: {len(pages)} · With plan: {len(pages) - uncached_count}/{len(pages)} · "
                    f"Uncached: {uncached_count}")
         if uncached_count == 0:
             st.caption("All visible pages already have a cached plan.")
         else:
-            if st.button(f"⚡ Generate plans for next {int(bulk_n)} uncached pages", key="_qw_bulk_gen", type="primary"):
+            st.caption(f"≈ {approx_min} min · ≈ ${approx_cost:.2f} API cost")
+            if st.button(
+                f"⚡ Generate plan + bottom + intro for next {int(bulk_n)} uncached pages",
+                key="_qw_bulk_gen",
+                type="primary",
+            ):
+                from utils.ai_generator import (
+                    generate_page_content,
+                    generate_intro_rewrite,
+                )
+                from utils.persistence import save_ai_cache
                 batch = uncached_pages[:int(bulk_n)]
                 progress = st.progress(0.0)
                 status_txt = st.empty()
+                failed_text = 0
+                failed_intro = 0
                 for i, p in enumerate(batch):
-                    status_txt.text(f"[{i+1}/{len(batch)}] {p['url']}")
+                    url = p["url"]
+                    url_hash = stable_hash(url)
+                    status_txt.text(f"[{i+1}/{len(batch)}] {url}  (plan)")
                     _generate_all_fixes(p)
+
+                    text_key = f"_bottom_text_{url_hash}"
+                    if p.get("page_type") == "category" and text_key not in st.session_state:
+                        status_txt.text(f"[{i+1}/{len(batch)}] {url}  (bottom text)")
+                        try:
+                            st.session_state[text_key] = generate_page_content(url)
+                        except Exception as e:
+                            failed_text += 1
+                            st.session_state[text_key] = {
+                                "error": str(e),
+                                "error_class": type(e).__name__,
+                            }
+
+                    intro_key = f"_intro_text_{url_hash}"
+                    if intro_key not in st.session_state:
+                        status_txt.text(f"[{i+1}/{len(batch)}] {url}  (intro)")
+                        try:
+                            st.session_state[intro_key] = generate_intro_rewrite(url)
+                        except Exception as e:
+                            failed_intro += 1
+                            st.session_state[intro_key] = {
+                                "error": str(e),
+                                "error_class": type(e).__name__,
+                            }
+
+                    # Persist after each page so a mid-run crash doesn't
+                    # wipe progress on a 40-page batch.
+                    try:
+                        save_ai_cache()
+                    except Exception:
+                        pass
                     progress.progress((i + 1) / len(batch))
+
                 status_txt.empty()
-                st.success(f"Generated {len(batch)} plans")
+                if failed_text or failed_intro:
+                    st.warning(
+                        f"Generated {len(batch)} plans · "
+                        f"bottom text failures: {failed_text} · "
+                        f"intro failures: {failed_intro}. "
+                        f"Open individual pages to see errors."
+                    )
+                else:
+                    st.success(
+                        f"Generated plan + bottom text + intro for {len(batch)} pages."
+                    )
                 st.rerun()
 
     excluded_count = st.session_state.get("_qw_excluded_count", 0)
