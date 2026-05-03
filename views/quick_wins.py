@@ -1881,6 +1881,13 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
             btn_label = "🔄 Regenerate with new rules" if is_old_format else "Regenerate"
             btn_type = "primary" if is_old_format else "secondary"
             if st.button(btn_label, key=f"regen_{url_hash}", type=btn_type, use_container_width=True):
+                # Snapshot what was cached before clearing — Regenerate
+                # should rebuild the SAME outputs that existed, not just
+                # the plan. Otherwise users have to click Generate bottom
+                # text + Generate intro again afterwards.
+                had_text = text_key in st.session_state
+                had_intro = f"_intro_text_{url_hash}" in st.session_state
+
                 # Clear cached results for this page
                 intro_key = f"_intro_text_{url_hash}"
                 for k in [plan_key, text_key, intro_key]:
@@ -1894,7 +1901,49 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                             os.remove(path)
                 except Exception:
                     pass
+
+                # Regenerate plan (always — fast)
                 _generate_all_fixes(page)
+
+                # If a bottom text was cached, regenerate it with the
+                # current rules so the user doesn't have to click
+                # 'Generate bottom text' a second time.
+                if had_text:
+                    with st.spinner("Regenerating bottom text with new rules..."):
+                        try:
+                            from utils.ai_generator import generate_page_content
+                            result = generate_page_content(url)
+                            st.session_state[text_key] = result
+                        except Exception as e:
+                            import traceback as _tb
+                            show_ai_error(
+                                "Bottom text regeneration",
+                                e,
+                                context={"url": url, "page_type": page.get("page_type")},
+                            )
+                            st.session_state[text_key] = {
+                                "error": str(e),
+                                "error_class": type(e).__name__,
+                                "error_traceback": _tb.format_exc()[-3000:],
+                            }
+                        from utils.persistence import save_ai_cache
+                        save_ai_cache()
+
+                # If an intro rewrite was cached, regenerate that too.
+                if had_intro:
+                    with st.spinner("Regenerating intro rewrite..."):
+                        try:
+                            from utils.ai_generator import generate_intro_rewrite
+                            result = generate_intro_rewrite(url)
+                            st.session_state[intro_key] = result
+                        except Exception as e:
+                            st.session_state[intro_key] = {
+                                "error": str(e),
+                                "error_class": type(e).__name__,
+                            }
+                        from utils.persistence import save_ai_cache
+                        save_ai_cache()
+
                 st.rerun()
 
         plan = st.session_state.get(plan_key, {})
