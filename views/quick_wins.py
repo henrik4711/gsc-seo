@@ -2824,6 +2824,102 @@ def _render_per_page_tab():
             unsafe_allow_html=True,
         )
 
+    # ── Bulk regenerate cached bottom texts (force-rebuild after arch
+    # changes invalidate them — anchors, hub URLs, owned/dnc keywords).
+    cached_pages_with_text = [
+        p for p in pages
+        if f"_bottom_text_{stable_hash(p['url'])}" in st.session_state
+    ]
+    if cached_pages_with_text:
+        with st.expander(
+            f"🔄 Re-generate cached bottom texts ({len(cached_pages_with_text)} pages have stale text)",
+            expanded=False,
+        ):
+            st.markdown(
+                "<div style='background:#0d0d15; border-left:3px solid #ffaa33; "
+                "padding:0.6rem 0.9rem; margin-bottom:0.8rem; border-radius:0 4px 4px 0;'>"
+                "<div style='font-size:0.85rem; color:#e8e8f0;'>"
+                "Use this when topical architecture has changed (hub URLs, "
+                "owned/do-not-compete keywords, anchor diversity). Old cached "
+                "texts are <strong>cleared and regenerated</strong> with the "
+                "current rules. ~30 sec + ~$0.02 per page."
+                "</div></div>",
+                unsafe_allow_html=True,
+            )
+            rg_col1, rg_col2 = st.columns([2, 3])
+            with rg_col1:
+                regen_n = st.number_input(
+                    "How many to regenerate now?",
+                    min_value=1,
+                    max_value=len(cached_pages_with_text),
+                    value=min(10, len(cached_pages_with_text)),
+                    step=5,
+                    key="_qw_regen_bottom_n",
+                    help="Process in chunks. Re-open this expander to do more.",
+                )
+                approx_min = int(regen_n) * 30 // 60
+                approx_cost = int(regen_n) * 0.02
+                st.caption(
+                    f"≈ {approx_min} min · ≈ ${approx_cost:.2f} API cost"
+                )
+            with rg_col2:
+                st.caption(
+                    f"{len(cached_pages_with_text)} pages have a cached bottom "
+                    f"text. They were generated under the previous architecture "
+                    f"and won't reflect the new TOPICAL BOUNDARY data."
+                )
+                confirm_regen = st.checkbox(
+                    "I understand this will clear and regenerate cached texts",
+                    key="_qw_regen_bottom_confirm",
+                )
+                if st.button(
+                    f"🔄 Regenerate next {int(regen_n)} cached pages",
+                    key="_qw_regen_bottom_btn",
+                    type="primary",
+                    disabled=not confirm_regen,
+                ):
+                    from utils.ai_generator import generate_page_content
+                    from utils.persistence import save_ai_cache
+                    batch = cached_pages_with_text[:int(regen_n)]
+                    progress = st.progress(0.0)
+                    status_txt = st.empty()
+                    failed = 0
+                    for i, p in enumerate(batch):
+                        url = p["url"]
+                        url_hash = stable_hash(url)
+                        text_key = f"_bottom_text_{url_hash}"
+                        status_txt.text(f"[{i+1}/{len(batch)}] {url}")
+                        # Drop the stale entry first so the new generation
+                        # actually runs and persists.
+                        if text_key in st.session_state:
+                            del st.session_state[text_key]
+                        try:
+                            result = generate_page_content(url)
+                            st.session_state[text_key] = result
+                        except Exception as e:
+                            failed += 1
+                            st.session_state[text_key] = {
+                                "error": str(e),
+                                "error_class": type(e).__name__,
+                            }
+                        # Save after every page so a mid-run crash doesn't
+                        # wipe progress on a 200-page batch.
+                        try:
+                            save_ai_cache()
+                        except Exception:
+                            pass
+                        progress.progress((i + 1) / len(batch))
+                    status_txt.empty()
+                    if failed:
+                        st.warning(
+                            f"Regenerated {len(batch) - failed} pages, "
+                            f"{failed} failed. Check error details on "
+                            f"individual pages."
+                        )
+                    else:
+                        st.success(f"Regenerated {len(batch)} pages.")
+                    st.rerun()
+
     st.markdown("---")
 
     if not pages:
