@@ -1497,6 +1497,24 @@ def _required_items_for_page(prof: dict, audit_by_url: dict) -> tuple[list, list
         if isinstance(kw, str) and kw.strip():
             required_kws_raw.append(kw.strip())
 
+    # Topical-scope owned phrases — synthesized from the page's slug when
+    # GSC hasn't recorded the natural query (low impressions, dialect
+    # mismatch). These are the canonical phrases the spoke MUST own per
+    # the topical architecture, even if Google hasn't observed them yet.
+    # Without this, slugs like /klassisk-dildo whose topic phrase isn't
+    # in cluster.queries would generate body text without the canonical
+    # 'klassisk dildo' phrase — defeating the architectural purpose.
+    try:
+        from utils.topical_scope import get_topical_scope
+        _topic_clusters = st.session_state.get("topic_clusters", {}) or {}
+        _scope = get_topical_scope(prof.get("url", ""), _topic_clusters)
+        if _scope and not _scope.get("is_hub"):
+            for kw in (_scope.get("owned") or [])[:5]:
+                if isinstance(kw, str) and kw.strip():
+                    required_kws_raw.append(kw.strip())
+    except Exception:
+        pass
+
     # Dedup case-insensitively, preserve order, cap to keep prompt sane.
     seen = set()
     required_keywords = []
