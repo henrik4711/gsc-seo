@@ -108,6 +108,12 @@ REQUIRED:
   sentence paragraphs are fine when emphatic.
 - Occasional contractions are fine in casual contexts ("don't", "it's")
 - NEVER include specific prices (they change)
+- Bold tags (<strong> / <b>) are RARE — max 2-3 per entire bottom text.
+  Bolding 8-10 keyword phrases reads as keyword-stuffing and Google treats
+  it as a spam signal. Bold ONE primary phrase the first time it appears
+  and at most 1-2 genuinely critical terms. NEVER bold the same phrase
+  twice. NEVER bold every variant ("sexleksaker för män", "sex toys",
+  "sexleksaker män", "billiga sexleksaker" all bolded = automatic reject).
 - Don't start adjacent sentences with the same word ("The" after "The")
 - It's OK — preferred, even — to leave a sentence imperfect or slightly
   asymmetric. AI polishes everything to glassy uniformity; humans don't.
@@ -2212,7 +2218,12 @@ ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
         if _re_count.search(r'\b\d{2,5}\s*[-–]\s*\d{2,5}\s*(?:kr|kronor)\b', full_html, _re_count.IGNORECASE):
             price_violations.append("price-range")
 
-        if missing_kws or missing_links or link_count_too_low or price_violations:
+        # Detect <strong>/<b> tag overuse — keyword-stuffing signal.
+        # Max 4 bold tags per bottom text; everything beyond reads spammy.
+        strong_tags = _re_count.findall(r'<(?:strong|b)\b[^>]*>', full_html, flags=_re_count.IGNORECASE)
+        bold_overuse = len(strong_tags) > 4
+
+        if missing_kws or missing_links or link_count_too_low or price_violations or bold_overuse:
             new_fixes = list(validation_fixes or [])
             if missing_kws:
                 new_fixes.append(
@@ -2263,6 +2274,15 @@ ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
                     f"'i ett brett prisspann', 'från grundläggande modeller till premiumvarianter', "
                     f"or 'priserna varierar'. NEVER write 'NN kr' / 'NN kronor' for any product, "
                     f"category, or example."
+                )
+            if bold_overuse:
+                new_fixes.append(
+                    f"Bold tags overused — found {len(strong_tags)} <strong>/<b> tags. "
+                    f"HARD LIMIT: max 2-3 bold phrases in the ENTIRE bottom text. "
+                    f"Bolding 8-10 keyword variants reads as keyword-stuffing and Google "
+                    f"penalizes it. Keep bold ONLY on the primary phrase at first mention "
+                    f"plus at most 1-2 genuinely critical terms. Strip <strong>/<b> from "
+                    f"all other keyword variants — leave them as plain prose."
                 )
             return generate_page_content(
                 url,
