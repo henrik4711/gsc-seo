@@ -2185,7 +2185,34 @@ ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
     if isinstance(result, dict) and not result.get("error") and _attempt < _max_attempts:
         full_html = (result.get("top_html") or "") + " " + (result.get("bottom_html") or "")
         missing_kws, missing_links = _missing_required(full_html, required_keywords, required_links)
-        if missing_kws or missing_links:
+
+        # Count actual internal links — target is 8-12 for category pages.
+        # AI tends to under-link; pushing it to retry materially improves
+        # topical authority (each additional internal link is a signal).
+        import re as _re_count
+        href_matches = _re_count.findall(r'href=["\']([^"\']+)["\']', full_html)
+        site_host = (_up(url).netloc or "").lower().replace("www.", "")
+        internal_links_count = sum(
+            1 for h in href_matches
+            if h.startswith("/") or site_host in (h or "").lower()
+        )
+        link_count_too_low = (
+            page_type == "category" and internal_links_count < 8
+        )
+
+        # Detect specific-price violations (kr / kronor) — prompt forbids
+        # these because they go stale, but AI sometimes ignores guidance.
+        # Hard requirement now: any "NN kr" / "NN kronor" → reject.
+        price_violations = _re_count.findall(
+            r'\b\d{2,5}\s*(?:kr|kronor)\b',
+            full_html,
+            flags=_re_count.IGNORECASE,
+        )
+        # Also flag SEK ranges like "1000-3000".
+        if _re_count.search(r'\b\d{2,5}\s*[-–]\s*\d{2,5}\s*(?:kr|kronor)\b', full_html, _re_count.IGNORECASE):
+            price_violations.append("price-range")
+
+        if missing_kws or missing_links or link_count_too_low or price_violations:
             new_fixes = list(validation_fixes or [])
             if missing_kws:
                 new_fixes.append(
@@ -2196,6 +2223,46 @@ ALSO generate a separate faq_schema JSON-LD block for the FAQ questions.
                 new_fixes.append(
                     f"REQUIRED link STILL missing — add this exact href: "
                     f"<a href=\"{ml['url']}\">{ml['anchor']}</a> (reason: {ml['reason']})"
+                )
+            if link_count_too_low:
+                # Surface the candidate URLs the AI already saw, so it has
+                # a concrete list to draw from instead of being told 'add
+                # more' generically.
+                candidate_lines = []
+                for r in (prof.get("cluster_link_outgoing") or [])[:6]:
+                    candidate_lines.append(f"<a href=\"{r['to_url']}\">{r['anchor']}</a>")
+                # Walk URL hierarchy parent if exists in audit
+                page_path_local = _up(url).path.rstrip("/")
+                parts_local = [p for p in page_path_local.split("/") if p]
+                if len(parts_local) >= 2:
+                    parent_local = "/" + "/".join(parts_local[:-1])
+                    parent_full = url.split("//")[0] + "//" + _up(url).netloc + parent_local
+                    if normalize_url(parent_full) in audit_by_url:
+                        candidate_lines.append(
+                            f"<a href=\"{parent_full}\">{parts_local[-2].replace('-', ' ')}</a>  (parent category)"
+                        )
+                # Add a few related cluster pages as candidates
+                for rp_url in [normalize_url(p.get("page", ""))
+                               for cl in (st.session_state.get("topic_clusters", {}).get("clusters", []) or [])
+                               for p in cl.get("pages", []) or []][:8]:
+                    if rp_url and rp_url != normalize_url(url) and rp_url not in str(candidate_lines):
+                        candidate_lines.append(f"<a href=\"{rp_url}\">[topical sibling]</a>")
+                cand_text = "\n  ".join(candidate_lines[:10]) if candidate_lines else "(see RELATED PAGES section above)"
+                new_fixes.append(
+                    f"Internal links count was {internal_links_count} — target is 8-12. "
+                    f"Add at least {8 - internal_links_count} more in-body internal links "
+                    f"with VARIED anchor text. Draw from these candidates:\n  {cand_text}\n"
+                    f"Spread them across the bottom_html sections — never cluster at end. "
+                    f"Each link must use anchor text that describes its target page (not generic '\"sexleksaker\"' for every link)."
+                )
+            if price_violations:
+                new_fixes.append(
+                    f"Specific prices found in body ({', '.join(set(price_violations[:5]))}). "
+                    f"Remove ALL specific prices in kr/kronor — these go stale and break the "
+                    f"evergreen content rule. Replace with descriptors like 'budgetalternativ', "
+                    f"'i ett brett prisspann', 'från grundläggande modeller till premiumvarianter', "
+                    f"or 'priserna varierar'. NEVER write 'NN kr' / 'NN kronor' for any product, "
+                    f"category, or example."
                 )
             return generate_page_content(
                 url,
