@@ -2849,29 +2849,69 @@ def _render_per_page_tab():
             st.session_state["_qw_top_n"] = int(new_top_n)
             st.rerun()
 
-    uncached_pages = [p for p in pages if f"_ai_plan_{stable_hash(p['url'])}" not in st.session_state]
+    # A page "needs work" if ANY of plan / bottom text / intro is missing.
+    # Earlier this was just "no plan", but pages that got a plan from a
+    # bulk run before the bottom-text bug was fixed are stuck — they're
+    # cached on plan but have no text/intro. Treating them as cached
+    # makes them invisible to the bulk button. Now bulk also picks them
+    # up; the per-page loop already short-circuits each artifact that's
+    # already in session_state, so re-running a partly-cached page only
+    # regenerates the missing parts.
+    _eligible_text_types = {"category", "subcategory", "brand", "unknown", ""}
+    def _needs_bulk_work(_p):
+        _h = stable_hash(_p["url"])
+        if f"_ai_plan_{_h}" not in st.session_state:
+            return True
+        _pt = (_p.get("page_type") or "")
+        if _pt in _eligible_text_types:
+            if f"_bottom_text_{_h}" not in st.session_state:
+                return True
+            if f"_intro_text_{_h}" not in st.session_state:
+                return True
+        return False
+    uncached_pages = [p for p in pages if _needs_bulk_work(p)]
     uncached_count = len(uncached_pages)
 
     with controls_col2:
         bulk_n = st.number_input(
-            "Bulk-generate plan + bottom text + intro for top N (uncached only)",
+            "Bulk-generate plan + bottom text + intro for top N (incomplete only)",
             min_value=1, max_value=max(1, uncached_count), value=min(10, max(1, uncached_count)),
             key="_qw_bulk_n",
             disabled=(uncached_count == 0),
-            help="Runs plan + bottom text + intro for the next N pages without a cached plan. ~60-90 sec per page.",
+            help="Runs plan + bottom text + intro for the next N pages where ANY of those 3 is missing. Already-generated artifacts are skipped per page. ~60-90 sec per fresh page.",
         )
 
     with controls_col3:
         approx_min = int(bulk_n) * 75 // 60
         approx_cost = int(bulk_n) * 0.05
-        st.caption(f"Pages shown: {len(pages)} · With plan: {len(pages) - uncached_count}/{len(pages)} · "
-                   f"Uncached: {uncached_count}")
+        # Break down what's actually missing so the user can see why a
+        # page is in the queue (often it's "plan exists, bottom missing").
+        _missing_plan = sum(
+            1 for p in pages
+            if f"_ai_plan_{stable_hash(p['url'])}" not in st.session_state
+        )
+        _missing_bottom = sum(
+            1 for p in pages
+            if (p.get("page_type") or "") in _eligible_text_types
+            and f"_bottom_text_{stable_hash(p['url'])}" not in st.session_state
+        )
+        _missing_intro = sum(
+            1 for p in pages
+            if (p.get("page_type") or "") in _eligible_text_types
+            and f"_intro_text_{stable_hash(p['url'])}" not in st.session_state
+        )
+        st.caption(
+            f"Pages shown: {len(pages)} · Incomplete: {uncached_count} "
+            f"(missing plan: {_missing_plan} · "
+            f"missing bottom: {_missing_bottom} · "
+            f"missing intro: {_missing_intro})"
+        )
         if uncached_count == 0:
-            st.caption("All visible pages already have a cached plan.")
+            st.caption("All visible pages have plan + bottom + intro cached.")
         else:
             st.caption(f"≈ {approx_min} min · ≈ ${approx_cost:.2f} API cost")
             if st.button(
-                f"⚡ Generate plan + bottom + intro for next {int(bulk_n)} uncached pages",
+                f"⚡ Generate missing plan + bottom + intro for next {int(bulk_n)} pages",
                 key="_qw_bulk_gen",
                 type="primary",
             ):
