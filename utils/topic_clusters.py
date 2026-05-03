@@ -29,6 +29,54 @@ def _is_homepage(url: str) -> bool:
     return path.rstrip("/") == ""
 
 
+def normalize_cluster_pages(clusters: list) -> list:
+    """
+    Apply two architecture rules to a list of enriched clusters:
+
+      1. Homepage is never a spoke. Drop homepage rows from cluster.pages.
+      2. Each page belongs to ONE primary cluster (the cluster where it
+         contributes the most queries). Remove from non-primary clusters.
+
+    Cluster-level queries / total_clicks / total_impressions are NOT
+    touched — those still reflect the cluster's full reach. Only the
+    spoke list (cluster.pages) is deduped.
+
+    Mutates clusters in-place AND returns it (chainable). Callers that
+    receive clusters from a different code path (e.g. AI clustering)
+    must call this before the clusters are saved/used elsewhere, or the
+    rules won't apply.
+    """
+    if not clusters:
+        return clusters
+    # Rule 1: drop homepage rows from each cluster's pages list
+    for c in clusters:
+        original = c.get("pages", []) or []
+        c["pages"] = [p for p in original
+                      if isinstance(p, dict) and p.get("page")
+                      and not _is_homepage(p["page"])]
+        c["page_count"] = len(c["pages"])
+        c["is_split"] = len(c["pages"]) > 1
+    # Rule 2: assign each page to its primary cluster (most queries),
+    # remove from non-primary cluster.pages
+    page_cluster_strength: dict = defaultdict(list)
+    for ci, c in enumerate(clusters):
+        for p in c.get("pages", []) or []:
+            page_cluster_strength[p["page"]].append(
+                (ci, p.get("query_count", 0), p.get("total_clicks", 0))
+            )
+    primary_of: dict = {}
+    for page, entries in page_cluster_strength.items():
+        entries.sort(key=lambda x: (-x[1], -x[2], x[0]))
+        primary_of[page] = entries[0][0]
+    for ci, c in enumerate(clusters):
+        kept = [p for p in c.get("pages", []) or []
+                if primary_of.get(p["page"]) == ci]
+        c["pages"] = kept
+        c["page_count"] = len(kept)
+        c["is_split"] = len(kept) > 1
+    return clusters
+
+
 def build_topic_clusters(df: pd.DataFrame, min_cluster_size: int = 2) -> dict:
     """
     Cluster GSC queries into topic groups based on shared words and pages.
@@ -102,30 +150,10 @@ def build_topic_clusters(df: pd.DataFrame, min_cluster_size: int = 2) -> dict:
 
     enriched_clusters.sort(key=lambda x: -x["total_impressions"])
 
-    # Step 5b: Assign each page to ONE primary cluster (the cluster where
-    # this page contributes the most queries). A page that ranks for queries
-    # from multiple clusters is "topically confused" — Google rewards
-    # pages with one clear topical focus. We keep the page only as a spoke
-    # in its primary cluster, but cluster.queries / total_clicks remain
-    # untouched (so cluster reach is still accurate).
-    page_cluster_strength: dict = defaultdict(list)
-    for ci, cluster in enumerate(enriched_clusters):
-        for p in cluster["pages"]:
-            page_cluster_strength[p["page"]].append(
-                (ci, p.get("query_count", 0), p.get("total_clicks", 0))
-            )
-    primary_of: dict = {}
-    for page, entries in page_cluster_strength.items():
-        # Highest query_count wins; tiebreak by clicks, then earliest cluster.
-        entries.sort(key=lambda x: (-x[1], -x[2], x[0]))
-        primary_of[page] = entries[0][0]
-
-    # Drop non-primary page rows from each cluster.pages list.
-    for ci, cluster in enumerate(enriched_clusters):
-        kept = [p for p in cluster["pages"] if primary_of.get(p["page"]) == ci]
-        cluster["pages"] = kept
-        cluster["page_count"] = len(kept)
-        cluster["is_split"] = len(kept) > 1
+    # Step 5b: enforce two architecture rules — drop homepage as spoke,
+    # assign each page to its primary cluster only. Same logic also runs
+    # on AI-clustered output via the same helper (see views/run_pipeline).
+    normalize_cluster_pages(enriched_clusters)
 
     # Step 6: Build page-topic mapping
     page_topics = defaultdict(list)

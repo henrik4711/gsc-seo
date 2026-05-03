@@ -106,6 +106,22 @@ def _top_keywords_for_url(url: str, cluster: dict, hub_url: str,
         out.append(q)
         if len(out) >= 3:
             break
+
+    # Spokes whose slug encodes a real modifier phrase but GSC hasn't
+    # registered the exact query yet — synthesize the canonical phrase
+    # from the slug. Skip for hub (it already owns head terms) and for
+    # slugs without a cluster head term (e.g. /amor-black in dildos).
+    if not is_hub:
+        try:
+            from utils.topical_scope import synthesize_modifier_phrase
+            synth = synthesize_modifier_phrase(
+                url, hub_url, cluster.get("topic", "")
+            )
+            if synth and synth.lower() not in seen:
+                out.insert(0, synth)
+                out = out[:3]
+        except Exception:
+            pass
     return out
 
 

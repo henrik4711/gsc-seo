@@ -79,6 +79,47 @@ def _slug_match_score(url: str, query: str) -> float:
     return max(0.5, 1.0 - extras * 0.2)
 
 
+def synthesize_modifier_phrase(page_url: str, hub_url: str, topic: str) -> str:
+    """
+    Build the canonical modifier phrase from a spoke's URL slug.
+
+    Used when GSC hasn't yet recorded the natural query for a spoke
+    (low impressions / new page / dialect mismatch like 'dilde' vs
+    'dildo'). The slug itself encodes the page's intended phrase —
+    /sexleksaker/dildos/klassisk-dildo SHOULD own 'klassisk dildo'
+    even if Google hasn't shown enough impressions for that exact
+    string yet.
+
+    Returns '' when the slug can't be safely converted:
+      - no slug (homepage / single-segment URL)
+      - slug doesn't include any cluster head-term token (then we
+        don't know what cluster context it operates under — e.g.
+        /amor-black in a dildos cluster: 'amor' isn't a dildo head
+        term, so we can't claim it owns 'amor black')
+      - slug has only head-term tokens with no modifier (the head
+        term belongs to the hub, not the spoke).
+    """
+    spoke_slug = _url_tail_segment(page_url)
+    if not spoke_slug:
+        return ""
+    spoke_tokens = _slug_tokens(spoke_slug)
+    head_terms = _query_tokens(topic) | _slug_tokens(_url_tail_segment(hub_url))
+    if not spoke_tokens or not head_terms:
+        return ""
+
+    def _stem(a: str, b: str) -> bool:
+        return a in b or b in a
+
+    has_head = any(_stem(s, h) for s in spoke_tokens for h in head_terms)
+    has_modifier = any(
+        not any(_stem(s, h) for h in head_terms)
+        for s in spoke_tokens
+    )
+    if not (has_head and has_modifier):
+        return ""
+    return spoke_slug.replace("-", " ").replace("_", " ").lower().strip()
+
+
 # ── Topical scope resolution ───────────────────────────────────────────
 
 def get_topical_scope(page_url: str, topic_clusters: dict) -> dict | None:
@@ -169,6 +210,18 @@ def get_topical_scope(page_url: str, topic_clusters: dict) -> dict | None:
             elif spoke_score >= 0.95:
                 owned.append(q)
             # Otherwise: ambiguous, leave out of both lists
+
+        # Synthesize the spoke's canonical phrase from its slug if GSC hasn't
+        # registered it yet. The slug encodes intent — /klassisk-dildo
+        # should own 'klassisk dildo' even when Google hasn't recorded
+        # impressions for that exact string. Add to owned if not already
+        # there. Skip for slugs without a cluster head term (e.g. /amor-black
+        # in a dildos cluster — we can't infer ownership).
+        synth = synthesize_modifier_phrase(page_url, hub, topic)
+        if synth:
+            existing_lower = {o.lower() for o in owned}
+            if synth.lower() not in existing_lower:
+                owned.insert(0, synth)  # canonical phrase goes first
 
         return {
             "is_hub": False,

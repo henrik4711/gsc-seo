@@ -220,6 +220,7 @@ def _run_cannibalization():
 
 
 def _run_topic_clusters():
+    import pandas as pd
     from utils.ai_generator import get_client, ai_generate_clusters
     if not has_anthropic_key():
         raise ValueError("Anthropic API key missing")
@@ -250,17 +251,41 @@ def _run_topic_clusters():
     result = ai_generate_clusters(client, keywords_data, site_context=site_context, language=language)
 
     # Build topic_clusters structure compatible with rest of system
-    from utils.topic_clusters import build_topic_clusters
+    from utils.topic_clusters import build_topic_clusters, normalize_cluster_pages
     fallback = build_topic_clusters(df, min_cluster_size=2)
     if result and result.get("clusters"):
         # Use AI clusters but keep page_topics from algorithmic for completeness
         ai_clusters = result["clusters"]
-        # Enrich with page data from GSC
+        # Enrich with page data from GSC. Compute query_count + clicks per
+        # (cluster, page) so the primary-cluster dedup downstream has real
+        # weights to compare on (was hardcoded 0 before, which broke the
+        # tiebreak — every page got assigned to whichever cluster appeared
+        # FIRST instead of where it had the most queries).
         for c in ai_clusters:
             cluster_queries = c.get("queries", [])
-            cluster_pages = df[df["query"].isin(cluster_queries)]["page"].unique().tolist()
-            c["pages"] = [{"page": p, "query_count": 0, "total_clicks": 0, "total_impressions": 0, "avg_position": 0} for p in cluster_pages[:20]]
-            c["page_count"] = len(cluster_pages)
+            cluster_df = df[df["query"].isin(cluster_queries)]
+            page_agg = cluster_df.groupby("page").agg(
+                query_count=("query", "nunique"),
+                total_clicks=("clicks", "sum"),
+                total_impressions=("impressions", "sum"),
+                avg_position=("position", "mean"),
+            ).reset_index().sort_values("total_clicks", ascending=False)
+            c["pages"] = [
+                {
+                    "page": r["page"],
+                    "query_count": int(r["query_count"]),
+                    "total_clicks": int(r["total_clicks"]),
+                    "total_impressions": int(r["total_impressions"]),
+                    "avg_position": float(r["avg_position"]) if pd.notna(r["avg_position"]) else 0.0,
+                }
+                for _, r in page_agg.head(20).iterrows()
+            ]
+            c["page_count"] = len(c["pages"])
+        # Apply both architecture rules (drop homepage, primary-cluster dedup).
+        # The algorithmic build_topic_clusters already calls this, but the
+        # AI path bypasses build_topic_clusters' enrichment loop and
+        # therefore needs the explicit call.
+        normalize_cluster_pages(ai_clusters)
         fallback["clusters"] = ai_clusters
         fallback["summary"] = result.get("summary", "")
 
