@@ -2871,10 +2871,19 @@ def _render_per_page_tab():
                 status_txt = st.empty()
                 failed_text = 0
                 failed_intro = 0
+                def _safe_save():
+                    try:
+                        save_ai_cache()
+                    except Exception:
+                        pass
+
                 for i, p in enumerate(batch):
                     url = p["url"]
                     url_hash = stable_hash(url)
                     status_txt.text(f"[{i+1}/{len(batch)}] {url}  (plan)")
+                    # _generate_all_fixes already calls save_ai_cache after
+                    # the plan, so the plan is persisted before we start
+                    # the (slower) bottom-text call.
                     _generate_all_fixes(p)
 
                     text_key = f"_bottom_text_{url_hash}"
@@ -2888,6 +2897,10 @@ def _render_per_page_tab():
                                 "error": str(e),
                                 "error_class": type(e).__name__,
                             }
+                        # Persist bottom text immediately so a crash during
+                        # the intro call below doesn't lose this page's
+                        # ~$0.04 of bottom-text work.
+                        _safe_save()
 
                     intro_key = f"_intro_text_{url_hash}"
                     if intro_key not in st.session_state:
@@ -2900,13 +2913,9 @@ def _render_per_page_tab():
                                 "error": str(e),
                                 "error_class": type(e).__name__,
                             }
+                        # Persist intro before moving to the next page.
+                        _safe_save()
 
-                    # Persist after each page so a mid-run crash doesn't
-                    # wipe progress on a 40-page batch.
-                    try:
-                        save_ai_cache()
-                    except Exception:
-                        pass
                     progress.progress((i + 1) / len(batch))
 
                 status_txt.empty()
