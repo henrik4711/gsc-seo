@@ -1933,8 +1933,22 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                 if had_intro:
                     with st.spinner("Regenerating intro rewrite..."):
                         try:
-                            from utils.ai_generator import generate_intro_rewrite
-                            result = generate_intro_rewrite(url)
+                            from utils.ai_generator import get_client, generate_intro_rewrite
+                            client = get_client(get_anthropic_key())
+                            content_audit = page["audit"].get("content_audit") or {}
+                            kw_coverage = content_audit.get("keyword_coverage") or {}
+                            missing_kws = (kw_coverage.get("missing", []) or [])[:8]
+                            if not missing_kws:
+                                missing_kws = page["audit"].get("target_keywords", [])[:8]
+                            result = generate_intro_rewrite(
+                                client,
+                                missing_keywords=missing_kws,
+                                existing_intro=page["audit"].get("intro_text", "") or "",
+                                page_type=page.get("page_type", "category"),
+                                url=url,
+                                site_context=st.session_state.get("site_context", ""),
+                                language=st.session_state.get("content_language", "Swedish"),
+                            )
                             st.session_state[intro_key] = result
                         except Exception as e:
                             st.session_state[intro_key] = {
@@ -2862,15 +2876,27 @@ def _render_per_page_tab():
                 type="primary",
             ):
                 from utils.ai_generator import (
+                    get_client,
                     generate_page_content,
                     generate_intro_rewrite,
                 )
                 from utils.persistence import save_ai_cache
+                client = get_client(get_anthropic_key())
+                site_context = st.session_state.get("site_context", "")
+                language = st.session_state.get("content_language", "Swedish")
                 batch = uncached_pages[:int(bulk_n)]
+                # Pages that get bottom text + intro: anything that looks
+                # like a landing page. Excludes only product detail pages
+                # (their text comes from PIM) and blog/faq/info (they have
+                # their own template). "unknown" is included because the
+                # classifier sometimes fails on edge cases and silently
+                # skipping those was the original bug.
+                eligible_for_text = {"category", "subcategory", "brand", "unknown", ""}
                 progress = st.progress(0.0)
                 status_txt = st.empty()
                 failed_text = 0
                 failed_intro = 0
+                skipped_by_type = 0
                 def _safe_save():
                     try:
                         save_ai_cache()
@@ -2886,8 +2912,11 @@ def _render_per_page_tab():
                     # the (slower) bottom-text call.
                     _generate_all_fixes(p)
 
+                    page_type = p.get("page_type", "") or ""
                     text_key = f"_bottom_text_{url_hash}"
-                    if p.get("page_type") == "category" and text_key not in st.session_state:
+                    if page_type not in eligible_for_text:
+                        skipped_by_type += 1
+                    elif text_key not in st.session_state:
                         status_txt.text(f"[{i+1}/{len(batch)}] {url}  (bottom text)")
                         try:
                             st.session_state[text_key] = generate_page_content(url)
@@ -2903,10 +2932,23 @@ def _render_per_page_tab():
                         _safe_save()
 
                     intro_key = f"_intro_text_{url_hash}"
-                    if intro_key not in st.session_state:
+                    if page_type in eligible_for_text and intro_key not in st.session_state:
                         status_txt.text(f"[{i+1}/{len(batch)}] {url}  (intro)")
                         try:
-                            st.session_state[intro_key] = generate_intro_rewrite(url)
+                            content_audit = p["audit"].get("content_audit") or {}
+                            kw_coverage = content_audit.get("keyword_coverage") or {}
+                            missing_kws = (kw_coverage.get("missing", []) or [])[:8]
+                            if not missing_kws:
+                                missing_kws = p["audit"].get("target_keywords", [])[:8]
+                            st.session_state[intro_key] = generate_intro_rewrite(
+                                client,
+                                missing_keywords=missing_kws,
+                                existing_intro=p["audit"].get("intro_text", "") or "",
+                                page_type=page_type or "category",
+                                url=url,
+                                site_context=site_context,
+                                language=language,
+                            )
                         except Exception as e:
                             failed_intro += 1
                             st.session_state[intro_key] = {
@@ -2919,13 +2961,21 @@ def _render_per_page_tab():
                     progress.progress((i + 1) / len(batch))
 
                 status_txt.empty()
-                if failed_text or failed_intro:
-                    st.warning(
-                        f"Generated {len(batch)} plans · "
-                        f"bottom text failures: {failed_text} · "
-                        f"intro failures: {failed_intro}. "
-                        f"Open individual pages to see errors."
+                parts = [f"Generated {len(batch)} plans"]
+                if skipped_by_type:
+                    parts.append(
+                        f"{skipped_by_type} page(s) skipped for bottom/intro "
+                        f"(page_type is product/blog/faq/info)"
                     )
+                if failed_text:
+                    parts.append(f"bottom text failures: {failed_text}")
+                if failed_intro:
+                    parts.append(f"intro failures: {failed_intro}")
+                msg = " · ".join(parts)
+                if failed_text or failed_intro:
+                    st.warning(msg + ". Open individual pages to see errors.")
+                elif skipped_by_type:
+                    st.info(msg + ".")
                 else:
                     st.success(
                         f"Generated plan + bottom text + intro for {len(batch)} pages."
