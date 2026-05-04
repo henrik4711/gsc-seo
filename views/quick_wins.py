@@ -818,7 +818,12 @@ def _generate_all_fixes(page):
 
     # ── Generate implementation plan (includes meta, steps, links, articles)
     plan_key = f"_ai_plan_{url_hash}"
-    if plan_key not in st.session_state:
+    # Re-attempt error-stamped plans so the user can recover from a
+    # transient API failure (e.g. credit balance exhausted) without
+    # manually clearing cache.
+    _existing_plan = st.session_state.get(plan_key)
+    _plan_is_errored = isinstance(_existing_plan, dict) and bool(_existing_plan.get("error"))
+    if plan_key not in st.session_state or _plan_is_errored:
         with st.spinner("Generating implementation plan..."):
             try:
                 result = generate_page_implementation_plan(
@@ -2927,24 +2932,28 @@ def _render_per_page_tab():
             st.session_state["_qw_top_n"] = int(new_top_n)
             st.rerun()
 
-    # A page "needs work" if ANY of plan / bottom text / intro is missing.
-    # Earlier this was just "no plan", but pages that got a plan from a
-    # bulk run before the bottom-text bug was fixed are stuck — they're
-    # cached on plan but have no text/intro. Treating them as cached
-    # makes them invisible to the bulk button. Now bulk also picks them
-    # up; the per-page loop already short-circuits each artifact that's
-    # already in session_state, so re-running a partly-cached page only
-    # regenerates the missing parts.
+    # A page "needs work" if ANY of plan / bottom text / intro is missing
+    # OR was stamped with an error (e.g. credit-balance failure, transient
+    # API hiccup). Treating error-stamped entries as "complete" was a real
+    # bug — bulk would skip them forever, leaving the user staring at
+    # error messages with no way to retry without manually clearing cache.
     _eligible_text_types = {"category", "subcategory", "brand", "unknown", ""}
+    def _has_valid(_key):
+        v = st.session_state.get(_key)
+        if not v:
+            return False
+        if isinstance(v, dict) and v.get("error"):
+            return False
+        return True
     def _needs_bulk_work(_p):
         _h = stable_hash(_p["url"])
-        if f"_ai_plan_{_h}" not in st.session_state:
+        if not _has_valid(f"_ai_plan_{_h}"):
             return True
         _pt = (_p.get("page_type") or "")
         if _pt in _eligible_text_types:
-            if f"_bottom_text_{_h}" not in st.session_state:
+            if not _has_valid(f"_bottom_text_{_h}"):
                 return True
-            if f"_intro_text_{_h}" not in st.session_state:
+            if not _has_valid(f"_intro_text_{_h}"):
                 return True
         return False
     uncached_pages = [p for p in pages if _needs_bulk_work(p)]
@@ -2963,27 +2972,39 @@ def _render_per_page_tab():
         approx_min = int(bulk_n) * 75 // 60
         approx_cost = int(bulk_n) * 0.05
         # Break down what's actually missing so the user can see why a
-        # page is in the queue (often it's "plan exists, bottom missing").
-        _missing_plan = sum(
-            1 for p in pages
-            if f"_ai_plan_{stable_hash(p['url'])}" not in st.session_state
-        )
-        _missing_bottom = sum(
-            1 for p in pages
-            if (p.get("page_type") or "") in _eligible_text_types
-            and f"_bottom_text_{stable_hash(p['url'])}" not in st.session_state
-        )
-        _missing_intro = sum(
-            1 for p in pages
-            if (p.get("page_type") or "") in _eligible_text_types
-            and f"_intro_text_{stable_hash(p['url'])}" not in st.session_state
-        )
+        # page is in the queue. Split "missing entirely" from "errored"
+        # so the user knows when to add API credits vs just hit retry.
+        def _missing_or_errored(_p, _prefix, _eligible_only=False):
+            _pt = (_p.get("page_type") or "")
+            if _eligible_only and _pt not in _eligible_text_types:
+                return (False, False)  # not applicable to this page
+            _key = f"{_prefix}{stable_hash(_p['url'])}"
+            v = st.session_state.get(_key)
+            if not v:
+                return (True, False)  # missing
+            if isinstance(v, dict) and v.get("error"):
+                return (False, True)  # errored
+            return (False, False)  # valid
+        _missing_plan = sum(1 for p in pages if _missing_or_errored(p, "_ai_plan_")[0])
+        _errored_plan = sum(1 for p in pages if _missing_or_errored(p, "_ai_plan_")[1])
+        _missing_bottom = sum(1 for p in pages if _missing_or_errored(p, "_bottom_text_", True)[0])
+        _errored_bottom = sum(1 for p in pages if _missing_or_errored(p, "_bottom_text_", True)[1])
+        _missing_intro = sum(1 for p in pages if _missing_or_errored(p, "_intro_text_", True)[0])
+        _errored_intro = sum(1 for p in pages if _missing_or_errored(p, "_intro_text_", True)[1])
+        total_errored = _errored_plan + _errored_bottom + _errored_intro
         st.caption(
             f"Pages shown: {len(pages)} · Incomplete: {uncached_count} "
-            f"(missing plan: {_missing_plan} · "
-            f"missing bottom: {_missing_bottom} · "
-            f"missing intro: {_missing_intro})"
+            f"(plan: {_missing_plan} missing / {_errored_plan} errored · "
+            f"bottom: {_missing_bottom} missing / {_errored_bottom} errored · "
+            f"intro: {_missing_intro} missing / {_errored_intro} errored)"
         )
+        if total_errored:
+            st.caption(
+                f":red[⚠ {total_errored} artifact(s) failed last run] — usually a "
+                f"credit-balance / API issue. Fix the underlying cause "
+                f"(e.g. add Anthropic credits) then click the button below; "
+                f"errored entries are automatically retried."
+            )
         if uncached_count == 0:
             st.caption("All visible pages have plan + bottom + intro cached.")
         else:
@@ -3032,9 +3053,16 @@ def _render_per_page_tab():
 
                     page_type = p.get("page_type", "") or ""
                     text_key = f"_bottom_text_{url_hash}"
+                    # Re-attempt error-stamped entries so the user can recover
+                    # from credit-balance / transient API failures by simply
+                    # clicking bulk again. Without this, a single bad run
+                    # poisons the cache and bulk skips those pages forever.
+                    def _is_errored(_k):
+                        v = st.session_state.get(_k)
+                        return isinstance(v, dict) and bool(v.get("error"))
                     if page_type not in eligible_for_text:
                         skipped_by_type += 1
-                    elif text_key not in st.session_state:
+                    elif text_key not in st.session_state or _is_errored(text_key):
                         status_txt.text(f"[{i+1}/{len(batch)}] {url}  (bottom text)")
                         try:
                             st.session_state[text_key] = generate_page_content(url)
@@ -3050,7 +3078,9 @@ def _render_per_page_tab():
                         _safe_save()
 
                     intro_key = f"_intro_text_{url_hash}"
-                    if page_type in eligible_for_text and intro_key not in st.session_state:
+                    if page_type in eligible_for_text and (
+                        intro_key not in st.session_state or _is_errored(intro_key)
+                    ):
                         status_txt.text(f"[{i+1}/{len(batch)}] {url}  (intro)")
                         try:
                             content_audit = p["audit"].get("content_audit") or {}
