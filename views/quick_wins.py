@@ -1775,6 +1775,378 @@ def _render_topical_scope_panel(page):
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 
+def _render_context_card_body(page, url, url_hash, plan):
+    """Render the per-page CONTEXT block: action steps, articles, links,
+    cannibalization, technical issues. Lives inside Card 4 (collapsed by default)."""
+    # ── Action steps (only if NOT replacing text) ──
+    steps = plan.get("steps", [])
+    if steps:
+        with st.expander(f"[ALTERNATIVE] {len(steps)} action steps (only if you want to keep existing text)", expanded=False):
+            st.markdown(
+                "<p style='color:#9b9bb8; font-size:0.85rem;'>"
+                "These steps are for fixing the EXISTING text instead of replacing it. "
+                "If you used the PRIMARY action above, you can skip these.</p>",
+                unsafe_allow_html=True,
+            )
+            for i, s in enumerate(steps[:5], 1):
+                st.markdown(f"**{i}. {s.get('action', '')}** ({s.get('time_minutes', '?')} min)")
+                st.markdown(f"<div style='color:#9b9bb8; font-size:0.85rem; margin-left:1rem;'>{s.get('detail', '')}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='color:#c8b4ff; font-size:0.85rem; margin-left:1rem;'>→ {s.get('instruction', '')}</div>", unsafe_allow_html=True)
+        st.markdown("---")
+
+    # ── New articles/blogs to write that support this page ──
+    new_articles = plan.get("new_content_suggestions", [])
+    if new_articles:
+        st.markdown(f"#### [BLOGS] {len(new_articles)} new articles/guides to write")
+        st.markdown(
+            "<p style='color:#9b9bb8; font-size:0.8rem;'>"
+            "These articles should be created and linked TO this page to support topical authority.</p>",
+            unsafe_allow_html=True,
+        )
+        for art_idx, art in enumerate(new_articles[:5]):
+            art_title = art.get('suggested_title', '')
+            art_hash = stable_hash(f"{url}_{art_title}")
+            art_cache_key = f"_gen_article_{art_hash}"
+
+            st.markdown(f"**{art_idx+1}. {art_title}**")
+            st.markdown(f"<div style='color:#9b9bb8; font-size:0.85rem; margin-left:1rem;'>{art.get('why', '')[:200]}</div>", unsafe_allow_html=True)
+            if art.get("target_keywords"):
+                st.markdown(f"<div style='color:#c8b4ff; font-size:0.75rem; margin-left:1rem;'>Keywords: {', '.join(art.get('target_keywords', [])[:5])}</div>", unsafe_allow_html=True)
+            if art.get("link_from"):
+                st.markdown(f"<div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>Link from: {art.get('link_from', '')}</div>", unsafe_allow_html=True)
+
+            if art_cache_key in st.session_state:
+                article_data = st.session_state[art_cache_key]
+                article_html = article_data.get("html", "") if isinstance(article_data, dict) else ""
+                wc = article_data.get("word_count", 0) if isinstance(article_data, dict) else 0
+                st.markdown(f"<div style='color:#33dd88; font-size:0.75rem; margin-left:1rem;'>✓ Generated: {wc} words</div>", unsafe_allow_html=True)
+                with st.expander(f"View article {art_idx+1}", expanded=False):
+                    st.code(article_html[:3000] + ("..." if len(article_html) > 3000 else ""), language="html")
+                st.download_button(
+                    "Download article HTML",
+                    data=article_html,
+                    file_name=f"blog_{art_hash}.html",
+                    mime="text/html",
+                    key=f"dl_art_{art_hash}",
+                )
+            else:
+                if st.button(f"Generate full article", key=f"gen_art_{art_hash}"):
+                    try:
+                        from utils.ai_generator import generate_full_article_html
+                        client = get_client(get_anthropic_key())
+                        with st.spinner(f"Generating article: {art_title}..."):
+                            audit_results_list = st.session_state.get("audit_results", [])
+                            raw_urls_s = set(r["url"] for r in audit_results_list if r.get("url"))
+                            all_site_urls_local = sorted(raw_urls_s)
+                            article_result = generate_full_article_html(
+                                client,
+                                title=art_title,
+                                keywords=art.get("target_keywords", []),
+                                content_type=art.get("type", "guide"),
+                                products=None,
+                                link_from_url=art.get("link_from", url),
+                                tone_sample="",
+                                site_context=st.session_state.get("site_context", ""),
+                                language=st.session_state.get("content_language", "Swedish"),
+                                all_site_urls=all_site_urls_local,
+                                cluster_context=f"This article supports {url} as part of its topic cluster",
+                            )
+                        st.session_state[art_cache_key] = article_result
+                        from utils.persistence import save_ai_cache
+                        save_ai_cache()
+                        st.rerun()
+                    except Exception as e:
+                        show_ai_error(
+                            "Full article generation",
+                            e,
+                            context={
+                                "article_title": art_title,
+                                "keywords": art.get("target_keywords", []),
+                                "link_from": art.get("link_from", url),
+                                "content_type": art.get("type", "guide"),
+                            },
+                        )
+            st.markdown("")
+        _approval_button("Articles", f"{url_hash}_articles")
+        st.markdown("---")
+    else:
+        st.markdown("#### [BLOGS] ✓ No new articles needed")
+        st.markdown(
+            "<div style='font-size:0.75rem; color:#33dd88; margin-bottom:0.5rem;'>"
+            "AI did not identify content gaps requiring new articles.</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("---")
+
+    # ── Internal links: pages that should link TO this page ──
+    audit = page["audit"]  # Local alias for the audit data
+    content_audit = audit.get("content_audit") or {}
+    linking = content_audit.get("linking") or {}
+    link_details = linking.get("details") or {}
+    link_fix_suggestions = link_details.get("link_fix_suggestions") or []
+
+    # Inbound anchor stats
+    inbound_stats = link_details.get("inbound_anchor_stats") or {}
+
+    st.markdown("#### [INBOUND LINKS] Pages linking to this page")
+    if inbound_stats:
+        total_in = inbound_stats.get("total", 0)
+        descriptive = inbound_stats.get("descriptive", 0)
+        generic = inbound_stats.get("generic", 0)
+        empty = inbound_stats.get("empty", 0)
+        st.markdown(
+            f"**Current inbound links:** {total_in} total · "
+            f"{descriptive} descriptive · {generic} generic · {empty} empty anchors"
+        )
+        if total_in < 5:
+            st.warning(f"Only {total_in} inbound links — this page needs MORE pages linking to it for topic authority")
+        elif generic + empty > total_in * 0.3:
+            st.warning(f"{generic + empty}/{total_in} inbound links use generic/empty anchors — ask linking pages to use better anchor text")
+    else:
+        st.warning("No inbound links data — this page may have very few internal links pointing to it")
+
+    if link_fix_suggestions:
+        st.markdown(f"**Suggested new internal links FROM other pages TO this page:** {len(link_fix_suggestions)}")
+        for fix in link_fix_suggestions[:5]:
+            st.markdown(f"- From: `{fix.get('from_url', '')}`  →  Add link with anchor: **{fix.get('suggested_anchor', '')}**")
+            if fix.get("reason"):
+                st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{fix.get('reason', '')}</div>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # ── Links to REMOVE from this page ──
+    links_to_remove = link_details.get("links_to_remove") or []
+    if links_to_remove:
+        st.markdown(f"#### [REMOVE LINKS] {len(links_to_remove)} links to consider removing")
+        st.markdown(
+            "<p style='color:#9b9bb8; font-size:0.8rem;'>"
+            "These links point to pages outside this topic cluster. "
+            "Remove only if they don't serve user navigation.</p>",
+            unsafe_allow_html=True,
+        )
+        for l in links_to_remove[:5]:
+            st.markdown(f"- `{l.get('url', '')}` (anchor: '{l.get('anchor', '')}')")
+        _approval_button("Remove links", f"{url_hash}_remove")
+        st.markdown("---")
+
+    # ── Cannibalization: keywords competing with other pages ──
+    cannibal_df = st.session_state.get("cannibalization")
+    if cannibal_df is not None and not cannibal_df.empty:
+        page_cannibals = []
+        for _, row in cannibal_df.iterrows():
+            pages_detail = row.get("pages_detail", [])
+            if isinstance(pages_detail, list):
+                for p in pages_detail:
+                    if normalize_url(p.get("page", "")) == normalize_url(url):
+                        # Capture ALL competing URLs (excluding this page itself)
+                        competing = []
+                        for pp in pages_detail:
+                            pu = pp.get("page", "")
+                            if normalize_url(pu) != normalize_url(url):
+                                competing.append({
+                                    "url": pu,
+                                    "position": pp.get("position", "?"),
+                                    "clicks": pp.get("clicks", 0),
+                                    "impressions": pp.get("impressions", 0),
+                                })
+                        page_cannibals.append({
+                            "query": row["query"],
+                            "severity": row["severity"],
+                            "lost_clicks": row["lost_clicks_estimate"],
+                            "winner": row.get("recommended_winner", ""),
+                            "merge_action": row.get("merge_action", ""),
+                            "page_count": row.get("page_count", 2),
+                            "competing_pages": competing,
+                        })
+                        break
+        if page_cannibals:
+            # ── CONSOLIDATE: group by competing URL so the same
+            # competitor doesn't repeat 5x for keyword variants ──
+            from collections import defaultdict
+            by_competitor = defaultdict(lambda: {"queries": [], "total_lost": 0, "merge_action": "", "severity": "mild", "is_winner": True, "competing_pages": []})
+            for c in page_cannibals:
+                # Build a key from the competing URLs (sorted)
+                comp_key = tuple(sorted(normalize_url(cp["url"]) for cp in (c.get("competing_pages") or [])))
+                if not comp_key:
+                    comp_key = ("unknown",)
+                grp = by_competitor[comp_key]
+                grp["queries"].append(c["query"])
+                grp["total_lost"] += c.get("lost_clicks", 0)
+                if c.get("severity") == "severe":
+                    grp["severity"] = "severe"
+                elif c.get("severity") == "moderate" and grp["severity"] == "mild":
+                    grp["severity"] = "moderate"
+                if not (normalize_url(c.get("winner", "")) == normalize_url(url)):
+                    grp["is_winner"] = False
+                if not grp["merge_action"] and c.get("merge_action"):
+                    grp["merge_action"] = c["merge_action"]
+                if not grp["competing_pages"] and c.get("competing_pages"):
+                    grp["competing_pages"] = c["competing_pages"]
+
+            groups = sorted(by_competitor.values(), key=lambda g: -g["total_lost"])
+            total_conflicts = len(page_cannibals)
+            unique_competitors = len(groups)
+            st.markdown(f"#### [CANNIBALIZATION] {total_conflicts} keyword conflicts → {unique_competitors} unique competitor(s)")
+
+            for grp in groups[:5]:
+                sev_color = {"severe": "#ff4455", "moderate": "#ffaa33", "mild": "#6b6b8a"}.get(grp["severity"], "#6b6b8a")
+                winner_label = "🏆 This page WINS" if grp["is_winner"] else "✗ Competitor leads"
+                queries_str = ", ".join(f"'{q}'" for q in grp["queries"][:5])
+                if len(grp["queries"]) > 5:
+                    queries_str += f" +{len(grp['queries'])-5} more"
+
+                st.markdown(
+                    f"<div style='background:#12121f; border-left:4px solid {sev_color}; "
+                    f"padding:0.8rem; margin:0.5rem 0; border-radius:0 6px 6px 0;'>"
+                    f"<div style='font-size:0.9rem; color:#e8e8f0; font-weight:600;'>"
+                    f"{len(grp['queries'])} keywords: {queries_str}</div>"
+                    f"<div style='color:{sev_color}; font-size:0.8rem; margin-top:0.2rem;'>"
+                    f"[{grp['severity'].upper()}] · {grp['total_lost']:,} total lost clicks · {winner_label}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+                if grp.get("competing_pages"):
+                    st.markdown("**Competing with:**")
+                    for cp in grp["competing_pages"]:
+                        st.markdown(
+                            f"- `{cp['url']}` — pos {cp.get('position','?')} · "
+                            f"{cp.get('clicks',0)} clicks · {cp.get('impressions',0):,} impressions"
+                        )
+
+                if grp.get("merge_action"):
+                    with st.expander("What to do (click to expand)", expanded=False):
+                        st.markdown(grp["merge_action"])
+
+            _approval_button("Cannibal", f"{url_hash}_cannibal")
+            st.markdown("---")
+
+    # ── Schema, alt text, crawl issues ──
+    st.markdown("#### [TECHNICAL]")
+    tech_items = []
+
+    # Schema
+    schema_types = audit.get("schema_types", []) or []
+    if not any("breadcrumb" in str(s).lower() for s in schema_types):
+        tech_items.append("Missing BreadcrumbList schema")
+    if page["page_type"] == "category" and not any("itemlist" in str(s).lower() or "collection" in str(s).lower() for s in schema_types):
+        tech_items.append("Missing ItemList/Collection schema (recommended for category pages)")
+
+    # Alt text
+    images_no_alt = audit.get("images_without_alt", 0)
+    if images_no_alt > 0:
+        tech_items.append(f"{images_no_alt} images missing alt text")
+
+    # Crawl issues for this URL
+    crawl_issues = st.session_state.get("sf_crawl_issues", {})
+    if crawl_issues:
+        for issue_type in ["broken_links", "non_indexable", "redirect_chains", "canonical_issues", "near_duplicates"]:
+            items = crawl_issues.get(issue_type, [])
+            for item in items:
+                if normalize_url(item.get("url", "")) == normalize_url(url):
+                    tech_items.append(f"{issue_type.replace('_', ' ').title()}: {item.get('action', '')[:100]}")
+                    break
+
+    # Authority
+    rd = audit.get("referring_domains", 0)
+    if rd < 5:
+        tech_items.append(f"LOW backlink authority: only {rd} referring domains — this page needs link building")
+    elif rd >= 50:
+        tech_items.append(f"✓ Strong authority: {rd} referring domains")
+
+    # AI quality verdict
+    from utils.ui_helpers import stable_hash as _sh
+    quality = st.session_state.get(f"_quality_{_sh(url)}")
+    if quality:
+        verdict = quality.get("verdict", "")
+        score = quality.get("score", 0)
+        v_color = {"REWRITE": "#ff4455", "IMPROVE": "#ffaa33", "KEEP": "#33dd88"}.get(verdict, "#6b6b8a")
+        tech_items.append(f"<span style='color:{v_color}; font-weight:600;'>AI text quality: {verdict} ({score}/10)</span> — {quality.get('summary', '')[:120]}")
+
+    if tech_items:
+        for item in tech_items:
+            st.markdown(f"- {item}", unsafe_allow_html=True)
+    else:
+        st.markdown("<div style='color:#33dd88;'>No technical issues detected</div>", unsafe_allow_html=True)
+
+
+def _section_status(label: str, has_data: bool, has_error: bool, is_ok: bool = False) -> tuple:
+    """Return (icon, color) for a per-page section status badge."""
+    if has_error:
+        return ("⚠", "#ff6644")
+    if is_ok:
+        return ("✓", "#33dd88")
+    if has_data:
+        return ("●", "#ffaa33")  # has new content waiting for review
+    return ("○", "#6b6b8a")  # missing
+
+
+def _render_status_bar(page, plan_data, text_data, intro_data) -> None:
+    """One-line status badge row: Plan / Bottom / Intro / Meta status at a glance."""
+    url = page["url"]
+    url_hash = stable_hash(url)
+    audit = page.get("audit") or {}
+
+    has_plan = bool(plan_data and not plan_data.get("error"))
+    plan_err = bool(isinstance(plan_data, dict) and plan_data.get("error"))
+
+    has_text = bool(text_data and not text_data.get("error"))
+    text_err = bool(isinstance(text_data, dict) and text_data.get("error"))
+
+    has_intro = bool(intro_data and not intro_data.get("error"))
+    intro_err = bool(isinstance(intro_data, dict) and intro_data.get("error"))
+    intro_ok_existing = (
+        not has_intro
+        and not intro_err
+        and audit.get("intro_word_count", 0) >= 50
+    )
+
+    plan = plan_data or {}
+    new_title = plan.get("meta_title", "") or ""
+    new_desc = plan.get("meta_description", "") or ""
+    meta_cache = st.session_state.get(f"_cannibal_meta_{url_hash}") or {}
+    if isinstance(meta_cache, dict) and not new_title:
+        v = (meta_cache.get("variants") or [])
+        if v:
+            new_title = v[0].get("title", "") or new_title
+            new_desc = v[0].get("description", "") or new_desc
+    has_meta_change = bool(
+        (new_title and new_title != (page.get("title") or ""))
+        or (new_desc and new_desc != (page.get("meta_description") or ""))
+    )
+    title_too_long = len(page.get("title") or "") > 65
+    title_too_short = len(page.get("title") or "") < 30
+    desc_too_long = len(page.get("meta_description") or "") > 165
+    desc_too_short = len(page.get("meta_description") or "") < 120
+    meta_needs_change = title_too_long or title_too_short or desc_too_long or desc_too_short
+    meta_ok = not meta_needs_change and not has_meta_change
+
+    pi, pc = _section_status("Plan", has_plan, plan_err)
+    ti, tc = _section_status("Bottom", has_text, text_err)
+    ii, ic = _section_status("Intro", has_intro, intro_err, is_ok=intro_ok_existing)
+    mi, mc = _section_status("Meta", has_meta_change, False, is_ok=meta_ok)
+
+    parts = ["<div style='display:flex; gap:0.5rem; flex-wrap:wrap; margin:0.4rem 0 0.8rem 0;'>"]
+    for icon, color, label in (
+        (pi, pc, "Plan"),
+        (ti, tc, "Bottom"),
+        (ii, ic, "Intro"),
+        (mi, mc, "Meta"),
+    ):
+        parts.append(
+            f"<div style='background:#0d0d15; border:1px solid {color}; "
+            f"border-radius:4px; padding:0.3rem 0.6rem; font-size:0.75rem; "
+            f"color:{color}; font-family:\"IBM Plex Mono\",monospace;'>"
+            f"{icon} {label}</div>"
+        )
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
+def _section_card_header(label: str, icon: str, color: str, summary: str = "") -> str:
+    """Compact header HTML for a section card expander label."""
+    return f"{icon} {label}" + (f" — {summary}" if summary else "")
+
+
 def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
     """
     Render the full per-page SEO action card.
@@ -1833,6 +2205,12 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
     c2.metric("Lost clicks", f"{page['lost_clicks']:,}")
     c3.metric("Meta score", f"{page['meta_score']}/100")
     c4.metric("Content score", f"{page['content_score']}/100")
+
+    # ── Status bar — Plan / Bottom / Intro / Meta at a glance ──
+    _plan_data_for_bar = st.session_state.get(f"_ai_plan_{url_hash}", {})
+    _text_data_for_bar = st.session_state.get(f"_bottom_text_{url_hash}", {})
+    _intro_data_for_bar = st.session_state.get(f"_intro_text_{url_hash}", {})
+    _render_status_bar(page, _plan_data_for_bar, _text_data_for_bar, _intro_data_for_bar)
 
     # ── Current SEO state — what Google sees right now + per-element verdict ──
     _render_current_seo_state(page)
@@ -2045,182 +2423,196 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
 
         plan = st.session_state.get(plan_key, {})
 
-        # ── PRIMARY ACTION: Replace BOTTOM text with AI-generated ──
-        if not has_text and page["page_type"] == "category":
-            st.markdown("#### [PRIMARY] Bottom text — not generated yet")
-            if st.button("Generate bottom text", type="primary", key=f"gen_bottom_{url_hash}"):
-                with st.spinner("Generating page text with FAQ + E-E-A-T..."):
-                    try:
-                        from utils.ai_generator import generate_page_content
-                        result = generate_page_content(url)
-                        st.session_state[text_key] = result
-                    except Exception as e:
-                        import traceback as _tb
-                        show_ai_error(
-                            "Bottom text generation",
-                            e,
-                            context={"url": url, "page_type": page.get("page_type")},
-                        )
-                        st.session_state[text_key] = {
-                            "error": str(e),
-                            "error_class": type(e).__name__,
-                            "error_status_code": getattr(e, "status_code", None),
-                            "error_request_id": getattr(e, "request_id", None),
-                            "error_traceback": _tb.format_exc()[-3000:],
-                        }
-                    from utils.persistence import save_ai_cache
-                    save_ai_cache()
-                st.rerun()
-            st.markdown("---")
-
+        # ── CARD 1: BOTTOM TEXT ──────────────────────────────────
+        _expand_default = bool(st.session_state.get("_qw_per_page_default_expanded", False))
         if has_text:
-            st.markdown("#### [PRIMARY] Replace BOTTOM TEXT (below product grid)")
-            st.markdown(
-                "<div style='background:#0d0d15; border:1px solid #ffaa33; border-radius:6px; padding:0.6rem; margin-bottom:0.5rem;'>"
-                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#ffaa33;'>POSITION</div>"
-                "<div style='font-size:0.8rem; color:#e8e8f0;'>"
-                "This is the <strong>BOTTOM TEXT</strong> shown <strong>BELOW</strong> the product grid on the category page. "
-                "<br>It is NOT the intro text above the products. "
-                "<br>In Magento 1.9: typically the <strong>Description</strong> field on the category."
-                "</div></div>",
-                unsafe_allow_html=True,
-            )
+            _btm_summary = "✓ generated · ready for push"
+            _btm_icon = "📝"
+            _btm_expand = _expand_default
+        elif page["page_type"] == "category":
+            _btm_summary = "○ click to generate"
+            _btm_icon = "📝"
+            _btm_expand = True  # missing artifact = expand so the action is visible
+        else:
+            _btm_summary = "— not applicable for this page type"
+            _btm_icon = "📝"
+            _btm_expand = False
+        _bottom_card = st.expander(
+            f"{_btm_icon} **Bottom text** — {_btm_summary}",
+            expanded=_btm_expand,
+        )
+        with _bottom_card:
+            if not has_text and page["page_type"] == "category":
+                if st.button("Generate bottom text", type="primary", key=f"gen_bottom_{url_hash}"):
+                    with st.spinner("Generating page text with FAQ + E-E-A-T..."):
+                        try:
+                            from utils.ai_generator import generate_page_content
+                            result = generate_page_content(url)
+                            st.session_state[text_key] = result
+                        except Exception as e:
+                            import traceback as _tb
+                            show_ai_error(
+                                "Bottom text generation",
+                                e,
+                                context={"url": url, "page_type": page.get("page_type")},
+                            )
+                            st.session_state[text_key] = {
+                                "error": str(e),
+                                "error_class": type(e).__name__,
+                                "error_status_code": getattr(e, "status_code", None),
+                                "error_request_id": getattr(e, "request_id", None),
+                                "error_traceback": _tb.format_exc()[-3000:],
+                            }
+                        from utils.persistence import save_ai_cache
+                        save_ai_cache()
+                    st.rerun()
 
-            # Show current intro text length so user knows we don't touch it
-            intro_words = page["audit"].get("intro_word_count", 0)
-            bottom_words = page["audit"].get("bottom_word_count", 0)
-            st.markdown(
-                f"<div style='font-size:0.75rem; color:#6b6b8a; margin-bottom:0.5rem;'>"
-                f"Current intro text: {intro_words} words (above grid — NOT touched) · "
-                f"Current bottom text: {bottom_words} words (below grid — REPLACED)</div>",
-                unsafe_allow_html=True,
-            )
+            if has_text:
+                st.markdown(
+                    "<div style='background:#0d0d15; border:1px solid #ffaa33; border-radius:6px; padding:0.6rem; margin-bottom:0.5rem;'>"
+                    "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#ffaa33;'>POSITION</div>"
+                    "<div style='font-size:0.8rem; color:#e8e8f0;'>"
+                    "This is the <strong>BOTTOM TEXT</strong> shown <strong>BELOW</strong> the product grid on the category page. "
+                    "<br>It is NOT the intro text above the products. "
+                    "<br>In Magento 1.9: typically the <strong>Description</strong> field on the category."
+                    "</div></div>",
+                    unsafe_allow_html=True,
+                )
 
-            text_data = st.session_state[text_key]
-            # Check if generated with new rules (top/bottom split + FAQ schema)
-            has_new_format = text_data.get("top_html") or text_data.get("bottom_html") or text_data.get("faq_schema")
-            if not has_new_format and text_data.get("html"):
-                st.warning("⚠ Text generated with old rules. Click **Regenerate** below for improved text with FAQ schema, product images, hierarchy links, and no prices.")
-            html = text_data.get("bottom_html") or text_data.get("html", "")
-            wc = text_data.get("bottom_word_count") or text_data.get("word_count", 0)
-            kws, links, prods = extract_content_summary(text_data)
-            from utils.ui_helpers import compute_lix, lix_badge
-            lix = compute_lix(html)
-            lix_color, lix_msg, _ = lix_badge(lix)
-            st.markdown(
-                f"**New bottom text:** {wc} words · **Keywords:** {len(kws)} · "
-                f"**Internal links:** {len(links)} · **Products:** {len(prods)} · "
-                f"<span style='color:{lix_color};'>**LIX {lix}**</span>",
-                unsafe_allow_html=True,
-            )
-            with st.expander("View HTML preview", expanded=False):
-                st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")
-            st.download_button(
-                "Download HTML",
-                data=html,
-                file_name=f"{shorten_url(url).replace('/', '_').strip('_')}_bottom.html",
-                mime="text/html",
-                key=f"dl_text_{url_hash}",
-            )
+                # Show current intro text length so user knows we don't touch it
+                intro_words = page["audit"].get("intro_word_count", 0)
+                bottom_words = page["audit"].get("bottom_word_count", 0)
+                st.markdown(
+                    f"<div style='font-size:0.75rem; color:#6b6b8a; margin-bottom:0.5rem;'>"
+                    f"Current intro text: {intro_words} words (above grid — NOT touched) · "
+                    f"Current bottom text: {bottom_words} words (below grid — REPLACED)</div>",
+                    unsafe_allow_html=True,
+                )
 
-            # ── Push to Magento (preview → confirm) ──
-            from utils.footer_push_ui import render_footer_push_block
-            render_footer_push_block(url, html, key_prefix=f"qw_push_{url_hash}")
+                text_data = st.session_state[text_key]
+                # Check if generated with new rules (top/bottom split + FAQ schema)
+                has_new_format = text_data.get("top_html") or text_data.get("bottom_html") or text_data.get("faq_schema")
+                if not has_new_format and text_data.get("html"):
+                    st.warning("⚠ Text generated with old rules. Click **Regenerate** below for improved text with FAQ schema, product images, hierarchy links, and no prices.")
+                html = text_data.get("bottom_html") or text_data.get("html", "")
+                wc = text_data.get("bottom_word_count") or text_data.get("word_count", 0)
+                kws, links, prods = extract_content_summary(text_data)
+                from utils.ui_helpers import compute_lix, lix_badge
+                lix = compute_lix(html)
+                lix_color, lix_msg, _ = lix_badge(lix)
+                st.markdown(
+                    f"**New bottom text:** {wc} words · **Keywords:** {len(kws)} · "
+                    f"**Internal links:** {len(links)} · **Products:** {len(prods)} · "
+                    f"<span style='color:{lix_color};'>**LIX {lix}**</span>",
+                    unsafe_allow_html=True,
+                )
+                with st.expander("View HTML preview", expanded=False):
+                    st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")
+                st.download_button(
+                    "Download HTML",
+                    data=html,
+                    file_name=f"{shorten_url(url).replace('/', '_').strip('_')}_bottom.html",
+                    mime="text/html",
+                    key=f"dl_text_{url_hash}",
+                )
 
-            st.markdown(
-                "<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.8rem; margin:0.5rem 0;'>"
-                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5533ff;'>MANUAL FALLBACK — IF PUSH IS NOT AVAILABLE</div>"
-                "<div style='font-size:0.85rem; color:#c8b4ff;'>"
-                "1) Download HTML  2) Magento Admin → Catalog → Categories → this category  "
-                "3) Paste into <strong>Description</strong> field (NOT 'Page Title' or 'Meta')  "
-                "4) Make sure 'Display Mode' is set to 'Products and Static Block' or 'Static Block and Products' "
-                "5) Save and clear cache</div></div>",
-                unsafe_allow_html=True,
-            )
-            _approval_button("Bottom Text", f"{url_hash}_text")
+                # ── Push to Magento (preview → confirm) ──
+                from utils.footer_push_ui import render_footer_push_block
+                render_footer_push_block(url, html, key_prefix=f"qw_push_{url_hash}")
 
-            # ── QUALITY VALIDATION of generated content ──
-            st.markdown("##### Quality validation")
-            val_results = _validate_generated_content(page, text_data, plan)
-            total_checks = len(val_results["checks"])
-            passed = val_results["passed"]
-            failed = val_results["failed"]
-            warnings = val_results["warnings"]
+                st.markdown(
+                    "<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.8rem; margin:0.5rem 0;'>"
+                    "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5533ff;'>MANUAL FALLBACK — IF PUSH IS NOT AVAILABLE</div>"
+                    "<div style='font-size:0.85rem; color:#c8b4ff;'>"
+                    "1) Download HTML  2) Magento Admin → Catalog → Categories → this category  "
+                    "3) Paste into <strong>Description</strong> field (NOT 'Page Title' or 'Meta')  "
+                    "4) Make sure 'Display Mode' is set to 'Products and Static Block' or 'Static Block and Products' "
+                    "5) Save and clear cache</div></div>",
+                    unsafe_allow_html=True,
+                )
+                _approval_button("Bottom Text", f"{url_hash}_text")
 
-            # Status badge
-            if failed == 0 and warnings == 0:
-                badge_color = "#33dd88"
-                badge_text = f"✓ All {total_checks} validations passed"
-            elif failed == 0:
-                badge_color = "#ffaa33"
-                badge_text = f"⚠ {passed}/{total_checks} passed, {warnings} warnings"
-            else:
-                badge_color = "#ff4455"
-                badge_text = f"✗ {failed} FAILED, {warnings} warnings, {passed} passed"
+                # ── QUALITY VALIDATION of generated content ──
+                st.markdown("##### Quality validation")
+                val_results = _validate_generated_content(page, text_data, plan)
+                total_checks = len(val_results["checks"])
+                passed = val_results["passed"]
+                failed = val_results["failed"]
+                warnings = val_results["warnings"]
 
-            st.markdown(
-                f"<div style='background:#0d0d15; border:2px solid {badge_color}; border-radius:6px; padding:0.6rem; margin:0.5rem 0;'>"
-                f"<div style='font-size:0.85rem; color:{badge_color}; font-weight:600;'>{badge_text}</div></div>",
-                unsafe_allow_html=True,
-            )
+                # Status badge
+                if failed == 0 and warnings == 0:
+                    badge_color = "#33dd88"
+                    badge_text = f"✓ All {total_checks} validations passed"
+                elif failed == 0:
+                    badge_color = "#ffaa33"
+                    badge_text = f"⚠ {passed}/{total_checks} passed, {warnings} warnings"
+                else:
+                    badge_color = "#ff4455"
+                    badge_text = f"✗ {failed} FAILED, {warnings} warnings, {passed} passed"
 
-            # Show individual check results
-            with st.expander("View all validation checks", expanded=(failed > 0)):
-                for check in val_results["checks"]:
-                    icon = "✓" if check["passed"] else ("✗" if check["severity"] == "error" else "⚠")
-                    color = "#33dd88" if check["passed"] else ("#ff4455" if check["severity"] == "error" else "#ffaa33")
-                    st.markdown(
-                        f"<div style='font-size:0.8rem; color:{color}; margin:0.2rem 0;'>"
-                        f"{icon} {check['message']}</div>",
-                        unsafe_allow_html=True,
-                    )
+                st.markdown(
+                    f"<div style='background:#0d0d15; border:2px solid {badge_color}; border-radius:6px; padding:0.6rem; margin:0.5rem 0;'>"
+                    f"<div style='font-size:0.85rem; color:{badge_color}; font-weight:600;'>{badge_text}</div></div>",
+                    unsafe_allow_html=True,
+                )
 
-            # ── Regenerate with these fixes — feeds failing checks back to the AI prompt ──
-            if failed > 0 or warnings > 0:
-                failing_msgs = [
-                    c["message"] for c in val_results["checks"]
-                    if not c["passed"] and c.get("severity") in ("error", "warning")
-                ]
-                if failing_msgs:
-                    st.markdown(
-                        f"<div style='font-size:0.8rem; color:#c8b4ff; margin:0.3rem 0;'>"
-                        f"Regenerating will inject these {len(failing_msgs)} issue(s) into the prompt with 'fix these'.</div>",
-                        unsafe_allow_html=True,
-                    )
-                    if st.button(
-                        f"🔄 Regenerate bottom text — fix these {len(failing_msgs)} issue(s)",
-                        key=f"regen_bottom_{url_hash}",
-                        type="primary",
-                    ):
-                        if not has_anthropic_key():
-                            st.error("Anthropic API key missing — set it in **1. Setup & Connect** first.")
-                            st.stop()
-                        with st.spinner(f"Regenerating bottom text with {len(failing_msgs)} fixes…"):
-                            try:
-                                from utils.ai_generator import generate_page_content
-                                result = generate_page_content(url, validation_fixes=failing_msgs)
-                                st.session_state[text_key] = result
-                                from utils.persistence import save_ai_cache
-                                save_ai_cache()
-                                st.success("Regenerated — scroll up to review new text + validation.")
-                                st.rerun()
-                            except Exception as e:
-                                import traceback as _tb
-                                show_ai_error(
-                                    "Bottom text regeneration",
-                                    e,
-                                    context={"url": url, "validation_fixes": failing_msgs},
-                                )
-                                st.session_state[text_key] = {
-                                    "error": str(e),
-                                    "error_class": type(e).__name__,
-                                    "error_status_code": getattr(e, "status_code", None),
-                                    "error_request_id": getattr(e, "request_id", None),
-                                    "error_traceback": _tb.format_exc()[-3000:],
-                                }
-            st.markdown("---")
+                # Show individual check results
+                with st.expander("View all validation checks", expanded=(failed > 0)):
+                    for check in val_results["checks"]:
+                        icon = "✓" if check["passed"] else ("✗" if check["severity"] == "error" else "⚠")
+                        color = "#33dd88" if check["passed"] else ("#ff4455" if check["severity"] == "error" else "#ffaa33")
+                        st.markdown(
+                            f"<div style='font-size:0.8rem; color:{color}; margin:0.2rem 0;'>"
+                            f"{icon} {check['message']}</div>",
+                            unsafe_allow_html=True,
+                        )
 
-        # ── Meta title + description (always show with assessment) ──
+                # ── Regenerate with these fixes — feeds failing checks back to the AI prompt ──
+                if failed > 0 or warnings > 0:
+                    failing_msgs = [
+                        c["message"] for c in val_results["checks"]
+                        if not c["passed"] and c.get("severity") in ("error", "warning")
+                    ]
+                    if failing_msgs:
+                        st.markdown(
+                            f"<div style='font-size:0.8rem; color:#c8b4ff; margin:0.3rem 0;'>"
+                            f"Regenerating will inject these {len(failing_msgs)} issue(s) into the prompt with 'fix these'.</div>",
+                            unsafe_allow_html=True,
+                        )
+                        if st.button(
+                            f"🔄 Regenerate bottom text — fix these {len(failing_msgs)} issue(s)",
+                            key=f"regen_bottom_{url_hash}",
+                            type="primary",
+                        ):
+                            if not has_anthropic_key():
+                                st.error("Anthropic API key missing — set it in **1. Setup & Connect** first.")
+                                st.stop()
+                            with st.spinner(f"Regenerating bottom text with {len(failing_msgs)} fixes…"):
+                                try:
+                                    from utils.ai_generator import generate_page_content
+                                    result = generate_page_content(url, validation_fixes=failing_msgs)
+                                    st.session_state[text_key] = result
+                                    from utils.persistence import save_ai_cache
+                                    save_ai_cache()
+                                    st.success("Regenerated — scroll up to review new text + validation.")
+                                    st.rerun()
+                                except Exception as e:
+                                    import traceback as _tb
+                                    show_ai_error(
+                                        "Bottom text regeneration",
+                                        e,
+                                        context={"url": url, "validation_fixes": failing_msgs},
+                                    )
+                                    st.session_state[text_key] = {
+                                        "error": str(e),
+                                        "error_class": type(e).__name__,
+                                        "error_status_code": getattr(e, "status_code", None),
+                                        "error_request_id": getattr(e, "request_id", None),
+                                        "error_traceback": _tb.format_exc()[-3000:],
+                                    }
+
+        # ── CARD 3: META TITLE + DESCRIPTION ─────────────────────────
         new_title = plan.get("meta_title", "") or page["title"]
         new_desc = plan.get("meta_description", "") or page["meta_description"]
         meta_changed = plan.get("meta_changed", False)
@@ -2232,607 +2624,306 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
         desc_too_short = len(page["meta_description"] or "") < 120
         needs_meta_change = meta_changed or title_too_long or title_too_short or desc_too_long or desc_too_short
 
-        if needs_meta_change:
-            st.markdown("#### [META] Update meta title + description")
-            st.markdown(
-                f"<div style='font-size:0.75rem; color:#ffaa33; margin-bottom:0.5rem;'>"
-                f"⚠ Changes needed</div>",
-                unsafe_allow_html=True,
-            )
+        _meta_summary = "⚠ changes needed" if needs_meta_change else "✓ OK · no changes needed"
+        with st.expander(
+            f"🏷 **Meta title + description** — {_meta_summary}",
+            expanded=needs_meta_change or _expand_default,
+        ):
+            if needs_meta_change:
+                # Pre-compute meta cache key so both title + description sections can use it
+                meta_key = f"_cannibal_meta_{stable_hash(page['url'])}"
 
-            # Pre-compute meta cache key so both title + description sections can use it
-            meta_key = f"_cannibal_meta_{stable_hash(page['url'])}"
+                # Resolve recommended title — from action plan, or from cached AI meta
+                recommended_title = new_title if new_title and new_title != page['title'] else ""
+                recommended_desc = new_desc if new_desc and new_desc != page['meta_description'] else ""
+                if (not recommended_title or not recommended_desc) and meta_key in st.session_state:
+                    cached_meta = st.session_state.get(meta_key) or {}
+                    if isinstance(cached_meta, dict):
+                        variants = cached_meta.get("variants", []) or []
+                        if variants:
+                            if not recommended_title:
+                                recommended_title = variants[0].get("title", "") or ""
+                            if not recommended_desc:
+                                recommended_desc = variants[0].get("description", "") or ""
 
-            # Resolve recommended title — from action plan, or from cached AI meta
-            recommended_title = new_title if new_title and new_title != page['title'] else ""
-            recommended_desc = new_desc if new_desc and new_desc != page['meta_description'] else ""
-            if (not recommended_title or not recommended_desc) and meta_key in st.session_state:
-                cached_meta = st.session_state.get(meta_key) or {}
-                if isinstance(cached_meta, dict):
-                    variants = cached_meta.get("variants", []) or []
-                    if variants:
-                        if not recommended_title:
-                            recommended_title = variants[0].get("title", "") or ""
-                        if not recommended_desc:
-                            recommended_desc = variants[0].get("description", "") or ""
+                # Title — visible diff card
+                render_recommendation_diff(
+                    "Meta title",
+                    page["title"] or "",
+                    recommended_title,
+                    kind="title",
+                    note="Aim for 30–65 chars. Front-load the primary keyword and add a benefit modifier.",
+                )
 
-            # Title — visible diff card
-            render_recommendation_diff(
-                "Meta title",
-                page["title"] or "",
-                recommended_title,
-                kind="title",
-                note="Aim for 30–65 chars. Front-load the primary keyword and add a benefit modifier.",
-            )
+                # Description — visible diff card
+                render_recommendation_diff(
+                    "Meta description",
+                    page["meta_description"] or "",
+                    recommended_desc,
+                    kind="description",
+                    note="Aim for 120–165 chars. Lead with the keyword, end with a soft CTA.",
+                )
 
-            # Description — visible diff card
-            render_recommendation_diff(
-                "Meta description",
-                page["meta_description"] or "",
-                recommended_desc,
-                kind="description",
-                note="Aim for 120–165 chars. Lead with the keyword, end with a soft CTA.",
-            )
+                # AI generate button if nothing cached yet
+                if not recommended_title and not recommended_desc and meta_key not in st.session_state:
+                    if st.button("🤖 Generate meta title + description", key=f"gen_meta_{stable_hash(page['url'])}"):
+                        if not has_anthropic_key():
+                            st.error(
+                                "Anthropic API key is missing. Set it in **1. Setup & Connect** "
+                                "or as the `ANTHROPIC_API_KEY` env var on Railway, then retry."
+                            )
+                            st.stop()
+                        try:
+                            from utils.ai_generator import get_client, generate_meta_suggestions
+                            from utils.page_profile import build_page_profile
+                            # NB: get_anthropic_key is imported at module top (line 7).
+                            # Do NOT re-import it inside this function — Python would
+                            # then treat it as local, and any earlier reference (e.g. the
+                            # intro generate button) would raise UnboundLocalError.
+                            client = get_client(get_anthropic_key())
+                            profile = build_page_profile(page["url"])
+                            target_kws = [q["query"] for q in profile.get("gsc_queries", [])[:5]]
+                            result = generate_meta_suggestions(client, page["audit"], target_kws,
+                                st.session_state.get("site_context", ""),
+                                st.session_state.get("content_language", "Swedish"))
+                            st.session_state[meta_key] = result
+                            st.rerun()
+                        except Exception as e:
+                            show_ai_error(
+                                "Meta title + description generation",
+                                e,
+                                context={
+                                    "url": page["url"],
+                                    "target_keywords": target_kws if "target_kws" in dir() else "(not computed)",
+                                },
+                            )
 
-            # AI generate button if nothing cached yet
-            if not recommended_title and not recommended_desc and meta_key not in st.session_state:
-                if st.button("🤖 Generate meta title + description", key=f"gen_meta_{stable_hash(page['url'])}"):
+                if recommended_title and recommended_desc:
+                    with st.expander("Copy both as block", expanded=False):
+                        st.code(f"Title: {recommended_title}\nDescription: {recommended_desc}", language="text")
+
+                # ── Inline push buttons (Mshop Admin API) ──
+                # Only push values that actually differ from what's live, so
+                # users can't accidentally re-push the existing value.
+                _push_title = recommended_title if recommended_title and recommended_title != (page.get("title") or "") else ""
+                _push_desc = recommended_desc if recommended_desc and recommended_desc != (page.get("meta_description") or "") else ""
+                from utils.mshop_admin_push_ui import (
+                    render_inline_meta_title_push,
+                    render_inline_meta_desc_push,
+                )
+                _meta_push_col1, _meta_push_col2 = st.columns(2)
+                with _meta_push_col1:
+                    render_inline_meta_title_push(url, _push_title, key_prefix=f"qw_meta_{url_hash}")
+                with _meta_push_col2:
+                    render_inline_meta_desc_push(url, _push_desc, key_prefix=f"qw_meta_{url_hash}")
+
+                _approval_button("Meta", f"{url_hash}_meta")
+            else:
+                st.markdown(
+                    f"<div style='font-size:0.85rem; color:#33dd88;'>"
+                    f"Title: {len(page['title'])} chars · "
+                    f"Description: {len(page['meta_description'] or '')} chars · "
+                    f"No changes needed</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # ── CARD 2: INTRO TEXT (above product grid) ─────────────────
+        intro_key = f"_intro_text_{url_hash}"
+        intro_data = st.session_state.get(intro_key)
+        intro_words_current = page["audit"].get("intro_word_count", 0)
+        _intro_errored = isinstance(intro_data, dict) and bool(intro_data.get("error"))
+        _has_new_intro = bool(intro_data and not _intro_errored)
+        _intro_existing_ok = (not _has_new_intro) and (not _intro_errored) and (intro_words_current >= 50)
+
+        if _has_new_intro:
+            _intro_summary = "● new intro generated · review + push"
+            _intro_expand = _expand_default
+        elif _intro_errored:
+            _intro_summary = "⚠ generation failed · click to retry"
+            _intro_expand = True
+        elif _intro_existing_ok:
+            _intro_summary = f"✓ existing intro OK ({intro_words_current} words)"
+            _intro_expand = _expand_default
+        elif page["page_type"] == "category":
+            _intro_summary = f"○ not generated yet ({intro_words_current} words currently)"
+            _intro_expand = True
+        else:
+            _intro_summary = "— not applicable for this page type"
+            _intro_expand = False
+
+        with st.expander(
+            f"📄 **Intro text** — {_intro_summary}",
+            expanded=_intro_expand,
+        ):
+            if _has_new_intro:
+                st.markdown(
+                    "<div style='background:#0d0d15; border:1px solid #5bb4d4; border-radius:6px; padding:0.6rem; margin-bottom:0.5rem;'>"
+                    "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5bb4d4;'>POSITION</div>"
+                    "<div style='font-size:0.8rem; color:#e8e8f0;'>"
+                    "This is the <strong>INTRO TEXT</strong> shown <strong>ABOVE</strong> the product grid. "
+                    f"Current: {intro_words_current} words. "
+                    "<br>In Magento 1.9: typically a CMS block above the products, or first paragraph of Description."
+                    "</div></div>",
+                    unsafe_allow_html=True,
+                )
+                new_intro = (
+                    intro_data.get("optimized_text")
+                    or intro_data.get("rewritten_intro")
+                    or intro_data.get("html", "")
+                    or intro_data.get("text", "")
+                    or intro_data.get("intro", "")
+                    or intro_data.get("intro_text", "")
+                    or intro_data.get("paragraph", "")
+                    or intro_data.get("content", "")
+                )
+                # Last resort: pick the longest string value in the dict
+                if not new_intro and isinstance(intro_data, dict):
+                    strs = [(k, v) for k, v in intro_data.items() if isinstance(v, str) and len(v.split()) > 10]
+                    if strs:
+                        longest = max(strs, key=lambda kv: len(kv[1]))
+                        new_intro = longest[1]
+                        st.caption(f"Pulled intro from unknown key `{longest[0]}` — please tell the dev so the keys list can be updated.")
+
+                new_intro_wc = len(new_intro.split()) if new_intro else 0
+
+                # Strip HTML for the visible diff so it reads as prose; the
+                # raw HTML is still available below in the "Copy raw" expander.
+                try:
+                    from bs4 import BeautifulSoup as _Bs
+                    intro_plain = _Bs(new_intro or "", "html.parser").get_text(separator=" ").strip()
+                except Exception:
+                    intro_plain = new_intro or ""
+
+                current_intro_text = (
+                    page["audit"].get("intro_text")
+                    or page["audit"].get("body_text", "")[:600]
+                    or ""
+                )
+                try:
+                    current_intro_plain = _Bs(current_intro_text, "html.parser").get_text(separator=" ").strip()
+                except Exception:
+                    current_intro_plain = current_intro_text
+
+                render_recommendation_diff(
+                    "Intro text",
+                    current_intro_plain,
+                    intro_plain,
+                    kind="intro",
+                    note="Place above the product grid. Front-load the primary keyword in the first sentence.",
+                )
+
+                # Show full raw response when we couldn't extract any content
+                if new_intro_wc == 0:
+                    st.warning(
+                        "Could not find intro text in any expected key "
+                        "(optimized_text, rewritten_intro, html, text, intro, intro_text, paragraph, content). "
+                        "Raw AI response shown below — copy what you see and tell the dev which key to map."
+                    )
+                    with st.expander("Raw AI response (debug)", expanded=True):
+                        st.json(intro_data)
+                    if st.button("🔄 Clear cache and regenerate intro", key=f"force_regen_intro_{url_hash}"):
+                        st.session_state.pop(intro_key, None)
+                        try:
+                            import os as _os
+                            _path = _os.path.join("/data/ai_cache", f"{intro_key}.json")
+                            if _os.path.exists(_path):
+                                _os.remove(_path)
+                        except Exception:
+                            pass
+                        st.rerun()
+
+                # ── Inline push to Mshop ──
+                from utils.mshop_admin_push_ui import render_inline_intro_push
+                render_inline_intro_push(url, new_intro or "", key_prefix=f"qw_intro_{url_hash}")
+
+                _approval_button("Intro", f"{url_hash}_intro")
+            elif _intro_existing_ok:
+                st.markdown(
+                    f"<div style='font-size:0.85rem; color:#33dd88; margin-bottom:0.5rem;'>"
+                    f"Existing intro has {intro_words_current} words — sufficient, not regenerated</div>",
+                    unsafe_allow_html=True,
+                )
+                # Even when content is sufficient, expose a retry button so
+                # the user can force a regen without needing to clear cache
+                # manually. Useful after architecture/prompt changes.
+                if page["page_type"] == "category" and st.button(
+                    "Force regenerate intro anyway",
+                    key=f"force_gen_intro_{url_hash}",
+                    help="Existing intro is long enough but you can still "
+                         "regenerate to apply current rules.",
+                ):
+                    st.session_state.pop(intro_key, None)
+                    st.rerun()
+            elif page["page_type"] == "category":
+                # Reaches here when:
+                #   - no intro_data at all, OR
+                #   - intro_data is errored (credit fail, transient API error)
+                # Either way the user needs a way to (re)generate it.
+                if _intro_errored:
+                    st.error(
+                        f"Last attempt: {intro_data.get('error_class', 'Error')} — "
+                        f"{(intro_data.get('error') or '')[:200]}"
+                    )
+                    st.caption("Click below to retry — the error stamp will be replaced if generation succeeds.")
+                if st.button(
+                    "Retry intro generation" if _intro_errored else "Generate intro text",
+                    key=f"gen_intro_{url_hash}",
+                    type="primary",
+                ):
                     if not has_anthropic_key():
                         st.error(
                             "Anthropic API key is missing. Set it in **1. Setup & Connect** "
                             "or as the `ANTHROPIC_API_KEY` env var on Railway, then retry."
                         )
                         st.stop()
-                    try:
-                        from utils.ai_generator import get_client, generate_meta_suggestions
-                        from utils.page_profile import build_page_profile
-                        # NB: get_anthropic_key is imported at module top (line 7).
-                        # Do NOT re-import it inside this function — Python would
-                        # then treat it as local, and any earlier reference (e.g. the
-                        # intro generate button) would raise UnboundLocalError.
-                        client = get_client(get_anthropic_key())
-                        profile = build_page_profile(page["url"])
-                        target_kws = [q["query"] for q in profile.get("gsc_queries", [])[:5]]
-                        result = generate_meta_suggestions(client, page["audit"], target_kws,
-                            st.session_state.get("site_context", ""),
-                            st.session_state.get("content_language", "Swedish"))
-                        st.session_state[meta_key] = result
-                        st.rerun()
-                    except Exception as e:
-                        show_ai_error(
-                            "Meta title + description generation",
-                            e,
-                            context={
-                                "url": page["url"],
-                                "target_keywords": target_kws if "target_kws" in dir() else "(not computed)",
-                            },
-                        )
-
-            if recommended_title and recommended_desc:
-                with st.expander("Copy both as block", expanded=False):
-                    st.code(f"Title: {recommended_title}\nDescription: {recommended_desc}", language="text")
-
-            _approval_button("Meta", f"{url_hash}_meta")
-            st.markdown("---")
-        else:
-            st.markdown("#### [META] ✓ Meta is OK")
-            st.markdown(
-                f"<div style='font-size:0.75rem; color:#33dd88; margin-bottom:0.5rem;'>"
-                f"Title: {len(page['title'])} chars · Description: {len(page['meta_description'] or '')} chars · No changes needed</div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown("---")
-
-        # ── Intro text (above product grid) ──
-        intro_key = f"_intro_text_{url_hash}"
-        intro_data = st.session_state.get(intro_key)
-        intro_words_current = page["audit"].get("intro_word_count", 0)
-
-        if intro_data and not intro_data.get("error"):
-            st.markdown("#### [INTRO] New intro text (above product grid)")
-            st.markdown(
-                "<div style='background:#0d0d15; border:1px solid #5bb4d4; border-radius:6px; padding:0.6rem; margin-bottom:0.5rem;'>"
-                "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.6rem; color:#5bb4d4;'>POSITION</div>"
-                "<div style='font-size:0.8rem; color:#e8e8f0;'>"
-                "This is the <strong>INTRO TEXT</strong> shown <strong>ABOVE</strong> the product grid. "
-                f"Current: {intro_words_current} words. "
-                "<br>In Magento 1.9: typically a CMS block above the products, or first paragraph of Description."
-                "</div></div>",
-                unsafe_allow_html=True,
-            )
-            new_intro = (
-                intro_data.get("optimized_text")
-                or intro_data.get("rewritten_intro")
-                or intro_data.get("html", "")
-                or intro_data.get("text", "")
-                or intro_data.get("intro", "")
-                or intro_data.get("intro_text", "")
-                or intro_data.get("paragraph", "")
-                or intro_data.get("content", "")
-            )
-            # Last resort: pick the longest string value in the dict
-            if not new_intro and isinstance(intro_data, dict):
-                strs = [(k, v) for k, v in intro_data.items() if isinstance(v, str) and len(v.split()) > 10]
-                if strs:
-                    longest = max(strs, key=lambda kv: len(kv[1]))
-                    new_intro = longest[1]
-                    st.caption(f"Pulled intro from unknown key `{longest[0]}` — please tell the dev so the keys list can be updated.")
-
-            new_intro_wc = len(new_intro.split()) if new_intro else 0
-
-            # Strip HTML for the visible diff so it reads as prose; the
-            # raw HTML is still available below in the "Copy raw" expander.
-            try:
-                from bs4 import BeautifulSoup as _Bs
-                intro_plain = _Bs(new_intro or "", "html.parser").get_text(separator=" ").strip()
-            except Exception:
-                intro_plain = new_intro or ""
-
-            current_intro_text = (
-                page["audit"].get("intro_text")
-                or page["audit"].get("body_text", "")[:600]
-                or ""
-            )
-            try:
-                current_intro_plain = _Bs(current_intro_text, "html.parser").get_text(separator=" ").strip()
-            except Exception:
-                current_intro_plain = current_intro_text
-
-            render_recommendation_diff(
-                "Intro text",
-                current_intro_plain,
-                intro_plain,
-                kind="intro",
-                note="Place above the product grid. Front-load the primary keyword in the first sentence.",
-            )
-
-            # Show full raw response when we couldn't extract any content
-            if new_intro_wc == 0:
-                st.warning(
-                    "Could not find intro text in any expected key "
-                    "(optimized_text, rewritten_intro, html, text, intro, intro_text, paragraph, content). "
-                    "Raw AI response shown below — copy what you see and tell the dev which key to map."
-                )
-                with st.expander("Raw AI response (debug)", expanded=True):
-                    st.json(intro_data)
-                if st.button("🔄 Clear cache and regenerate intro", key=f"force_regen_intro_{url_hash}"):
-                    st.session_state.pop(intro_key, None)
-                    try:
-                        import os as _os
-                        _path = _os.path.join("/data/ai_cache", f"{intro_key}.json")
-                        if _os.path.exists(_path):
-                            _os.remove(_path)
-                    except Exception:
-                        pass
-                    st.rerun()
-
-            _approval_button("Intro", f"{url_hash}_intro")
-            st.markdown("---")
-        elif intro_words_current >= 50 and not (isinstance(intro_data, dict) and intro_data.get("error")):
-            st.markdown("#### [INTRO] ✓ Intro text is OK")
-            st.markdown(
-                f"<div style='font-size:0.75rem; color:#33dd88; margin-bottom:0.5rem;'>"
-                f"Existing intro has {intro_words_current} words — sufficient, not regenerated</div>",
-                unsafe_allow_html=True,
-            )
-            # Even when content is sufficient, expose a retry button so
-            # the user can force a regen without needing to clear cache
-            # manually. Useful after architecture/prompt changes.
-            if page["page_type"] == "category" and st.button(
-                "Force regenerate intro anyway",
-                key=f"force_gen_intro_{url_hash}",
-                help="Existing intro is long enough but you can still "
-                     "regenerate to apply current rules.",
-            ):
-                st.session_state.pop(intro_key, None)
-                st.rerun()
-            st.markdown("---")
-        elif page["page_type"] == "category":
-            # Reaches here when:
-            #   - no intro_data at all, OR
-            #   - intro_data is errored (credit fail, transient API error)
-            # Either way the user needs a way to (re)generate it.
-            _intro_errored = isinstance(intro_data, dict) and bool(intro_data.get("error"))
-            if _intro_errored:
-                st.markdown("#### [INTRO] ⚠ Intro generation failed last time")
-                st.error(
-                    f"Last attempt: {intro_data.get('error_class', 'Error')} — "
-                    f"{(intro_data.get('error') or '')[:200]}"
-                )
-                st.caption("Click below to retry — the error stamp will be replaced if generation succeeds.")
-            else:
-                st.markdown(
-                    f"#### [INTRO] Intro text — not generated yet "
-                    f"({intro_words_current} words currently)"
-                )
-            if st.button(
-                "Retry intro generation" if _intro_errored else "Generate intro text",
-                key=f"gen_intro_{url_hash}",
-                type="primary" if _intro_errored else "secondary",
-            ):
-                if not has_anthropic_key():
-                    st.error(
-                        "Anthropic API key is missing. Set it in **1. Setup & Connect** "
-                        "or as the `ANTHROPIC_API_KEY` env var on Railway, then retry."
-                    )
-                    st.stop()
-                with st.spinner("Generating intro text..."):
-                    try:
-                        missing_kws = []
-                        content_audit = page["audit"].get("content_audit") or {}
-                        kw_coverage = content_audit.get("keyword_coverage") or {}
-                        missing_kws = (kw_coverage.get("missing", []) or [])[:8]
-                        from utils.ai_generator import get_client, generate_intro_rewrite
-                        client = get_client(get_anthropic_key())
-                        site_context = st.session_state.get("site_context", "")
-                        language = st.session_state.get("content_language", "Swedish")
-                        result = generate_intro_rewrite(
-                            client,
-                            missing_keywords=missing_kws,
-                            existing_intro=page["audit"].get("intro_text", "") or "",
-                            page_type=page["page_type"],
-                            url=url,
-                            site_context=site_context,
-                            language=language,
-                        )
-                        st.session_state[intro_key] = result
-                    except Exception as e:
-                        import traceback as _tb
-                        show_ai_error(
-                            "Intro text generation",
-                            e,
-                            context={
-                                "url": url,
-                                "page_type": page["page_type"],
-                                "missing_keywords": missing_kws,
-                            },
-                        )
-                        st.session_state[intro_key] = {
-                            "error": str(e),
-                            "error_class": type(e).__name__,
-                            "error_status_code": getattr(e, "status_code", None),
-                            "error_request_id": getattr(e, "request_id", None),
-                            "error_traceback": _tb.format_exc()[-3000:],
-                        }
-                    from utils.persistence import save_ai_cache
-                    save_ai_cache()
-                st.rerun()
-            st.markdown("---")
-
-        # ── Push intro text + meta title + meta description via the
-        # Mshop admin API. Resolves URL → internal id from the synced
-        # active-pages cache. Independent of bottom-text push so it shows
-        # whether or not the user has already generated bottom text.
-        _intro_data_for_push = st.session_state.get(f"_intro_text_{url_hash}") or {}
-        _intro_html_for_push = ""
-        if isinstance(_intro_data_for_push, dict) and not _intro_data_for_push.get("error"):
-            _intro_html_for_push = (
-                _intro_data_for_push.get("optimized_text")
-                or _intro_data_for_push.get("intro_html")
-                or _intro_data_for_push.get("html")
-                or _intro_data_for_push.get("rewritten_intro")
-                or ""
-            )
-        _meta_title_for_push = (plan or {}).get("meta_title") or ""
-        _meta_desc_for_push = (plan or {}).get("meta_description") or ""
-        _meta_cache_for_push = st.session_state.get(f"_cannibal_meta_{url_hash}") or {}
-        if isinstance(_meta_cache_for_push, dict):
-            _variants_for_push = _meta_cache_for_push.get("variants") or []
-            if _variants_for_push:
-                if not _meta_title_for_push:
-                    _meta_title_for_push = _variants_for_push[0].get("title", "") or ""
-                if not _meta_desc_for_push:
-                    _meta_desc_for_push = _variants_for_push[0].get("description", "") or ""
-        # Suppress no-op pushes (proposed value identical to live).
-        if _meta_title_for_push and _meta_title_for_push == (page.get("title") or ""):
-            _meta_title_for_push = ""
-        if _meta_desc_for_push and _meta_desc_for_push == (page.get("meta_description") or ""):
-            _meta_desc_for_push = ""
-        if _intro_html_for_push or _meta_title_for_push or _meta_desc_for_push or st.session_state.get("mshop_active_pages"):
-            from utils.mshop_admin_push_ui import render_admin_push_block
-            render_admin_push_block(
-                url=url,
-                intro_text_html=_intro_html_for_push,
-                meta_title=_meta_title_for_push,
-                meta_description=_meta_desc_for_push,
-                key_prefix=f"qw_admin_{url_hash}",
-            )
-            st.markdown("---")
-
-        # ── Action steps (only if NOT replacing text) ──
-        steps = plan.get("steps", [])
-        if steps:
-            with st.expander(f"[ALTERNATIVE] {len(steps)} action steps (only if you want to keep existing text)", expanded=False):
-                st.markdown(
-                    "<p style='color:#9b9bb8; font-size:0.85rem;'>"
-                    "These steps are for fixing the EXISTING text instead of replacing it. "
-                    "If you used the PRIMARY action above, you can skip these.</p>",
-                    unsafe_allow_html=True,
-                )
-                for i, s in enumerate(steps[:5], 1):
-                    st.markdown(f"**{i}. {s.get('action', '')}** ({s.get('time_minutes', '?')} min)")
-                    st.markdown(f"<div style='color:#9b9bb8; font-size:0.85rem; margin-left:1rem;'>{s.get('detail', '')}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='color:#c8b4ff; font-size:0.85rem; margin-left:1rem;'>→ {s.get('instruction', '')}</div>", unsafe_allow_html=True)
-            st.markdown("---")
-
-        # ── New articles/blogs to write that support this page ──
-        new_articles = plan.get("new_content_suggestions", [])
-        if new_articles:
-            st.markdown(f"#### [BLOGS] {len(new_articles)} new articles/guides to write")
-            st.markdown(
-                "<p style='color:#9b9bb8; font-size:0.8rem;'>"
-                "These articles should be created and linked TO this page to support topical authority.</p>",
-                unsafe_allow_html=True,
-            )
-            for art_idx, art in enumerate(new_articles[:5]):
-                art_title = art.get('suggested_title', '')
-                art_hash = stable_hash(f"{url}_{art_title}")
-                art_cache_key = f"_gen_article_{art_hash}"
-
-                st.markdown(f"**{art_idx+1}. {art_title}**")
-                st.markdown(f"<div style='color:#9b9bb8; font-size:0.85rem; margin-left:1rem;'>{art.get('why', '')[:200]}</div>", unsafe_allow_html=True)
-                if art.get("target_keywords"):
-                    st.markdown(f"<div style='color:#c8b4ff; font-size:0.75rem; margin-left:1rem;'>Keywords: {', '.join(art.get('target_keywords', [])[:5])}</div>", unsafe_allow_html=True)
-                if art.get("link_from"):
-                    st.markdown(f"<div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>Link from: {art.get('link_from', '')}</div>", unsafe_allow_html=True)
-
-                if art_cache_key in st.session_state:
-                    article_data = st.session_state[art_cache_key]
-                    article_html = article_data.get("html", "") if isinstance(article_data, dict) else ""
-                    wc = article_data.get("word_count", 0) if isinstance(article_data, dict) else 0
-                    st.markdown(f"<div style='color:#33dd88; font-size:0.75rem; margin-left:1rem;'>✓ Generated: {wc} words</div>", unsafe_allow_html=True)
-                    with st.expander(f"View article {art_idx+1}", expanded=False):
-                        st.code(article_html[:3000] + ("..." if len(article_html) > 3000 else ""), language="html")
-                    st.download_button(
-                        "Download article HTML",
-                        data=article_html,
-                        file_name=f"blog_{art_hash}.html",
-                        mime="text/html",
-                        key=f"dl_art_{art_hash}",
-                    )
-                else:
-                    if st.button(f"Generate full article", key=f"gen_art_{art_hash}"):
+                    with st.spinner("Generating intro text..."):
                         try:
-                            from utils.ai_generator import generate_full_article_html
+                            missing_kws = []
+                            content_audit = page["audit"].get("content_audit") or {}
+                            kw_coverage = content_audit.get("keyword_coverage") or {}
+                            missing_kws = (kw_coverage.get("missing", []) or [])[:8]
+                            from utils.ai_generator import get_client, generate_intro_rewrite
                             client = get_client(get_anthropic_key())
-                            with st.spinner(f"Generating article: {art_title}..."):
-                                audit_results_list = st.session_state.get("audit_results", [])
-                                raw_urls_s = set(r["url"] for r in audit_results_list if r.get("url"))
-                                all_site_urls_local = sorted(raw_urls_s)
-                                article_result = generate_full_article_html(
-                                    client,
-                                    title=art_title,
-                                    keywords=art.get("target_keywords", []),
-                                    content_type=art.get("type", "guide"),
-                                    products=None,
-                                    link_from_url=art.get("link_from", url),
-                                    tone_sample="",
-                                    site_context=st.session_state.get("site_context", ""),
-                                    language=st.session_state.get("content_language", "Swedish"),
-                                    all_site_urls=all_site_urls_local,
-                                    cluster_context=f"This article supports {url} as part of its topic cluster",
-                                )
-                            st.session_state[art_cache_key] = article_result
-                            from utils.persistence import save_ai_cache
-                            save_ai_cache()
-                            st.rerun()
+                            site_context = st.session_state.get("site_context", "")
+                            language = st.session_state.get("content_language", "Swedish")
+                            result = generate_intro_rewrite(
+                                client,
+                                missing_keywords=missing_kws,
+                                existing_intro=page["audit"].get("intro_text", "") or "",
+                                page_type=page["page_type"],
+                                url=url,
+                                site_context=site_context,
+                                language=language,
+                            )
+                            st.session_state[intro_key] = result
                         except Exception as e:
+                            import traceback as _tb
                             show_ai_error(
-                                "Full article generation",
+                                "Intro text generation",
                                 e,
                                 context={
-                                    "article_title": art_title,
-                                    "keywords": art.get("target_keywords", []),
-                                    "link_from": art.get("link_from", url),
-                                    "content_type": art.get("type", "guide"),
+                                    "url": url,
+                                    "page_type": page["page_type"],
+                                    "missing_keywords": missing_kws,
                                 },
                             )
-                st.markdown("")
-            _approval_button("Articles", f"{url_hash}_articles")
-            st.markdown("---")
-        else:
-            st.markdown("#### [BLOGS] ✓ No new articles needed")
-            st.markdown(
-                "<div style='font-size:0.75rem; color:#33dd88; margin-bottom:0.5rem;'>"
-                "AI did not identify content gaps requiring new articles.</div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown("---")
+                            st.session_state[intro_key] = {
+                                "error": str(e),
+                                "error_class": type(e).__name__,
+                                "error_status_code": getattr(e, "status_code", None),
+                                "error_request_id": getattr(e, "request_id", None),
+                                "error_traceback": _tb.format_exc()[-3000:],
+                            }
+                        from utils.persistence import save_ai_cache
+                        save_ai_cache()
+                    st.rerun()
 
-        # ── Internal links: pages that should link TO this page ──
-        audit = page["audit"]  # Local alias for the audit data
-        content_audit = audit.get("content_audit") or {}
-        linking = content_audit.get("linking") or {}
-        link_details = linking.get("details") or {}
-        link_fix_suggestions = link_details.get("link_fix_suggestions") or []
-
-        # Find pages that link TO this page from SF link map
-        sf_link_map = st.session_state.get("sf_link_map", {})
-        links_to = sf_link_map.get("links_to", {}).get(url, []) if sf_link_map else []
-
-        # Inbound anchor stats
-        inbound_stats = link_details.get("inbound_anchor_stats") or {}
-
-        st.markdown("#### [INBOUND LINKS] Pages linking to this page")
-        if inbound_stats:
-            total_in = inbound_stats.get("total", 0)
-            descriptive = inbound_stats.get("descriptive", 0)
-            generic = inbound_stats.get("generic", 0)
-            empty = inbound_stats.get("empty", 0)
-            st.markdown(
-                f"**Current inbound links:** {total_in} total · "
-                f"{descriptive} descriptive · {generic} generic · {empty} empty anchors"
-            )
-            if total_in < 5:
-                st.warning(f"Only {total_in} inbound links — this page needs MORE pages linking to it for topic authority")
-            elif generic + empty > total_in * 0.3:
-                st.warning(f"{generic + empty}/{total_in} inbound links use generic/empty anchors — ask linking pages to use better anchor text")
-        else:
-            st.warning("No inbound links data — this page may have very few internal links pointing to it")
-
-        if link_fix_suggestions:
-            st.markdown(f"**Suggested new internal links FROM other pages TO this page:** {len(link_fix_suggestions)}")
-            for fix in link_fix_suggestions[:5]:
-                st.markdown(f"- From: `{fix.get('from_url', '')}`  →  Add link with anchor: **{fix.get('suggested_anchor', '')}**")
-                if fix.get("reason"):
-                    st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{fix.get('reason', '')}</div>", unsafe_allow_html=True)
-        st.markdown("---")
-
-        # ── Links to REMOVE from this page ──
-        links_to_remove = link_details.get("links_to_remove") or []
-        if links_to_remove:
-            st.markdown(f"#### [REMOVE LINKS] {len(links_to_remove)} links to consider removing")
-            st.markdown(
-                "<p style='color:#9b9bb8; font-size:0.8rem;'>"
-                "These links point to pages outside this topic cluster. "
-                "Remove only if they don't serve user navigation.</p>",
-                unsafe_allow_html=True,
-            )
-            for l in links_to_remove[:5]:
-                st.markdown(f"- `{l.get('url', '')}` (anchor: '{l.get('anchor', '')}')")
-            _approval_button("Remove links", f"{url_hash}_remove")
-            st.markdown("---")
-
-        # ── Cannibalization: keywords competing with other pages ──
-        cannibal_df = st.session_state.get("cannibalization")
-        if cannibal_df is not None and not cannibal_df.empty:
-            page_cannibals = []
-            for _, row in cannibal_df.iterrows():
-                pages_detail = row.get("pages_detail", [])
-                if isinstance(pages_detail, list):
-                    for p in pages_detail:
-                        if normalize_url(p.get("page", "")) == normalize_url(url):
-                            # Capture ALL competing URLs (excluding this page itself)
-                            competing = []
-                            for pp in pages_detail:
-                                pu = pp.get("page", "")
-                                if normalize_url(pu) != normalize_url(url):
-                                    competing.append({
-                                        "url": pu,
-                                        "position": pp.get("position", "?"),
-                                        "clicks": pp.get("clicks", 0),
-                                        "impressions": pp.get("impressions", 0),
-                                    })
-                            page_cannibals.append({
-                                "query": row["query"],
-                                "severity": row["severity"],
-                                "lost_clicks": row["lost_clicks_estimate"],
-                                "winner": row.get("recommended_winner", ""),
-                                "merge_action": row.get("merge_action", ""),
-                                "page_count": row.get("page_count", 2),
-                                "competing_pages": competing,
-                            })
-                            break
-            if page_cannibals:
-                # ── CONSOLIDATE: group by competing URL so the same
-                # competitor doesn't repeat 5x for keyword variants ──
-                from collections import defaultdict
-                by_competitor = defaultdict(lambda: {"queries": [], "total_lost": 0, "merge_action": "", "severity": "mild", "is_winner": True, "competing_pages": []})
-                for c in page_cannibals:
-                    # Build a key from the competing URLs (sorted)
-                    comp_key = tuple(sorted(normalize_url(cp["url"]) for cp in (c.get("competing_pages") or [])))
-                    if not comp_key:
-                        comp_key = ("unknown",)
-                    grp = by_competitor[comp_key]
-                    grp["queries"].append(c["query"])
-                    grp["total_lost"] += c.get("lost_clicks", 0)
-                    if c.get("severity") == "severe":
-                        grp["severity"] = "severe"
-                    elif c.get("severity") == "moderate" and grp["severity"] == "mild":
-                        grp["severity"] = "moderate"
-                    if not (normalize_url(c.get("winner", "")) == normalize_url(url)):
-                        grp["is_winner"] = False
-                    if not grp["merge_action"] and c.get("merge_action"):
-                        grp["merge_action"] = c["merge_action"]
-                    if not grp["competing_pages"] and c.get("competing_pages"):
-                        grp["competing_pages"] = c["competing_pages"]
-
-                groups = sorted(by_competitor.values(), key=lambda g: -g["total_lost"])
-                total_conflicts = len(page_cannibals)
-                unique_competitors = len(groups)
-                st.markdown(f"#### [CANNIBALIZATION] {total_conflicts} keyword conflicts → {unique_competitors} unique competitor(s)")
-
-                for grp in groups[:5]:
-                    sev_color = {"severe": "#ff4455", "moderate": "#ffaa33", "mild": "#6b6b8a"}.get(grp["severity"], "#6b6b8a")
-                    winner_label = "🏆 This page WINS" if grp["is_winner"] else "✗ Competitor leads"
-                    queries_str = ", ".join(f"'{q}'" for q in grp["queries"][:5])
-                    if len(grp["queries"]) > 5:
-                        queries_str += f" +{len(grp['queries'])-5} more"
-
-                    st.markdown(
-                        f"<div style='background:#12121f; border-left:4px solid {sev_color}; "
-                        f"padding:0.8rem; margin:0.5rem 0; border-radius:0 6px 6px 0;'>"
-                        f"<div style='font-size:0.9rem; color:#e8e8f0; font-weight:600;'>"
-                        f"{len(grp['queries'])} keywords: {queries_str}</div>"
-                        f"<div style='color:{sev_color}; font-size:0.8rem; margin-top:0.2rem;'>"
-                        f"[{grp['severity'].upper()}] · {grp['total_lost']:,} total lost clicks · {winner_label}</div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-
-                    if grp.get("competing_pages"):
-                        st.markdown("**Competing with:**")
-                        for cp in grp["competing_pages"]:
-                            st.markdown(
-                                f"- `{cp['url']}` — pos {cp.get('position','?')} · "
-                                f"{cp.get('clicks',0)} clicks · {cp.get('impressions',0):,} impressions"
-                            )
-
-                    if grp.get("merge_action"):
-                        with st.expander("What to do (click to expand)", expanded=False):
-                            st.markdown(grp["merge_action"])
-
-                _approval_button("Cannibal", f"{url_hash}_cannibal")
-                st.markdown("---")
-
-        # ── Schema, alt text, crawl issues ──
-        st.markdown("#### [TECHNICAL]")
-        tech_items = []
-
-        # Schema
-        schema_types = audit.get("schema_types", []) or []
-        if not any("breadcrumb" in str(s).lower() for s in schema_types):
-            tech_items.append("Missing BreadcrumbList schema")
-        if page["page_type"] == "category" and not any("itemlist" in str(s).lower() or "collection" in str(s).lower() for s in schema_types):
-            tech_items.append("Missing ItemList/Collection schema (recommended for category pages)")
-
-        # Alt text
-        images_no_alt = audit.get("images_without_alt", 0)
-        if images_no_alt > 0:
-            tech_items.append(f"{images_no_alt} images missing alt text")
-
-        # Crawl issues for this URL
-        crawl_issues = st.session_state.get("sf_crawl_issues", {})
-        if crawl_issues:
-            for issue_type in ["broken_links", "non_indexable", "redirect_chains", "canonical_issues", "near_duplicates"]:
-                items = crawl_issues.get(issue_type, [])
-                for item in items:
-                    if normalize_url(item.get("url", "")) == normalize_url(url):
-                        tech_items.append(f"{issue_type.replace('_', ' ').title()}: {item.get('action', '')[:100]}")
-                        break
-
-        # Authority
-        rd = audit.get("referring_domains", 0)
-        if rd < 5:
-            tech_items.append(f"LOW backlink authority: only {rd} referring domains — this page needs link building")
-        elif rd >= 50:
-            tech_items.append(f"✓ Strong authority: {rd} referring domains")
-
-        # AI quality verdict
-        from utils.ui_helpers import stable_hash as _sh
-        quality = st.session_state.get(f"_quality_{_sh(url)}")
-        if quality:
-            verdict = quality.get("verdict", "")
-            score = quality.get("score", 0)
-            v_color = {"REWRITE": "#ff4455", "IMPROVE": "#ffaa33", "KEEP": "#33dd88"}.get(verdict, "#6b6b8a")
-            tech_items.append(f"<span style='color:{v_color}; font-weight:600;'>AI text quality: {verdict} ({score}/10)</span> — {quality.get('summary', '')[:120]}")
-
-        if tech_items:
-            for item in tech_items:
-                st.markdown(f"- {item}", unsafe_allow_html=True)
-        else:
-            st.markdown("<div style='color:#33dd88;'>No technical issues detected</div>", unsafe_allow_html=True)
-        st.markdown("---")
+        # ── CARD 4: CONTEXT (action steps, articles, links, cannibalization, technical) ──
+        with st.expander(
+            "🔍 **Context — links · cannibalization · technical · article suggestions**",
+            expanded=_expand_default,
+        ):
+            _render_context_card_body(page, url, url_hash, plan)
 
         # Final actions
         st.markdown("### Done with this page?")
@@ -2989,6 +3080,17 @@ def _render_per_page_tab():
     # Configurable top_n — default 100 (what Action Center used to show)
     top_n = int(st.session_state.get("_qw_top_n", 100))
     pages = _get_top_pages(audit_results, top_n=top_n)
+
+    # ── Per-page card layout setting ───────────────────────────────
+    _setup_col1, _setup_col2 = st.columns([1, 3])
+    with _setup_col1:
+        _expand_default = st.checkbox(
+            "Expand all cards by default",
+            value=bool(st.session_state.get("_qw_per_page_default_expanded", False)),
+            key="_qw_per_page_default_expanded",
+            help="When off (default), each section card is collapsed — click to "
+                 "expand. When on, all cards open automatically.",
+        )
 
     # ── Mshop admin API: sync the list of active pages ────────────
     # Lookup is needed before per-page push of intro / meta title /

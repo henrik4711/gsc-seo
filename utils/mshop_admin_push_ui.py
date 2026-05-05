@@ -196,6 +196,90 @@ def render_admin_push_block(
             _show_result(res, "All fields", key_prefix)
 
 
+@st.fragment
+def render_inline_intro_push(url: str, intro_text_html: str, key_prefix: str) -> None:
+    """Inline push button for the intro/description field.
+
+    Designed to live next to the generated intro text inside the per-page
+    Intro card, so the user does not have to scroll to a separate "push"
+    block. Independent fragment so reruns don't redraw the whole page.
+    """
+    active_pages = st.session_state.get("mshop_active_pages") or {}
+    page_info = lookup_url(active_pages, url)
+    if not page_info:
+        st.caption(
+            "🔌 Sync Mshop active pages (top of tab) to enable direct push."
+        )
+        return
+    page_type = page_info.get("type", "")
+    if page_type == "cms":
+        st.caption("Intro: not supported for CMS pages.")
+        return
+
+    last = _last_push_caption(page_info)
+    if last:
+        st.caption(last)
+
+    disabled = not (intro_text_html or "").strip()
+    if st.button(
+        "📤 Push intro to Mshop",
+        key=f"{key_prefix}_inline_push_intro",
+        disabled=disabled,
+        use_container_width=True,
+        help="Updates the page's `description` field via "
+             "category/texts or filterpage/texts.",
+    ):
+        with st.spinner("Pushing intro text to Mshop..."):
+            res = update_for_page(page_info, description=intro_text_html)
+        _show_result(res, "Intro text", key_prefix)
+
+
+@st.fragment
+def render_inline_meta_title_push(url: str, meta_title: str, key_prefix: str) -> None:
+    """Inline push button for the meta title field."""
+    active_pages = st.session_state.get("mshop_active_pages") or {}
+    page_info = lookup_url(active_pages, url)
+    if not page_info:
+        st.caption(
+            "🔌 Sync Mshop active pages (top of tab) to enable direct push."
+        )
+        return
+
+    disabled = not (meta_title or "").strip()
+    if st.button(
+        "📤 Push meta title to Mshop",
+        key=f"{key_prefix}_inline_push_meta_title",
+        disabled=disabled,
+        use_container_width=True,
+    ):
+        with st.spinner("Pushing meta title to Mshop..."):
+            res = update_for_page(page_info, meta_title=meta_title)
+        _show_result(res, "Meta title", key_prefix)
+
+
+@st.fragment
+def render_inline_meta_desc_push(url: str, meta_description: str, key_prefix: str) -> None:
+    """Inline push button for the meta description field."""
+    active_pages = st.session_state.get("mshop_active_pages") or {}
+    page_info = lookup_url(active_pages, url)
+    if not page_info:
+        st.caption(
+            "🔌 Sync Mshop active pages (top of tab) to enable direct push."
+        )
+        return
+
+    disabled = not (meta_description or "").strip()
+    if st.button(
+        "📤 Push meta description to Mshop",
+        key=f"{key_prefix}_inline_push_meta_desc",
+        disabled=disabled,
+        use_container_width=True,
+    ):
+        with st.spinner("Pushing meta description to Mshop..."):
+            res = update_for_page(page_info, meta_description=meta_description)
+        _show_result(res, "Meta description", key_prefix)
+
+
 def _show_result(res: dict, label: str, key_prefix: str) -> None:
     status = res.get("status")
     if status == "success":
