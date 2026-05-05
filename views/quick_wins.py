@@ -2424,11 +2424,16 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
         plan = st.session_state.get(plan_key, {})
 
         # ── CARD 1: BOTTOM TEXT ──────────────────────────────────
+        # Auto-expand whenever something needs the user's attention
+        # (new content waiting for review, errored, or missing). Only
+        # collapse when this card is in a finished/no-op state. The
+        # setup-parameter still forces every card open if the user
+        # prefers that.
         _expand_default = bool(st.session_state.get("_qw_per_page_default_expanded", False))
         if has_text:
-            _btm_summary = "✓ generated · ready for push"
+            _btm_summary = "● generated · review + push"
             _btm_icon = "📝"
-            _btm_expand = _expand_default
+            _btm_expand = True  # ● has new content waiting for review
         elif page["page_type"] == "category":
             _btm_summary = "○ click to generate"
             _btm_icon = "📝"
@@ -2436,7 +2441,7 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
         else:
             _btm_summary = "— not applicable for this page type"
             _btm_icon = "📝"
-            _btm_expand = False
+            _btm_expand = _expand_default
         _bottom_card = st.expander(
             f"{_btm_icon} **Bottom text** — {_btm_summary}",
             expanded=_btm_expand,
@@ -2744,7 +2749,7 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
 
         if _has_new_intro:
             _intro_summary = "● new intro generated · review + push"
-            _intro_expand = _expand_default
+            _intro_expand = True  # new content waiting for review
         elif _intro_errored:
             _intro_summary = "⚠ generation failed · click to retry"
             _intro_expand = True
@@ -2756,7 +2761,7 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
             _intro_expand = True
         else:
             _intro_summary = "— not applicable for this page type"
-            _intro_expand = False
+            _intro_expand = _expand_default
 
         with st.expander(
             f"📄 **Intro text** — {_intro_summary}",
