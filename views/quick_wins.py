@@ -2722,12 +2722,22 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                 from utils.mshop_admin_push_ui import (
                     render_inline_meta_title_push,
                     render_inline_meta_desc_push,
+                    render_push_resolution_banner,
                 )
+                render_push_resolution_banner(url)
                 _meta_push_col1, _meta_push_col2 = st.columns(2)
                 with _meta_push_col1:
-                    render_inline_meta_title_push(url, _push_title, key_prefix=f"qw_meta_{url_hash}")
+                    render_inline_meta_title_push(
+                        url, _push_title,
+                        key_prefix=f"qw_meta_{url_hash}",
+                        current_title=page.get("title") or "",
+                    )
                 with _meta_push_col2:
-                    render_inline_meta_desc_push(url, _push_desc, key_prefix=f"qw_meta_{url_hash}")
+                    render_inline_meta_desc_push(
+                        url, _push_desc,
+                        key_prefix=f"qw_meta_{url_hash}",
+                        current_desc=page.get("meta_description") or "",
+                    )
 
                 _approval_button("Meta", f"{url_hash}_meta")
             else:
@@ -2845,7 +2855,18 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                         st.rerun()
 
                 # ── Inline push to Mshop ──
-                from utils.mshop_admin_push_ui import render_inline_intro_push
+                from utils.mshop_admin_push_ui import (
+                    render_inline_intro_push,
+                    render_push_resolution_banner,
+                )
+                render_push_resolution_banner(url)
+                # Surface the extracted intro length so the user can see
+                # immediately if the push button is disabled because the
+                # extraction failed (rare, key-mismatch bug).
+                st.caption(
+                    f"Extracted intro length: {len((new_intro or '').strip())} "
+                    f"chars · {len((new_intro or '').split())} words"
+                )
                 render_inline_intro_push(url, new_intro or "", key_prefix=f"qw_intro_{url_hash}")
 
                 _approval_button("Intro", f"{url_hash}_intro")

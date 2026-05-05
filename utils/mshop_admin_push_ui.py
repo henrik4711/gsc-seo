@@ -196,6 +196,32 @@ def render_admin_push_block(
             _show_result(res, "All fields", key_prefix)
 
 
+def _disabled_caption(reason: str) -> None:
+    """Compact gray reason shown directly under a disabled button."""
+    st.markdown(
+        f"<div style='font-size:0.7rem; color:#9b6644; margin-top:-0.4rem; margin-bottom:0.5rem;'>"
+        f"Button disabled: {reason}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _no_lookup_banner() -> None:
+    active_pages = st.session_state.get("mshop_active_pages") or {}
+    table = active_pages.get("lookup") if isinstance(active_pages, dict) else None
+    if not table:
+        st.caption(
+            "🔌 Mshop active-pages cache is empty — click "
+            "**🔌 Mshop Admin API → Sync active pages** at the top of the tab "
+            "to enable direct push."
+        )
+    else:
+        st.caption(
+            f"🔌 This URL is not in the {len(table)}-page Mshop active-pages "
+            "cache. Re-sync if the page was added recently, or check that the "
+            "URL slug exists in Mshop."
+        )
+
+
 @st.fragment
 def render_inline_intro_push(url: str, intro_text_html: str, key_prefix: str) -> None:
     """Inline push button for the intro/description field.
@@ -207,9 +233,7 @@ def render_inline_intro_push(url: str, intro_text_html: str, key_prefix: str) ->
     active_pages = st.session_state.get("mshop_active_pages") or {}
     page_info = lookup_url(active_pages, url)
     if not page_info:
-        st.caption(
-            "🔌 Sync Mshop active pages (top of tab) to enable direct push."
-        )
+        _no_lookup_banner()
         return
     page_type = page_info.get("type", "")
     if page_type == "cms":
@@ -220,7 +244,8 @@ def render_inline_intro_push(url: str, intro_text_html: str, key_prefix: str) ->
     if last:
         st.caption(last)
 
-    disabled = not (intro_text_html or "").strip()
+    text_len = len((intro_text_html or "").strip())
+    disabled = text_len == 0
     if st.button(
         "📤 Push intro to Mshop",
         key=f"{key_prefix}_inline_push_intro",
@@ -232,20 +257,24 @@ def render_inline_intro_push(url: str, intro_text_html: str, key_prefix: str) ->
         with st.spinner("Pushing intro text to Mshop..."):
             res = update_for_page(page_info, description=intro_text_html)
         _show_result(res, "Intro text", key_prefix)
+    if disabled:
+        _disabled_caption(
+            "intro text is empty (length 0). The intro generator returned "
+            "no usable content — check the diff above and regenerate."
+        )
 
 
 @st.fragment
-def render_inline_meta_title_push(url: str, meta_title: str, key_prefix: str) -> None:
+def render_inline_meta_title_push(url: str, meta_title: str, key_prefix: str, current_title: str = "") -> None:
     """Inline push button for the meta title field."""
     active_pages = st.session_state.get("mshop_active_pages") or {}
     page_info = lookup_url(active_pages, url)
     if not page_info:
-        st.caption(
-            "🔌 Sync Mshop active pages (top of tab) to enable direct push."
-        )
+        _no_lookup_banner()
         return
 
-    disabled = not (meta_title or "").strip()
+    title_len = len((meta_title or "").strip())
+    disabled = title_len == 0
     if st.button(
         "📤 Push meta title to Mshop",
         key=f"{key_prefix}_inline_push_meta_title",
@@ -255,20 +284,27 @@ def render_inline_meta_title_push(url: str, meta_title: str, key_prefix: str) ->
         with st.spinner("Pushing meta title to Mshop..."):
             res = update_for_page(page_info, meta_title=meta_title)
         _show_result(res, "Meta title", key_prefix)
+    if disabled:
+        if current_title and (meta_title or "") == current_title:
+            _disabled_caption("recommended title equals what's already live — nothing to push.")
+        else:
+            _disabled_caption(
+                "no recommended meta title yet. Click **🤖 Generate meta "
+                "title + description** above first."
+            )
 
 
 @st.fragment
-def render_inline_meta_desc_push(url: str, meta_description: str, key_prefix: str) -> None:
+def render_inline_meta_desc_push(url: str, meta_description: str, key_prefix: str, current_desc: str = "") -> None:
     """Inline push button for the meta description field."""
     active_pages = st.session_state.get("mshop_active_pages") or {}
     page_info = lookup_url(active_pages, url)
     if not page_info:
-        st.caption(
-            "🔌 Sync Mshop active pages (top of tab) to enable direct push."
-        )
+        _no_lookup_banner()
         return
 
-    disabled = not (meta_description or "").strip()
+    desc_len = len((meta_description or "").strip())
+    disabled = desc_len == 0
     if st.button(
         "📤 Push meta description to Mshop",
         key=f"{key_prefix}_inline_push_meta_desc",
@@ -278,6 +314,36 @@ def render_inline_meta_desc_push(url: str, meta_description: str, key_prefix: st
         with st.spinner("Pushing meta description to Mshop..."):
             res = update_for_page(page_info, meta_description=meta_description)
         _show_result(res, "Meta description", key_prefix)
+    if disabled:
+        if current_desc and (meta_description or "") == current_desc:
+            _disabled_caption("recommended description equals what's already live — nothing to push.")
+        else:
+            _disabled_caption(
+                "no recommended meta description yet. Click **🤖 Generate "
+                "meta title + description** above first."
+            )
+
+
+def render_push_resolution_banner(url: str) -> None:
+    """Compact one-line banner showing whether this URL resolves to a Mshop
+    page id (for direct push). Render once near the top of a per-page card
+    so the user knows what's available without trying buttons one-by-one."""
+    active_pages = st.session_state.get("mshop_active_pages") or {}
+    table = active_pages.get("lookup") if isinstance(active_pages, dict) else None
+    page_info = lookup_url(active_pages, url) if active_pages else None
+    if not table:
+        st.caption("🔌 Mshop sync: not done — push buttons will be hidden.")
+        return
+    if not page_info:
+        st.caption(
+            f"🔌 Mshop sync: ✓ ({len(table)} pages) but **this URL is not in "
+            "the cache** — push buttons will be hidden. Re-sync or check the slug."
+        )
+        return
+    st.caption(
+        f"🔌 Mshop: resolved to **{page_info.get('type', '?')}** id "
+        f"`{page_info.get('id', '?')}` — push buttons enabled."
+    )
 
 
 def _show_result(res: dict, label: str, key_prefix: str) -> None:
@@ -291,7 +357,11 @@ def _show_result(res: dict, label: str, key_prefix: str) -> None:
             f"{label} push failed — {res.get('error') or status}"
             + (f" (HTTP {res.get('http_code')})" if res.get("http_code") else "")
         )
-    with st.expander(f"{label} — Mshop response", expanded=(status != "success")):
+    # NOTE: cannot use st.expander here because this fragment is
+    # invoked from inside an outer st.expander (the per-page card),
+    # and Streamlit forbids nested expanders. Use st.popover instead,
+    # which is allowed inside expanders.
+    with st.popover(f"{label} — Mshop response"):
         st.markdown(f"**Status:** `{status}` · **HTTP:** {res.get('http_code', '?')}")
         if res.get("error"):
             st.markdown(f"**Error:** `{res.get('error')}`")
