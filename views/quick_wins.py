@@ -2692,9 +2692,19 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                     note="Aim for 120–165 chars. Lead with the keyword, end with a soft CTA.",
                 )
 
-                # AI generate button if nothing cached yet
-                if not recommended_title and not recommended_desc and meta_key not in st.session_state:
-                    if st.button("🤖 Generate meta title + description", key=f"gen_meta_{stable_hash(page['url'])}"):
+                # AI generate button — show whenever EITHER field is
+                # missing or fails the verdict check. Length-equal-to-
+                # current is treated as "missing" so users can always
+                # regenerate when the WHAT GOOGLE SEES diagnosis flagged
+                # something the cached suggestion didn't fix.
+                _gen_btn_label = "🤖 Generate meta title + description"
+                if recommended_title and not recommended_desc:
+                    _gen_btn_label = "🤖 Generate meta description"
+                elif recommended_desc and not recommended_title:
+                    _gen_btn_label = "🤖 Generate meta title"
+                elif recommended_title and recommended_desc:
+                    _gen_btn_label = "🤖 Regenerate meta title + description"
+                if st.button(_gen_btn_label, key=f"gen_meta_{stable_hash(page['url'])}"):
                         if not has_anthropic_key():
                             st.error(
                                 "Anthropic API key is missing. Set it in **1. Setup & Connect** "
