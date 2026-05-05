@@ -2139,47 +2139,6 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
             )
             _approval_button("Bottom Text", f"{url_hash}_text")
 
-            # ── Push intro text + meta title + meta description via the
-            # Mshop admin API. Resolves URL → internal id from the synced
-            # active-pages cache; falls back to a hint if the user hasn't
-            # synced yet. Independent of the bottom-text push above.
-            _intro_data = st.session_state.get(f"_intro_text_{url_hash}") or {}
-            _intro_html = ""
-            if isinstance(_intro_data, dict) and not _intro_data.get("error"):
-                _intro_html = (
-                    _intro_data.get("optimized_text")
-                    or _intro_data.get("intro_html")
-                    or _intro_data.get("html")
-                    or ""
-                )
-            # Meta title + description: prefer plan suggestions, fall back
-            # to the cannibal-meta cache (the "Generate meta" button) so
-            # users who used either path can push.
-            _meta_title = (plan or {}).get("meta_title") or ""
-            _meta_desc = (plan or {}).get("meta_description") or ""
-            _meta_cache = st.session_state.get(f"_cannibal_meta_{url_hash}") or {}
-            if isinstance(_meta_cache, dict):
-                _variants = _meta_cache.get("variants") or []
-                if _variants:
-                    if not _meta_title:
-                        _meta_title = _variants[0].get("title", "") or ""
-                    if not _meta_desc:
-                        _meta_desc = _variants[0].get("description", "") or ""
-            # Suppress meta values that match what's already on the page —
-            # no point in pushing a no-op.
-            if _meta_title and _meta_title == (page.get("title") or ""):
-                _meta_title = ""
-            if _meta_desc and _meta_desc == (page.get("meta_description") or ""):
-                _meta_desc = ""
-            from utils.mshop_admin_push_ui import render_admin_push_block
-            render_admin_push_block(
-                url=url,
-                intro_text_html=_intro_html,
-                meta_title=_meta_title,
-                meta_description=_meta_desc,
-                key_prefix=f"qw_admin_{url_hash}",
-            )
-
             # ── QUALITY VALIDATION of generated content ──
             st.markdown("##### Quality validation")
             val_results = _validate_generated_content(page, text_data, plan)
@@ -2449,17 +2408,48 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
 
             _approval_button("Intro", f"{url_hash}_intro")
             st.markdown("---")
-        elif intro_words_current >= 50:
+        elif intro_words_current >= 50 and not (isinstance(intro_data, dict) and intro_data.get("error")):
             st.markdown("#### [INTRO] ✓ Intro text is OK")
             st.markdown(
                 f"<div style='font-size:0.75rem; color:#33dd88; margin-bottom:0.5rem;'>"
                 f"Existing intro has {intro_words_current} words — sufficient, not regenerated</div>",
                 unsafe_allow_html=True,
             )
+            # Even when content is sufficient, expose a retry button so
+            # the user can force a regen without needing to clear cache
+            # manually. Useful after architecture/prompt changes.
+            if page["page_type"] == "category" and st.button(
+                "Force regenerate intro anyway",
+                key=f"force_gen_intro_{url_hash}",
+                help="Existing intro is long enough but you can still "
+                     "regenerate to apply current rules.",
+            ):
+                st.session_state.pop(intro_key, None)
+                st.rerun()
             st.markdown("---")
-        elif page["page_type"] == "category" and not has_intro:
-            st.markdown(f"#### [INTRO] Intro text — not generated yet ({intro_words_current} words currently)")
-            if st.button("Generate intro text", key=f"gen_intro_{url_hash}"):
+        elif page["page_type"] == "category":
+            # Reaches here when:
+            #   - no intro_data at all, OR
+            #   - intro_data is errored (credit fail, transient API error)
+            # Either way the user needs a way to (re)generate it.
+            _intro_errored = isinstance(intro_data, dict) and bool(intro_data.get("error"))
+            if _intro_errored:
+                st.markdown("#### [INTRO] ⚠ Intro generation failed last time")
+                st.error(
+                    f"Last attempt: {intro_data.get('error_class', 'Error')} — "
+                    f"{(intro_data.get('error') or '')[:200]}"
+                )
+                st.caption("Click below to retry — the error stamp will be replaced if generation succeeds.")
+            else:
+                st.markdown(
+                    f"#### [INTRO] Intro text — not generated yet "
+                    f"({intro_words_current} words currently)"
+                )
+            if st.button(
+                "Retry intro generation" if _intro_errored else "Generate intro text",
+                key=f"gen_intro_{url_hash}",
+                type="primary" if _intro_errored else "secondary",
+            ):
                 if not has_anthropic_key():
                     st.error(
                         "Anthropic API key is missing. Set it in **1. Setup & Connect** "
@@ -2507,6 +2497,46 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                     from utils.persistence import save_ai_cache
                     save_ai_cache()
                 st.rerun()
+            st.markdown("---")
+
+        # ── Push intro text + meta title + meta description via the
+        # Mshop admin API. Resolves URL → internal id from the synced
+        # active-pages cache. Independent of bottom-text push so it shows
+        # whether or not the user has already generated bottom text.
+        _intro_data_for_push = st.session_state.get(f"_intro_text_{url_hash}") or {}
+        _intro_html_for_push = ""
+        if isinstance(_intro_data_for_push, dict) and not _intro_data_for_push.get("error"):
+            _intro_html_for_push = (
+                _intro_data_for_push.get("optimized_text")
+                or _intro_data_for_push.get("intro_html")
+                or _intro_data_for_push.get("html")
+                or _intro_data_for_push.get("rewritten_intro")
+                or ""
+            )
+        _meta_title_for_push = (plan or {}).get("meta_title") or ""
+        _meta_desc_for_push = (plan or {}).get("meta_description") or ""
+        _meta_cache_for_push = st.session_state.get(f"_cannibal_meta_{url_hash}") or {}
+        if isinstance(_meta_cache_for_push, dict):
+            _variants_for_push = _meta_cache_for_push.get("variants") or []
+            if _variants_for_push:
+                if not _meta_title_for_push:
+                    _meta_title_for_push = _variants_for_push[0].get("title", "") or ""
+                if not _meta_desc_for_push:
+                    _meta_desc_for_push = _variants_for_push[0].get("description", "") or ""
+        # Suppress no-op pushes (proposed value identical to live).
+        if _meta_title_for_push and _meta_title_for_push == (page.get("title") or ""):
+            _meta_title_for_push = ""
+        if _meta_desc_for_push and _meta_desc_for_push == (page.get("meta_description") or ""):
+            _meta_desc_for_push = ""
+        if _intro_html_for_push or _meta_title_for_push or _meta_desc_for_push or st.session_state.get("mshop_active_pages"):
+            from utils.mshop_admin_push_ui import render_admin_push_block
+            render_admin_push_block(
+                url=url,
+                intro_text_html=_intro_html_for_push,
+                meta_title=_meta_title_for_push,
+                meta_description=_meta_desc_for_push,
+                key_prefix=f"qw_admin_{url_hash}",
+            )
             st.markdown("---")
 
         # ── Action steps (only if NOT replacing text) ──
