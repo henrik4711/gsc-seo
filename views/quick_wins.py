@@ -2113,17 +2113,24 @@ def _render_status_bar(page, plan_data, text_data, intro_data) -> None:
         (new_title and new_title != (page.get("title") or ""))
         or (new_desc and new_desc != (page.get("meta_description") or ""))
     )
-    title_too_long = len(page.get("title") or "") > 65
-    title_too_short = len(page.get("title") or "") < 30
-    desc_too_long = len(page.get("meta_description") or "") > 165
-    desc_too_short = len(page.get("meta_description") or "") < 120
-    meta_needs_change = title_too_long or title_too_short or desc_too_long or desc_too_short
+    # Use the same verdict logic as the "WHAT GOOGLE SEES" panel so
+    # the status bar agrees with the per-element diagnosis (catches
+    # missing primary keyword and missing CTA on top of length checks).
+    _meta_pk = _primary_keyword_for_page(page)
+    _t_status, *_ = _verdict_for_title(page.get("title") or "", _meta_pk)
+    _d_status, *_ = _verdict_for_description(page.get("meta_description") or "", _meta_pk)
+    meta_needs_change = _t_status in ("warn", "bad") or _d_status in ("warn", "bad")
     meta_ok = not meta_needs_change and not has_meta_change
 
     pi, pc = _section_status("Plan", has_plan, plan_err)
     ti, tc = _section_status("Bottom", has_text, text_err)
     ii, ic = _section_status("Intro", has_intro, intro_err, is_ok=intro_ok_existing)
-    mi, mc = _section_status("Meta", has_meta_change, False, is_ok=meta_ok)
+    # Meta status: ⚠ when structurally wrong (length / missing kw / missing CTA),
+    # ● when AI suggestion exists, ✓ when OK, ○ otherwise.
+    if meta_needs_change and not has_meta_change:
+        mi, mc = ("⚠", "#ff6644")
+    else:
+        mi, mc = _section_status("Meta", has_meta_change, False, is_ok=meta_ok)
 
     parts = ["<div style='display:flex; gap:0.5rem; flex-wrap:wrap; margin:0.4rem 0 0.8rem 0;'>"]
     for icon, color, label in (
@@ -2629,12 +2636,21 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
         new_desc = plan.get("meta_description", "") or page["meta_description"]
         meta_changed = plan.get("meta_changed", False)
 
-        # Auto-detect if change needed
-        title_too_long = len(page["title"] or "") > 65
-        title_too_short = len(page["title"] or "") < 30
-        desc_too_long = len(page["meta_description"] or "") > 165
-        desc_too_short = len(page["meta_description"] or "") < 120
-        needs_meta_change = meta_changed or title_too_long or title_too_short or desc_too_long or desc_too_short
+        # Use the same verdict functions that drive the "WHAT GOOGLE
+        # SEES" panel above — otherwise this card disagrees with the
+        # diagnosis the user just read (e.g. WHAT GOOGLE SEES says
+        # "Generate new — missing primary keyword 'penisring'" but
+        # the card says "✓ OK · no changes needed" because the
+        # length-only check passes). The verdict catches: too long,
+        # too short, missing primary keyword, missing CTA, missing tag.
+        _meta_primary_kw = _primary_keyword_for_page(page)
+        _title_status, *_ = _verdict_for_title(page.get("title") or "", _meta_primary_kw)
+        _desc_status, *_ = _verdict_for_description(page.get("meta_description") or "", _meta_primary_kw)
+        needs_meta_change = (
+            meta_changed
+            or _title_status in ("warn", "bad")
+            or _desc_status in ("warn", "bad")
+        )
 
         _meta_summary = "⚠ changes needed" if needs_meta_change else "✓ OK · no changes needed"
         with st.expander(
