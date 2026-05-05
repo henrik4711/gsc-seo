@@ -2139,6 +2139,47 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
             )
             _approval_button("Bottom Text", f"{url_hash}_text")
 
+            # ── Push intro text + meta title + meta description via the
+            # Mshop admin API. Resolves URL → internal id from the synced
+            # active-pages cache; falls back to a hint if the user hasn't
+            # synced yet. Independent of the bottom-text push above.
+            _intro_data = st.session_state.get(f"_intro_text_{url_hash}") or {}
+            _intro_html = ""
+            if isinstance(_intro_data, dict) and not _intro_data.get("error"):
+                _intro_html = (
+                    _intro_data.get("optimized_text")
+                    or _intro_data.get("intro_html")
+                    or _intro_data.get("html")
+                    or ""
+                )
+            # Meta title + description: prefer plan suggestions, fall back
+            # to the cannibal-meta cache (the "Generate meta" button) so
+            # users who used either path can push.
+            _meta_title = (plan or {}).get("meta_title") or ""
+            _meta_desc = (plan or {}).get("meta_description") or ""
+            _meta_cache = st.session_state.get(f"_cannibal_meta_{url_hash}") or {}
+            if isinstance(_meta_cache, dict):
+                _variants = _meta_cache.get("variants") or []
+                if _variants:
+                    if not _meta_title:
+                        _meta_title = _variants[0].get("title", "") or ""
+                    if not _meta_desc:
+                        _meta_desc = _variants[0].get("description", "") or ""
+            # Suppress meta values that match what's already on the page —
+            # no point in pushing a no-op.
+            if _meta_title and _meta_title == (page.get("title") or ""):
+                _meta_title = ""
+            if _meta_desc and _meta_desc == (page.get("meta_description") or ""):
+                _meta_desc = ""
+            from utils.mshop_admin_push_ui import render_admin_push_block
+            render_admin_push_block(
+                url=url,
+                intro_text_html=_intro_html,
+                meta_title=_meta_title,
+                meta_description=_meta_desc,
+                key_prefix=f"qw_admin_{url_hash}",
+            )
+
             # ── QUALITY VALIDATION of generated content ──
             st.markdown("##### Quality validation")
             val_results = _validate_generated_content(page, text_data, plan)
@@ -2918,6 +2959,74 @@ def _render_per_page_tab():
     # Configurable top_n — default 100 (what Action Center used to show)
     top_n = int(st.session_state.get("_qw_top_n", 100))
     pages = _get_top_pages(audit_results, top_n=top_n)
+
+    # ── Mshop admin API: sync the list of active pages ────────────
+    # Lookup is needed before per-page push of intro / meta title /
+    # meta description: the update endpoints take an internal id, not
+    # a URL, so we cache URL→id once and reuse for every push.
+    _active_pages = st.session_state.get("mshop_active_pages") or {}
+    _active_count = (
+        len(_active_pages.get("lookup", {}))
+        if isinstance(_active_pages, dict) and isinstance(_active_pages.get("lookup"), dict)
+        else 0
+    )
+    with st.expander(
+        f"🔌 Mshop Admin API — {_active_count} active pages cached"
+        if _active_count else
+        "🔌 Mshop Admin API — not synced yet (required for intro/meta push)",
+        expanded=(_active_count == 0),
+    ):
+        st.caption(
+            "Fetches the list of active categories, CMS pages, and filter "
+            "pages from Mshop so per-page push buttons can resolve a URL "
+            "to its internal id. Same credentials as bottom-text push. "
+            "Re-sync after Mshop adds/removes pages."
+        )
+        if _active_count:
+            counts = (_active_pages.get("counts") or {}) if isinstance(_active_pages, dict) else {}
+            fetched_at = _active_pages.get("fetched_at", "?") if isinstance(_active_pages, dict) else "?"
+            st.markdown(
+                f"<div style='font-size:0.8rem; color:#9b9bb8;'>"
+                f"Last sync: <strong>{fetched_at}</strong> · "
+                f"Categories: {counts.get('category', 0)} · "
+                f"CMS pages: {counts.get('cms', 0)} · "
+                f"Filter pages: {counts.get('filterpage', 0)}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        if st.button(
+            "🔄 Sync active pages from Mshop now",
+            key="_qw_admin_sync",
+            type="primary" if _active_count == 0 else "secondary",
+        ):
+            from utils.mshop_admin_api import fetch_active_pages_all
+            from utils.persistence import save_key
+            with st.spinner("Fetching categories + CMS pages + filter pages from Mshop..."):
+                _result = fetch_active_pages_all()
+            if _result.get("status") == "error":
+                st.error(
+                    "Sync failed — " + "; ".join(_result.get("errors", []) or ["unknown error"])
+                )
+            else:
+                st.session_state["mshop_active_pages"] = _result
+                try:
+                    save_key("mshop_active_pages")
+                except Exception:
+                    pass
+                _c = _result.get("counts", {})
+                msg = (
+                    f"Synced {_c.get('category', 0)} categories, "
+                    f"{_c.get('cms', 0)} CMS pages, "
+                    f"{_c.get('filterpage', 0)} filter pages."
+                )
+                if _result.get("status") == "partial":
+                    st.warning(
+                        msg + " Some lists failed: "
+                        + "; ".join(_result.get("errors", []))
+                    )
+                else:
+                    st.success(msg)
+                st.rerun()
 
     # ── Controls: how many top pages + bulk AI-plan generation ────
     controls_col1, controls_col2, controls_col3 = st.columns([2, 2, 3])

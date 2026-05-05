@@ -45,6 +45,10 @@ PERSIST_KEYS = {
     "action_plan": "json",
     # Cluster-based internal link recommendations (vertical + horizontal)
     "cluster_link_recommendations": "json",
+    # Mshop admin API: which categories / CMS pages / filter pages are
+    # active and editable, plus the URL→internal-id lookup needed for
+    # per-page push of intro text + meta title + meta description.
+    "mshop_active_pages": "json",
 }
 
 # Prefixes for dynamic AI cache keys — stored as individual files
