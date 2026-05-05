@@ -72,7 +72,7 @@ def render_footer_push_block(url: str, bottom_html: str, key_prefix: str) -> Non
             f"</div>",
             unsafe_allow_html=True,
         )
-        with st.expander("Show last Magento response", expanded=False):
+        with st.popover("Show last Magento response"):
             st.markdown(f"**HTTP {last.get('http_code')}** · `{last.get('timestamp','')}`")
             body = last.get("response_body") or "(empty body)"
             st.code(body, language="json")
@@ -225,7 +225,7 @@ def _render_push_result(result: dict, key_prefix: str) -> None:
         unsafe_allow_html=True,
     )
 
-    with st.expander("Show full payload that was sent", expanded=False):
+    with st.popover("Show full payload that was sent"):
         st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
 
     col_close, col_back = st.columns([2, 1])
