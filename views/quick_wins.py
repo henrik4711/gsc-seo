@@ -1781,7 +1781,7 @@ def _render_context_card_body(page, url, url_hash, plan):
     # ── Action steps (only if NOT replacing text) ──
     steps = plan.get("steps", [])
     if steps:
-        with st.expander(f"[ALTERNATIVE] {len(steps)} action steps (only if you want to keep existing text)", expanded=False):
+        with st.popover(f"[ALTERNATIVE] {len(steps)} action steps (only if you want to keep existing text)"):
             st.markdown(
                 "<p style='color:#9b9bb8; font-size:0.85rem;'>"
                 "These steps are for fixing the EXISTING text instead of replacing it. "
@@ -1820,7 +1820,7 @@ def _render_context_card_body(page, url, url_hash, plan):
                 article_html = article_data.get("html", "") if isinstance(article_data, dict) else ""
                 wc = article_data.get("word_count", 0) if isinstance(article_data, dict) else 0
                 st.markdown(f"<div style='color:#33dd88; font-size:0.75rem; margin-left:1rem;'>✓ Generated: {wc} words</div>", unsafe_allow_html=True)
-                with st.expander(f"View article {art_idx+1}", expanded=False):
+                with st.popover(f"View article {art_idx+1}"):
                     st.code(article_html[:3000] + ("..." if len(article_html) > 3000 else ""), language="html")
                 st.download_button(
                     "Download article HTML",
@@ -2014,7 +2014,7 @@ def _render_context_card_body(page, url, url_hash, plan):
                         )
 
                 if grp.get("merge_action"):
-                    with st.expander("What to do (click to expand)", expanded=False):
+                    with st.popover("What to do"):
                         st.markdown(grp["merge_action"])
 
             _approval_button("Cannibal", f"{url_hash}_cannibal")
@@ -2506,7 +2506,7 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                     f"<span style='color:{lix_color};'>**LIX {lix}**</span>",
                     unsafe_allow_html=True,
                 )
-                with st.expander("View HTML preview", expanded=False):
+                with st.popover("View HTML preview"):
                     st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")
                 st.download_button(
                     "Download HTML",
@@ -2557,8 +2557,10 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                     unsafe_allow_html=True,
                 )
 
-                # Show individual check results
-                with st.expander("View all validation checks", expanded=(failed > 0)):
+                # Show individual check results — inline when something
+                # failed (so the user sees what's wrong), behind a
+                # popover when everything passed (just confirmation).
+                def _render_checks():
                     for check in val_results["checks"]:
                         icon = "✓" if check["passed"] else ("✗" if check["severity"] == "error" else "⚠")
                         color = "#33dd88" if check["passed"] else ("#ff4455" if check["severity"] == "error" else "#ffaa33")
@@ -2567,6 +2569,11 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                             f"{icon} {check['message']}</div>",
                             unsafe_allow_html=True,
                         )
+                if failed > 0 or warnings > 0:
+                    _render_checks()
+                else:
+                    with st.popover("View all validation checks"):
+                        _render_checks()
 
                 # ── Regenerate with these fixes — feeds failing checks back to the AI prompt ──
                 if failed > 0 or warnings > 0:
@@ -2699,7 +2706,7 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                             )
 
                 if recommended_title and recommended_desc:
-                    with st.expander("Copy both as block", expanded=False):
+                    with st.popover("Copy both as block"):
                         st.code(f"Title: {recommended_title}\nDescription: {recommended_desc}", language="text")
 
                 # ── Inline push buttons (Mshop Admin API) ──
@@ -2819,8 +2826,8 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                         "(optimized_text, rewritten_intro, html, text, intro, intro_text, paragraph, content). "
                         "Raw AI response shown below — copy what you see and tell the dev which key to map."
                     )
-                    with st.expander("Raw AI response (debug)", expanded=True):
-                        st.json(intro_data)
+                    st.markdown("**Raw AI response (debug):**")
+                    st.json(intro_data)
                     if st.button("🔄 Clear cache and regenerate intro", key=f"force_regen_intro_{url_hash}"):
                         st.session_state.pop(intro_key, None)
                         try:
