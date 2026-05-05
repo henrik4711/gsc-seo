@@ -72,7 +72,10 @@ def show_ai_error(label: str, exc: Exception, context: dict | None = None):
         lines.append(f"- **Traceback:**\n\n```\n{tb[-3000:]}\n```")
 
     if lines:
-        with st.expander("Full error details (for debugging)", expanded=False):
+        # Use popover (not expander) so this helper works when called
+        # from inside another expander — Streamlit forbids nested
+        # expanders.
+        with st.popover("Full error details (for debugging)"):
             st.markdown("\n".join(lines))
 
 
@@ -340,7 +343,10 @@ def render_recommendation_diff(
     )
 
     if recommended:
-        with st.expander(f"Copy raw {label.lower()}", expanded=False):
+        # Popover (not expander) so render_recommendation_diff works
+        # when called from inside another expander, e.g. the per-page
+        # Meta and Intro cards in views/quick_wins.py.
+        with st.popover(f"Copy raw {label.lower()}"):
             st.code(recommended, language="text")
 
 
