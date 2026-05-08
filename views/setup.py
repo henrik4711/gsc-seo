@@ -11,10 +11,15 @@ from config import get_anthropic_key, has_anthropic_key
 
 
 def _auto_connect_gsc():
-    """Try to auto-connect GSC using env var credentials."""
+    """Try to auto-connect GSC using env var credentials.
+
+    Builds the service, lists properties, and pre-selects the env site URL
+    so the Fetch GSC Data button becomes available. Errors are captured into
+    session state so the UI can show them — never swallow silently.
+    """
     creds = st.session_state.get("gsc_credentials")
     site_url = st.session_state.get("gsc_site_url", os.environ.get("GSC_SITE_URL", ""))
-    if not creds or not site_url:
+    if not creds:
         return
     if "gsc_service" in st.session_state:
         return
@@ -24,8 +29,8 @@ def _auto_connect_gsc():
         properties = list_properties(service)
         st.session_state["gsc_service"] = service
         st.session_state["gsc_properties"] = properties
-        # Set site if not already set
-        if site_url in properties and "gsc_site" not in st.session_state:
+        st.session_state.pop("gsc_auto_connect_error", None)
+        if site_url and site_url in properties and "gsc_site" not in st.session_state:
             st.session_state["gsc_site"] = site_url
             st.session_state["demo_mode"] = False
             try:
@@ -33,8 +38,8 @@ def _auto_connect_gsc():
                 save_key("gsc_site")
             except Exception:
                 pass
-    except Exception:
-        pass  # silently fail, user can connect manually
+    except Exception as e:
+        st.session_state["gsc_auto_connect_error"] = str(e)
 
 
 def render():
@@ -94,6 +99,41 @@ def render():
 
             if has_env_creds and "gsc_credentials" in st.session_state:
                 st.success("GSC credentials loaded from environment variable (GSC_CREDENTIALS_JSON)")
+
+                auto_err = st.session_state.get("gsc_auto_connect_error")
+                if auto_err:
+                    st.error(
+                        "Could not connect to Google Search Console with the env credentials.\n\n"
+                        f"**Error:** {auto_err}\n\n"
+                        "Common causes:\n"
+                        "- The service account email is not added in GSC under "
+                        "**Settings → Users and permissions** for this property\n"
+                        "- `GSC_CREDENTIALS_JSON` is malformed (must be the full service-account JSON, not a path)\n"
+                        "- Temporary network/SSL issue — try again"
+                    )
+
+                if "gsc_properties" not in st.session_state:
+                    if st.button("Connect to GSC now", type="primary", key="gsc_manual_connect"):
+                        st.session_state.pop("gsc_service", None)
+                        st.session_state.pop("gsc_auto_connect_error", None)
+                        with st.spinner("Connecting to Google Search Console..."):
+                            try:
+                                from utils.gsc_client import build_gsc_service, list_properties
+                                service = build_gsc_service(st.session_state["gsc_credentials"])
+                                properties = list_properties(service)
+                                st.session_state["gsc_service"] = service
+                                st.session_state["gsc_properties"] = properties
+                                env_site = st.session_state.get(
+                                    "gsc_site_url", os.environ.get("GSC_SITE_URL", "")
+                                )
+                                if env_site and env_site in properties and "gsc_site" not in st.session_state:
+                                    st.session_state["gsc_site"] = env_site
+                                    st.session_state["demo_mode"] = False
+                                st.success(f"Connected — found {len(properties)} GSC properties")
+                                st.rerun()
+                            except Exception as e:
+                                st.session_state["gsc_auto_connect_error"] = str(e)
+                                st.error(f"Connection failed: {e}")
             else:
                 st.markdown("""
                 <div style="background:#12121f; border:1px solid #1e1e2e; border-radius:8px; padding:1rem; margin-bottom:1rem; font-size:0.8rem; color:#9b9bb8; font-family:'IBM Plex Mono',monospace;">
