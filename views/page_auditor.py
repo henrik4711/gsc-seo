@@ -577,7 +577,7 @@ def render():
     # This view only renders UI + delegates to the shared module.
     from utils.quality_check_runner import (
         eligible_pages, pages_needing_check, already_checked_count,
-        run_quality_batches,
+        run_quality_batches, ELIGIBLE_PAGE_TYPES, MIN_WORD_COUNT,
     )
 
     quality_candidates = eligible_pages(results)
@@ -587,6 +587,33 @@ def render():
     q1.metric("Category + blog pages", len(quality_candidates))
     q2.metric("Already checked", already_checked)
     q3.metric("Remaining", len(quality_candidates) - already_checked)
+
+    # If filter excluded everything, show WHY so the user can act.
+    if not quality_candidates and results:
+        from collections import Counter
+        type_counts = Counter((r.get("page_type") or "missing") for r in results)
+        wc_short = sum(
+            1 for r in results
+            if r.get("page_type") in ELIGIBLE_PAGE_TYPES
+            and (r.get("word_count") or 0) <= MIN_WORD_COUNT
+        )
+        type_str = ", ".join(f"`{t}`: {n}" for t, n in type_counts.most_common())
+        st.warning(
+            f"**0 of {len(results)} audited pages match the quality-check filter.** "
+            f"Filter requires `page_type` in ({', '.join(ELIGIBLE_PAGE_TYPES)}) "
+            f"AND `word_count` > {MIN_WORD_COUNT}.\n\n"
+            f"**Page types in audit_results:** {type_str}\n\n"
+            + (
+                f"**Note:** {wc_short} eligible-type pages were excluded for having "
+                f"≤{MIN_WORD_COUNT} words. "
+                if wc_short else ""
+            )
+            + (
+                "If everything is `product` or `unknown`, the page-type classifier "
+                "(utils/category_analyzer.py `classify_page_type`) is misclassifying — "
+                "re-scrape with **Re-scrape ALL pages (force)** at the top to refresh."
+            )
+        )
 
     col_qgen, col_qinfo = st.columns([1, 2])
     with col_qgen:

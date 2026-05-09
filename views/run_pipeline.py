@@ -979,10 +979,21 @@ def _step_progress_text(step) -> str:
     if step["num"] == 7:
         from utils.quality_check_runner import (
             eligible_pages, quality_input_hash, quality_key,
+            ELIGIBLE_PAGE_TYPES, MIN_WORD_COUNT,
         )
-        eligible = eligible_pages(st.session_state.get("audit_results", []))
+        from collections import Counter
+        audit = st.session_state.get("audit_results", []) or []
+        eligible = eligible_pages(audit)
         if not eligible:
-            return "waiting for audit"
+            if not audit:
+                return "waiting for audit"
+            # Honest diagnosis: audit IS done but no pages match the filter.
+            type_counts = Counter((r.get("page_type") or "missing") for r in audit)
+            type_str = ", ".join(f"{t}:{n}" for t, n in type_counts.most_common())
+            return (
+                f"⚠ 0/{len(audit)} eligible — needs {'/'.join(ELIGIBLE_PAGE_TYPES)} "
+                f"with >{MIN_WORD_COUNT} words. Got: {type_str}"
+            )
         up_to_date = stale = missing = 0
         for r in eligible:
             existing = st.session_state.get(quality_key(r.get("url", "")))
