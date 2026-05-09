@@ -596,6 +596,18 @@ def render():
             unsafe_allow_html=True,
         )
 
+    # Show any errors from a previous run — persisted so they survive st.rerun
+    prev_errors = st.session_state.get("_quality_check_errors", [])
+    if prev_errors:
+        st.error(
+            "Last AI quality check had errors:\n\n"
+            + "\n".join(f"- Batch {b}: `{e}`" for b, e in prev_errors[:5])
+            + ("\n\n_(showing first 5)_" if len(prev_errors) > 5 else "")
+        )
+        if st.button("Clear errors", key="btn_clear_quality_errors"):
+            st.session_state.pop("_quality_check_errors", None)
+            st.rerun()
+
     if run_quality:
         from config import get_anthropic_key, has_anthropic_key
         if not has_anthropic_key():
@@ -609,9 +621,19 @@ def render():
             # Only check pages not yet assessed
             unchecked = [r for r in quality_candidates if f"_quality_{stable_hash(r['url'])}" not in st.session_state]
 
-            if not unchecked:
+            if not quality_candidates:
+                st.warning(
+                    "No pages match the quality-check filter "
+                    "(category / blog / faq with >50 words). "
+                    "Run **Re-scrape ALL pages** at the top first."
+                )
+            elif not unchecked:
                 st.success("All pages already checked!")
             else:
+                # Reset error log for this run
+                st.session_state["_quality_check_errors"] = []
+                run_errors = []
+
                 with st.status(f"Checking {len(unchecked)} pages...", expanded=True) as qstatus:
                     progress_q = st.progress(0)
                     log_q = st.empty()
@@ -637,15 +659,29 @@ def render():
                             from utils.persistence import save_ai_cache
                             save_ai_cache()
                         except Exception as e:
-                            log_q.write(f"Error on batch {batch_num}: {e}")
+                            run_errors.append((batch_num, str(e)))
+                            # Render inline AND persist so it survives st.rerun
+                            st.error(f"Batch {batch_num} failed: {e}")
 
                         progress_q.progress(min(1.0, (batch_start + 5) / len(unchecked)))
 
-                    qstatus.update(label=f"Quality check complete", state="complete", expanded=False)
+                    if run_errors:
+                        qstatus.update(
+                            label=f"Quality check finished with {len(run_errors)} batch error(s)",
+                            state="error",
+                            expanded=True,
+                        )
+                    else:
+                        qstatus.update(label="Quality check complete", state="complete", expanded=False)
                     # Save AI results to disk
                     from utils.persistence import save_ai_cache
                     save_ai_cache()
-                st.rerun()
+
+                # Persist errors so they survive the rerun below
+                st.session_state["_quality_check_errors"] = run_errors
+                # Only auto-rerun on full success — keep errors visible otherwise
+                if not run_errors:
+                    st.rerun()
 
     # Display quality results
     quality_results = []

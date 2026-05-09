@@ -1,6 +1,6 @@
 """
 AI content generation: meta titles, descriptions, and landing page text
-Uses Claude claude-sonnet-4-20250514 via Anthropic API
+Uses Claude claude-sonnet-4-6 via Anthropic API
 """
 
 import os
@@ -306,7 +306,7 @@ Generate {n_variants} variants of improved meta title + description.
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}]
@@ -380,7 +380,7 @@ Return ONLY JSON (no markdown):
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}]
@@ -540,7 +540,7 @@ Language: {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -631,7 +631,7 @@ IMPORTANT:
 - Language of analysis: English. Language of the content being analyzed: {language}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -748,7 +748,7 @@ Return ONLY JSON:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}]
@@ -795,7 +795,7 @@ Language: {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=1000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -853,7 +853,7 @@ Current text (excerpt):
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -915,7 +915,7 @@ Current intro text:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=1000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -963,7 +963,7 @@ Related keywords to include: {', '.join(keywords[:15])}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1023,7 +1023,7 @@ Language: {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1083,7 +1083,7 @@ Language: {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=4096,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1125,7 +1125,7 @@ Write in {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=500,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1168,7 +1168,7 @@ Rules:
 {{"clusters":[{{"topic":"name","intent":"commercial","terms":["term1","term2"],"keywords":["kw1","kw2","kw3"],"hub":"suggested hub URL","impressions":0}}],"summary":"2 sentences"}}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=8000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1373,7 +1373,7 @@ Check ALL of these and report issues + fixes:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=4096,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1465,7 +1465,7 @@ Language: {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=8000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -2204,7 +2204,7 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=6000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -2659,7 +2659,7 @@ Site: {site_context}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=6000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -3090,7 +3090,7 @@ IMPORTANT: meta_title and meta_description MUST always be included in the respon
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -3136,7 +3136,7 @@ Return ONLY JSON:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=1500,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -3318,7 +3318,7 @@ Return ONLY JSON:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2500,
         temperature=0,
         messages=[{"role": "user", "content": prompt}]

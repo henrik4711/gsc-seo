@@ -747,7 +747,7 @@ Evaluate the OVERALL site health. Focus on:
 }}"""
 
                     message = client.messages.create(
-                        model="claude-sonnet-4-20250514",
+                        model="claude-sonnet-4-6",
                         max_tokens=3000,
                         temperature=0,
                         messages=[{"role": "user", "content": prompt}],
@@ -853,7 +853,7 @@ Evaluate the OVERALL site health. Focus on:
                     # ── CALL 1: Cluster design ────────────────────
                     st.write("Call 1/3: Designing clusters...")
                     msg1 = client.messages.create(
-                        model="claude-sonnet-4-20250514",
+                        model="claude-sonnet-4-6",
                         max_tokens=4000,
                         temperature=0,
                         messages=[{"role": "user", "content": f"""Design 20-40 topic clusters for this e-commerce site.
@@ -874,7 +874,7 @@ Output JSON: {{"clusters":[{{"name":"...","intent":"...","hub":"/url","hub_kw":"
                     st.write("Call 2/3: Identifying merges and deletions...")
                     cluster_names = [c.get("name", "") for c in clusters_result.get("clusters", [])]
                     msg2 = client.messages.create(
-                        model="claude-sonnet-4-20250514",
+                        model="claude-sonnet-4-6",
                         max_tokens=2000,
                         temperature=0,
                         messages=[{"role": "user", "content": f"""Given these topic clusters for {site_ctx}:
@@ -894,7 +894,7 @@ Output JSON: {{"merge":[{{"from":["/url1","/url2"],"to":"/url","why":"reason"}}]
                     # ── CALL 3: Summary + keyword assignments ─────
                     st.write("Call 3/3: Final assessment...")
                     msg3 = client.messages.create(
-                        model="claude-sonnet-4-20250514",
+                        model="claude-sonnet-4-6",
                         max_tokens=2000,
                         temperature=0,
                         messages=[{"role": "user", "content": f"""Site: {site_ctx}
@@ -1073,7 +1073,7 @@ What can be done without risk, what needs careful handling.
 }}"""
 
                     message = client.messages.create(
-                        model="claude-sonnet-4-20250514",
+                        model="claude-sonnet-4-6",
                         max_tokens=3000,
                         temperature=0,
                         messages=[{"role": "user", "content": prompt}],
@@ -1227,7 +1227,7 @@ Cross-check the implementation plans against the site issues. Answer:
 }}"""
 
                     message = client.messages.create(
-                        model="claude-sonnet-4-20250514",
+                        model="claude-sonnet-4-6",
                         max_tokens=3000,
                         temperature=0,
                         messages=[{"role": "user", "content": prompt}],

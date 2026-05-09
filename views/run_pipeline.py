@@ -508,7 +508,7 @@ the path realistic for the site's URL structure (observe patterns in the list).
 
     # Call 1: Cluster design
     msg1 = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=8000,
         temperature=0,
         messages=[{"role": "user", "content": f"""Design 15-25 topic clusters for this e-commerce site.
@@ -546,7 +546,7 @@ Output ONLY valid JSON, no markdown, no commentary:
     # Call 2: Merge/delete/create
     cluster_names = [c.get("name", "") for c in clusters_result.get("clusters", [])]
     msg2 = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=6000,
         temperature=0,
         messages=[{"role": "user", "content": f"""Given these topic clusters for {site_ctx}:
@@ -580,7 +580,7 @@ Keep "why" short (<60 chars). Output ONLY valid JSON, no commentary:
 
     # Call 3: Summary
     msg3 = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": f"""Site: {site_ctx}
@@ -776,7 +776,7 @@ Cross-check the implementation plans against site issues AND ideal structure. An
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -839,7 +839,7 @@ Output JSON:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -957,7 +957,7 @@ Identify:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         temperature=0,  # Deterministic output
         messages=[{"role": "user", "content": prompt}],
