@@ -530,6 +530,75 @@ def render():
 
     results = st.session_state["audit_results"]
 
+    # ── Reclassify page types (no re-scrape) ───────────────────────
+    st.markdown("---")
+    from collections import Counter
+    _type_counts = Counter((r.get("page_type") or "missing") for r in results)
+    _types_str = ", ".join(f"`{t}`: {n}" for t, n in _type_counts.most_common())
+    st.markdown(f"**Current page-type breakdown:** {_types_str}")
+
+    rc1, rc2 = st.columns([1, 2])
+    with rc1:
+        run_reclassify = st.button(
+            "Reclassify page types (no re-scrape)",
+            type="primary" if _type_counts.get("unknown", 0) > len(results) // 2 else "secondary",
+            key="btn_reclassify_types",
+        )
+    with rc2:
+        st.caption(
+            "Re-runs classify_page_type() on each audited page using saved scrape data — "
+            "fixes 'unknown' classifications without spending 18 min re-scraping."
+        )
+
+    if run_reclassify:
+        from utils.category_analyzer import classify_page_type
+        before = Counter((r.get("page_type") or "missing") for r in results)
+        changed = 0
+        with st.status("Reclassifying...", expanded=True) as rc_status:
+            for r in results:
+                old_type = r.get("page_type")
+                try:
+                    classification = classify_page_type(r.get("url", ""), r)
+                    new_type = classification.get("page_type", "unknown")
+                    if new_type != old_type:
+                        r["page_type"] = new_type
+                        r["_reclassify_signals"] = classification.get("signals", [])
+                        changed += 1
+                except Exception:
+                    pass
+            st.session_state["audit_results"] = results
+            from utils.persistence import save_key
+            save_key("audit_results")
+            after = Counter((r.get("page_type") or "missing") for r in results)
+            rc_status.update(
+                label=f"Reclassified {changed} pages — before: {dict(before)}, after: {dict(after)}",
+                state="complete",
+            )
+        st.rerun()
+
+    # Debug: show what fields the saved audit data actually contains
+    with st.expander("🔍 Debug: what fields are in audit_results[0]?", expanded=False):
+        if results:
+            sample = results[0]
+            keys = sorted(sample.keys())
+            st.caption(f"Sample URL: `{sample.get('url', '?')}` — {len(keys)} fields")
+            classifier_relevant = [
+                "page_type", "template_type", "body_classes", "schema_types",
+                "has_accordion_product", "has_breadcrumb_schema",
+                "structural_signals", "h1", "word_count", "internal_links",
+                "product_count",
+            ]
+            st.markdown("**Classifier-relevant fields present in this row:**")
+            for k in classifier_relevant:
+                v = sample.get(k, "<MISSING>")
+                if isinstance(v, (dict, list)):
+                    v_str = str(v)[:200]
+                else:
+                    v_str = str(v)[:120]
+                marker = "✓" if k in sample else "✗"
+                st.markdown(f"- {marker} `{k}` = `{v_str}`")
+            st.caption(f"All keys: {', '.join(keys)}")
+
     # ── Recalculate content scores (no re-scrape) ──────────────────
     st.markdown("---")
     if st.button("Recalculate content scores (no re-scrape)", key="btn_recalc"):
