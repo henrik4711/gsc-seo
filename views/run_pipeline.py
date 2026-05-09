@@ -983,13 +983,21 @@ Identify:
 def _run_quality_until_done():
     """Run AI quality check repeatedly until all eligible pages have
     up-to-date verdicts. Pages whose input data hasn't changed since
-    last check are automatically skipped (hash-based)."""
+    last check are automatically skipped (hash-based).
+
+    Exceptions are intentionally NOT caught here — the outer pipeline
+    runner displays them via st.error + traceback. Swallowing them would
+    leave the user staring at a "step done" screen when nothing actually ran.
+    """
     audit = st.session_state.get("audit_results", []) or []
     eligible = [r for r in audit
                 if r.get("page_type") in ("category", "blog", "faq")
                 and r.get("word_count", 0) > 50]
-    while True:
-        # Count pages that still NEED checking (no verdict OR stale verdict)
+    if not eligible:
+        return  # nothing to do; not an error
+
+    MAX_ITER = 100  # safety: each call processes up to 50 pages
+    for _ in range(MAX_ITER):
         remaining = 0
         for r in eligible:
             key = f"_quality_{stable_hash(r['url'])}"
@@ -999,12 +1007,29 @@ def _run_quality_until_done():
             elif isinstance(existing, dict) and existing.get("_input_hash") != _quality_input_hash(r):
                 remaining += 1
         if remaining == 0:
-            break
-        try:
-            _run_quality_check()  # processes 50 per call
-        except Exception as e:
-            print(f"[run_quality_until_done] Error: {e}")
-            break
+            return
+
+        before_done = sum(
+            1 for r in eligible
+            if isinstance(st.session_state.get(f"_quality_{stable_hash(r['url'])}"), dict)
+            and st.session_state[f"_quality_{stable_hash(r['url'])}"].get("_input_hash") == _quality_input_hash(r)
+        )
+        _run_quality_check()  # processes up to 50 per call — may raise
+        after_done = sum(
+            1 for r in eligible
+            if isinstance(st.session_state.get(f"_quality_{stable_hash(r['url'])}"), dict)
+            and st.session_state[f"_quality_{stable_hash(r['url'])}"].get("_input_hash") == _quality_input_hash(r)
+        )
+        if after_done <= before_done:
+            raise RuntimeError(
+                f"Quality check made no progress: {remaining} pages still pending after a batch. "
+                "Likely the AI returned no parseable assessments for any page in the batch."
+            )
+
+    raise RuntimeError(
+        f"Quality check did not complete within {MAX_ITER} iterations — "
+        f"{remaining} pages still pending."
+    )
 
 
 def _run_cluster_linking():
