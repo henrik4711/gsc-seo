@@ -459,6 +459,19 @@ def render():
                     result["page_type"] = "unknown"
                     result["issues"] = []
 
+                # SAFETY NET: page_type MUST be set before append, no matter
+                # which branch above ran. Previously the deep_scrape_category
+                # path and the SF-fallback path could leave page_type unset
+                # entirely — Step 7 (AI Content Quality) then filtered out
+                # every page because the eligibility check required
+                # page_type ∈ (category|blog|faq).
+                if "page_type" not in result:
+                    try:
+                        from utils.category_analyzer import classify_page_type as _cls_pt
+                        result["page_type"] = _cls_pt(url, result).get("page_type", "unknown")
+                    except Exception:
+                        result["page_type"] = "unknown"
+
                 audit_results.append(result)
 
                 # Only update UI every 10 pages (reduces re-renders from 900 to 90)
