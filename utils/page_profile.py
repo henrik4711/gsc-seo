@@ -12,6 +12,7 @@ import pandas as pd
 
 from utils.ui_helpers import normalize_url, stable_hash
 from utils.url_helpers import url_path as _url_path_fn
+from utils.quality_check_runner import quality_key_from_hash
 
 
 def build_page_profile(url: str) -> dict:
@@ -42,7 +43,7 @@ def build_page_profile(url: str) -> dict:
         len(clusters.get("clusters", []) or []),
         id(auth_df),
         sf_link_map.get("unique_pairs", 0),
-        id(st.session_state.get(f"_quality_{h}")),
+        id(st.session_state.get(quality_key_from_hash(h))),
         id(st.session_state.get(f"_ai_plan_{h}")),
         id(st.session_state.get(f"_intro_text_{h}")),
         id(st.session_state.get(f"_bottom_text_{h}")),
@@ -379,7 +380,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 9. Quality assessment (_quality_*)
     # ─────────────────────────────────────────────────────────
-    quality = st.session_state.get(f"_quality_{url_hash}")
+    quality = st.session_state.get(quality_key_from_hash(url_hash))
     if isinstance(quality, dict):
         profile["quality_verdict"] = quality.get("verdict", None)
         profile["quality_score"] = quality.get("score", 0) or 0

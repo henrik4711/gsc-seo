@@ -697,7 +697,8 @@ def _get_top_pages(audit_results, top_n=20):
     # REWRITE pages get priority boost, KEEP pages get deprioritized.
     # Pages with crawl issues get a boost similar to REWRITE.
     def _sort_key(p):
-        quality = st.session_state.get(f"_quality_{stable_hash(p['url'])}")
+        from utils.quality_check_runner import quality_key as _qk_qw
+        quality = st.session_state.get(_qk_qw(p["url"]))
         verdict = quality.get("verdict", "") if quality else ""
         # Boost: REWRITE=2, IMPROVE=1, KEEP/unknown=0
         verdict_boost = {"REWRITE": 2, "IMPROVE": 1}.get(verdict, 0)
@@ -2054,8 +2055,8 @@ def _render_context_card_body(page, url, url_hash, plan):
         tech_items.append(f"✓ Strong authority: {rd} referring domains")
 
     # AI quality verdict
-    from utils.ui_helpers import stable_hash as _sh
-    quality = st.session_state.get(f"_quality_{_sh(url)}")
+    from utils.quality_check_runner import quality_key as _qk_qw2
+    quality = st.session_state.get(_qk_qw2(url))
     if quality:
         verdict = quality.get("verdict", "")
         score = quality.get("score", 0)

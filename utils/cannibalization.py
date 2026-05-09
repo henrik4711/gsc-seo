@@ -663,8 +663,8 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
                 short = p_url.split("/")[-1][:30]
 
                 # Check 0: AI quality verdict (E-E-A-T, relevance, depth)
-                q_key = f"_quality_{_sh(p_url)}"
-                q_data = _st.session_state.get(q_key, {})
+                from utils.quality_check_runner import quality_key as _qk_can
+                q_data = _st.session_state.get(_qk_can(p_url), {})
                 if isinstance(q_data, dict) and q_data.get("verdict"):
                     verdict = q_data.get("verdict", "")
                     score = q_data.get("score", 0)

@@ -231,8 +231,8 @@ def _build_action_items(audit_results, topic_clusters):
             })
 
         # Content issues
-        qkey = f"_quality_{stable_hash(url)}"
-        ai_q = st.session_state.get(qkey, {})
+        from utils.quality_check_runner import quality_key as _qk_sm
+        ai_q = st.session_state.get(_qk_sm(url), {})
         if ai_q and ai_q.get("verdict") == "REWRITE":
             rows.append({
                 "Priority": "HIGH",

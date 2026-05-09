@@ -762,8 +762,8 @@ def _blogs_to_review():
             continue
         url = r.get("url", "")
         impressions = r.get("impressions", 0)
-        url_hash = stable_hash(url)
-        quality = st.session_state.get(f"_quality_{url_hash}")
+        from utils.quality_check_runner import quality_key as _qk_sc2
+        quality = st.session_state.get(_qk_sc2(url))
         if quality:
             verdict = quality.get("verdict", "")
             score = quality.get("score", 0)
@@ -1346,8 +1346,8 @@ def render():
                             if action_text and p_short in action_text:
                                 page_issues.append("See issues above")
                             # Add quality verdict
-                            q_key = f"_quality_{stable_hash(p_url)}"
-                            q_data = st.session_state.get(q_key, {})
+                            from utils.quality_check_runner import quality_key as _qk_sc
+                            q_data = st.session_state.get(_qk_sc(p_url), {})
                             if isinstance(q_data, dict) and q_data.get("verdict") in ("REWRITE", "IMPROVE"):
                                 page_issues.extend(q_data.get("main_issues", []))
                                 page_issues.extend(q_data.get("specific_fixes", []))

@@ -246,8 +246,9 @@ def page_audit(
 
     # Enrich with quality verdict + AI plan if available
     # stable_hash uses the URL as stored in audit_results (already normalized)
+    from utils.quality_check_runner import quality_key as _api_qk
+    quality_path = os.path.join(AI_CACHE_DIR, f"{_api_qk(match['url'])}.json")
     url_hash = _stable_hash(match["url"])
-    quality_path = os.path.join(AI_CACHE_DIR, f"_quality_{url_hash}.json")
     if os.path.exists(quality_path):
         try:
             with open(quality_path, "r", encoding="utf-8") as f:
@@ -345,7 +346,8 @@ def quality_verdicts(x_api_key: Optional[str] = Header(None)):
     """AI quality verdicts for all checked pages (KEEP/IMPROVE/REWRITE)."""
     _check_key(x_api_key)
 
-    verdicts = _load_ai_cache("_quality_")
+    from utils.quality_check_runner import QUALITY_KEY_PREFIX as _QPF
+    verdicts = _load_ai_cache(_QPF)
     if not verdicts:
         raise HTTPException(404, "No quality verdicts — run Step 7 in pipeline")
 
@@ -359,7 +361,7 @@ def quality_verdicts(x_api_key: Optional[str] = Header(None)):
 
     results = []
     for key, data in verdicts.items():
-        url_hash = key.replace("_quality_", "")
+        url_hash = key[len(_QPF):]
         results.append({
             "url": hash_to_url.get(url_hash, f"(hash:{url_hash})"),
             "verdict": data.get("verdict"),

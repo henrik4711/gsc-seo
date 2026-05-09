@@ -573,13 +573,15 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Filter to category + blog pages only (not products)
-    quality_candidates = [
-        r for r in results
-        if r.get("page_type") in ("category", "blog", "faq")
-        and r.get("word_count", 0) > 50
-    ]
-    already_checked = sum(1 for r in quality_candidates if f"_quality_{stable_hash(r['url'])}" in st.session_state)
+    # All quality-check logic lives in utils.quality_check_runner.
+    # This view only renders UI + delegates to the shared module.
+    from utils.quality_check_runner import (
+        eligible_pages, pages_needing_check, already_checked_count,
+        run_quality_batches,
+    )
+
+    quality_candidates = eligible_pages(results)
+    already_checked = already_checked_count(quality_candidates)
 
     q1, q2, q3 = st.columns(3)
     q1.metric("Category + blog pages", len(quality_candidates))
@@ -609,84 +611,62 @@ def render():
             st.rerun()
 
     if run_quality:
-        from config import get_anthropic_key, has_anthropic_key
-        if not has_anthropic_key():
-            st.warning("Add Anthropic API key in Setup")
+        unchecked = pages_needing_check(quality_candidates)
+        if not quality_candidates:
+            st.warning(
+                "No pages match the quality-check filter "
+                "(category / blog / faq with >50 words). "
+                "Run **Re-scrape ALL pages** at the top first."
+            )
+        elif not unchecked:
+            st.success("All pages already checked!")
         else:
-            from utils.ai_generator import get_client, assess_content_quality_batch
-            client = get_client(get_anthropic_key())
-            site_context = st.session_state.get("site_context", "")
-            language = st.session_state.get("content_language", "Swedish")
+            with st.status(f"Checking {len(unchecked)} pages...", expanded=True) as qstatus:
+                progress_q = st.progress(0)
+                log_q = st.empty()
 
-            # Only check pages not yet assessed
-            unchecked = [r for r in quality_candidates if f"_quality_{stable_hash(r['url'])}" not in st.session_state]
+                def _on_batch_start(batch_num, total_batches, batch):
+                    labels = ", ".join(
+                        r["url"].split("/")[-1] or r["url"].split("/")[-2]
+                        for r in batch
+                    )
+                    log_q.write(f"Batch {batch_num}/{total_batches}: {labels}")
 
-            if not quality_candidates:
-                st.warning(
-                    "No pages match the quality-check filter "
-                    "(category / blog / faq with >50 words). "
-                    "Run **Re-scrape ALL pages** at the top first."
-                )
-            elif not unchecked:
-                st.success("All pages already checked!")
-            else:
-                # Reset error log for this run
-                st.session_state["_quality_check_errors"] = []
-                run_errors = []
+                def _on_progress(frac):
+                    progress_q.progress(frac)
 
-                with st.status(f"Checking {len(unchecked)} pages...", expanded=True) as qstatus:
-                    progress_q = st.progress(0)
-                    log_q = st.empty()
+                try:
+                    run_errors = run_quality_batches(
+                        unchecked,
+                        on_batch_start=_on_batch_start,
+                        on_progress=_on_progress,
+                        cap=len(unchecked),  # interactive view: process all
+                    )
+                except Exception as e:
+                    run_errors = [(0, str(e))]
+                    st.error(f"Quality check failed before any batch: {e}")
 
-                    # Process in batches of 5
-                    for batch_start in range(0, len(unchecked), 5):
-                        batch = unchecked[batch_start:batch_start + 5]
-                        batch_num = batch_start // 5 + 1
-                        total_batches = (len(unchecked) + 4) // 5
+                for batch_num, err in run_errors:
+                    st.error(f"Batch {batch_num} failed: {err}")
 
-                        log_q.write(f"Batch {batch_num}/{total_batches}: {', '.join(r['url'].split('/')[-1] or r['url'].split('/')[-2] for r in batch)}")
+                if run_errors:
+                    qstatus.update(
+                        label=f"Quality check finished with {len(run_errors)} batch error(s)",
+                        state="error",
+                        expanded=True,
+                    )
+                else:
+                    qstatus.update(label="Quality check complete", state="complete", expanded=False)
 
-                        try:
-                            tc = st.session_state.get("topic_clusters")
-                            assessments = assess_content_quality_batch(client, batch, site_context, language, tc)
-                            # Match assessments to pages by order (most reliable)
-                            for idx_a, assessment in enumerate(assessments):
-                                if idx_a < len(batch):
-                                    r = batch[idx_a]
-                                    st.session_state[f"_quality_{stable_hash(r['url'])}"] = assessment
-
-                            # Save to disk after EVERY batch — never lose results
-                            from utils.persistence import save_ai_cache
-                            save_ai_cache()
-                        except Exception as e:
-                            run_errors.append((batch_num, str(e)))
-                            # Render inline AND persist so it survives st.rerun
-                            st.error(f"Batch {batch_num} failed: {e}")
-
-                        progress_q.progress(min(1.0, (batch_start + 5) / len(unchecked)))
-
-                    if run_errors:
-                        qstatus.update(
-                            label=f"Quality check finished with {len(run_errors)} batch error(s)",
-                            state="error",
-                            expanded=True,
-                        )
-                    else:
-                        qstatus.update(label="Quality check complete", state="complete", expanded=False)
-                    # Save AI results to disk
-                    from utils.persistence import save_ai_cache
-                    save_ai_cache()
-
-                # Persist errors so they survive the rerun below
-                st.session_state["_quality_check_errors"] = run_errors
-                # Only auto-rerun on full success — keep errors visible otherwise
-                if not run_errors:
-                    st.rerun()
+            st.session_state["_quality_check_errors"] = run_errors
+            if not run_errors:
+                st.rerun()
 
     # Display quality results
+    from utils.quality_check_runner import quality_key as _qk_pa
     quality_results = []
     for r in quality_candidates:
-        qkey = f"_quality_{stable_hash(r['url'])}"
+        qkey = _qk_pa(r["url"])
         if qkey in st.session_state:
             q = st.session_state[qkey]
             quality_results.append({

@@ -23,8 +23,8 @@ def _get_ctr_gaps_for_url(url):
 
 def _get_ai_quality_badge(url):
     """Get cached AI quality score if available."""
-    qkey = f"_quality_{stable_hash(url)}"
-    q = st.session_state.get(qkey)
+    from utils.quality_check_runner import quality_key
+    q = st.session_state.get(quality_key(url))
     if not q:
         return "<span style='color:#6b6b8a;'>AI text: —</span>"
     verdict = q.get("verdict", "?")

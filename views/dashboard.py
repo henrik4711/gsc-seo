@@ -36,7 +36,8 @@ def _get_phase_status():
     has_audit = len(audit_results) > 0
     has_clusters = len(topic_clusters.get("clusters", [])) > 0
     has_ahrefs = "page_authority" in st.session_state
-    has_quality = any(k.startswith("_quality_") for k in st.session_state)
+    from utils.quality_check_runner import QUALITY_KEY_PREFIX as _QPF
+    has_quality = any(k.startswith(_QPF) for k in st.session_state)
     has_cannibal = st.session_state.get("cannibalization") is not None
     has_validation = "_site_validation" in st.session_state
 
