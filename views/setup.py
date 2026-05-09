@@ -395,10 +395,60 @@ def render():
         except Exception as e:
             status_row("Scraper", False, f"Missing dependency: {str(e)[:80]}")
 
+        # ── REFRESH BUNDLED DATA ONLY ──────────────────────────────
+        # Targeted refresh: re-unpacks SF + Ahrefs bundled .gz files
+        # WITHOUT touching audit_results, quality verdicts, GSC data,
+        # cannibalization, or any other analysis output. Use this after
+        # `git push`ing fresh bundled_data/*.gz so the new SF crawl
+        # replaces the old one without losing AI Content Quality work.
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### Refresh bundled data (SF + Ahrefs)")
+        st.markdown(
+            "<p style='color:#5bb4d4; font-size:0.8rem;'>"
+            "Re-unpacks the SF and Ahrefs bundled files from <code>bundled_data/</code>. "
+            "<strong>KEEPS:</strong> audit results, AI quality verdicts, GSC data, "
+            "cannibalization, all step 7+ analysis. "
+            "Use after pushing new <code>bundled_data/*.gz</code> files.</p>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Refresh bundled data only", type="primary", key="btn_refresh_bundled"):
+            from utils.persistence import DATA_DIR, BUNDLED_FILES, _unpack_bundled_data
+            cleared = []
+            for gz_name, (target_name, key, _dtype) in BUNDLED_FILES.items():
+                # Remove from session state so the unpacker re-loads it
+                if key in st.session_state:
+                    del st.session_state[key]
+                # Remove from disk so the unpacker re-extracts the .gz
+                target_path = os.path.join(DATA_DIR, target_name)
+                if os.path.exists(target_path):
+                    try:
+                        os.remove(target_path)
+                        cleared.append(target_name)
+                    except Exception as e:
+                        st.warning(f"Could not delete {target_name}: {e}")
+            # page_authority is derived from Ahrefs — clear so it rebuilds
+            for derived in ("page_authority",):
+                if derived in st.session_state:
+                    del st.session_state[derived]
+                derived_path = os.path.join(DATA_DIR, f"{derived}.csv")
+                if os.path.exists(derived_path):
+                    try:
+                        os.remove(derived_path)
+                    except Exception:
+                        pass
+            # Re-run the unpack now so new data is live immediately
+            _unpack_bundled_data()
+            st.success(
+                f"Refreshed bundled data — re-unpacked from bundled_data/. "
+                f"Cleared old files: {', '.join(cleared) if cleared else '(none on disk)'}. "
+                f"Audit results and quality verdicts kept."
+            )
+            st.rerun()
+
         # ── RESET ALL DATA ─────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### Reset All Data")
-        st.markdown("<p style='color:#ff4455; font-size:0.8rem;'>Clears ALL cached data and forces fresh start. Bundled Ahrefs + SF data will auto-reload.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#ff4455; font-size:0.8rem;'>Clears ALL cached data and forces fresh start. Bundled Ahrefs + SF data will auto-reload. <strong>Use 'Refresh bundled data only' above if you just want fresh SF/Ahrefs without losing AI work.</strong></p>", unsafe_allow_html=True)
         if st.button("RESET ALL DATA", type="secondary", key="btn_reset_all"):
             import shutil
             from utils.persistence import DATA_DIR, AI_CACHE_DIR, PERSIST_KEYS
