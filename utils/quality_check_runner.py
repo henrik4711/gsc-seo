@@ -14,7 +14,12 @@ from utils.ui_helpers import stable_hash
 
 
 QUALITY_KEY_PREFIX = "_quality_"
-ELIGIBLE_PAGE_TYPES = ("category", "blog", "faq")
+# Category only: the AI prompt is built around editorial copy
+# (intro_text + bottom_text). Product / blog / faq pages don't have that
+# editorial structure — running the same prompt on them produces false
+# negatives. Blogs and FAQs need their own evaluators with content-specific
+# criteria. Discussed and confirmed with Henrik 2026-05-09.
+ELIGIBLE_PAGE_TYPES = ("category",)
 MIN_WORD_COUNT = 50
 BATCH_SIZE = 5
 MAX_PAGES_PER_CALL = 50  # how many pages one run_quality_batches() call processes

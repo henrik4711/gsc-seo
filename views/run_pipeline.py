@@ -1159,20 +1159,25 @@ def render():
         st.markdown(
             "<div style='background:#1a0a0a; border:2px solid #ff4455; border-radius:6px; "
             "padding:0.8rem; margin-bottom:0.8rem;'>"
-            "<strong style='color:#ff4455;'>🗑 Reset all analyses + AI cache</strong><br>"
+            "<strong style='color:#ff4455;'>🗑 Reset site-level analyses</strong><br>"
             "<span style='color:#e8e8f0; font-size:0.85rem;'>"
-            "Deletes: quality scores, AI plans, generated texts, cannibalization, "
-            "site validation, ideal structure, gap analysis, plan validation, cluster_link_recommendations.<br>"
-            "<strong>KEEPS:</strong> GSC data, Ahrefs, Screaming Frog, topic clusters, CTR gaps, "
-            "<strong>audit page data (no re-scrape needed unless you also want fresh scrape).</strong></span></div>",
+            "Deletes: site validation, ideal structure, gap analysis, plan validation, "
+            "cannibalization, cluster_link_recommendations, cluster_health.<br>"
+            "<strong>KEEPS (expensive, hash-protected):</strong> "
+            "Step 7 AI quality verdicts (~1 hour to recompute), AI implementation plans, "
+            "generated bottom texts, generated intro texts, audit page data. These are all "
+            "auto-invalidated per page when their inputs change — no need to nuke them.</span></div>",
             unsafe_allow_html=True,
         )
-        if st.button("🗑 Reset all analyses", key="rp_maint_reset", type="secondary"):
+        if st.button("🗑 Reset site-level analyses", key="rp_maint_reset", type="secondary"):
             import os as _os
             from utils.persistence import AI_CACHE_DIR as _AID
+            # NEVER include _quality_, _ai_plan_, _bottom_text_, _intro_text_ here.
+            # Those are per-page AI cache, hash-protected against staleness, and
+            # reflect HOURS of paid Sonnet calls. Deleting them on a generic
+            # "reset analyses" click is a foot-gun — caused 5h of lost work
+            # for Henrik on 2026-05-10 and must never happen again.
             prefixes = (
-                "_quality_", "_ai_plan_", "_bottom_text_", "_intro_text_",
-                "_cannibal_meta_", "_cannibal_rewrite_",
                 "_site_validation", "_ideal_structure", "_gap_analysis", "_plan_validation",
                 "_refresh_all_result", "_cluster_health_",
             )
