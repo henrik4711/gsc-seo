@@ -190,26 +190,64 @@ def _clean_body_text(page_data, max_chars: int = 1500) -> str:
 
 
 def _parse_ai_json(message) -> dict:
-    """Safely parse JSON from an AI response. Returns dict or raises with clear error."""
+    """Safely parse JSON from an AI response. Handles markdown fences and
+    truncated responses (max_tokens hit) by salvaging the items that
+    completed before the cut-off."""
     if not message.content:
         raise ValueError("AI returned an empty response — try again.")
     raw = message.content[0].text.strip()
-    # Strip markdown code fences if present
     raw = raw.replace("```json", "").replace("```", "").strip()
+    stop_reason = getattr(message, "stop_reason", None)
+
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        # Try to extract JSON from mixed text
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                return json.loads(raw[start:end])
-            except json.JSONDecodeError:
-                pass
-        raise ValueError(
-            f"AI returned invalid JSON. First 200 chars: {raw[:200]}..."
-        )
+        pass
+
+    # Try to extract JSON from mixed text (model added prose around it)
+    start = raw.find("{")
+    end = raw.rfind("}") + 1
+    if start >= 0 and end > start:
+        try:
+            return json.loads(raw[start:end])
+        except json.JSONDecodeError:
+            pass
+
+    # Truncation salvage: if max_tokens hit mid-array, close the last
+    # complete item and the wrapping structures so we keep partial work.
+    if stop_reason == "max_tokens":
+        salvaged = _salvage_truncated_json(raw)
+        if salvaged is not None:
+            return salvaged
+
+    raise ValueError(
+        f"AI returned invalid JSON (stop_reason={stop_reason}, length={len(raw)} chars). "
+        f"First 300 chars: {raw[:300]}\n\nLast 200 chars: ...{raw[-200:]}"
+    )
+
+
+def _salvage_truncated_json(raw: str) -> dict | None:
+    """Best-effort: when the model hit max_tokens mid-list, drop the
+    half-written trailing item and close the array + object so the
+    completed items are returned. Returns None if salvage isn't possible.
+    """
+    start = raw.find("{")
+    if start < 0:
+        return None
+    text = raw[start:]
+    # Find the last fully-closed top-level item — i.e. the last "},"
+    # that sits immediately before another item OR is the final item.
+    last_complete = text.rfind("},")
+    if last_complete < 0:
+        return None
+    # Truncate at that point and add closing tokens for the array + object
+    # we walked into. We don't know the wrapping key, but every JSON
+    # response in this codebase wraps a single list, so "]}" closes it.
+    candidate = text[:last_complete + 1] + "]}"
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
 
 
 def get_client(api_key: str = "") -> anthropic.Anthropic:
@@ -539,9 +577,13 @@ Language: {language}
   ]
 }}"""
 
+    # 5 detailed Swedish assessments (verdict + score + 2-sentence
+    # summary + main_issues list + specific_fixes list) routinely run
+    # 4-5k tokens. Old 3000-token cap was hitting truncation mid-array,
+    # causing batch failures even when most pages were already assessed.
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=3000,
+        max_tokens=8192,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
