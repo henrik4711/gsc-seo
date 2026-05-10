@@ -583,10 +583,45 @@ def render():
             from utils.persistence import save_key
             save_key("audit_results")
             after = Counter((r.get("page_type") or "missing") for r in results)
-            rc_status.update(
-                label=f"Reclassified {changed} pages — before: {dict(before)}, after: {dict(after)}",
-                state="complete",
-            )
+
+            # If page_types actually changed, EVERY downstream AI analysis
+            # that read page_type is now stale. Clear them so the pipeline
+            # re-runs them on the corrected data — otherwise Step 10's
+            # "all 1098 are unknown" verdict sits in the cache and shows
+            # up on the dashboard forever.
+            invalidated = []
+            if changed:
+                import os as _os
+                downstream_keys = (
+                    "_site_validation", "_ideal_structure",
+                    "_gap_analysis", "_plan_validation",
+                    "cluster_link_recommendations",
+                )
+                for k in downstream_keys:
+                    if k in st.session_state:
+                        del st.session_state[k]
+                        invalidated.append(k)
+                # Also drop the on-disk copies so they don't reload on rerun
+                from utils.persistence import DATA_DIR, AI_CACHE_DIR
+                for k in downstream_keys:
+                    for ext in ("json", "csv"):
+                        p = _os.path.join(DATA_DIR, f"{k}.{ext}")
+                        if _os.path.exists(p):
+                            try:
+                                _os.remove(p)
+                            except Exception:
+                                pass
+                    p = _os.path.join(AI_CACHE_DIR, f"{k}.json")
+                    if _os.path.exists(p):
+                        try:
+                            _os.remove(p)
+                        except Exception:
+                            pass
+
+            label = f"Reclassified {changed} pages — before: {dict(before)}, after: {dict(after)}"
+            if invalidated:
+                label += f". Invalidated stale analyses: {', '.join(invalidated)} — re-run via Run Pipeline."
+            rc_status.update(label=label, state="complete")
         st.rerun()
 
     # Debug: show what fields the saved audit data actually contains
