@@ -190,21 +190,25 @@ def _clean_body_text(page_data, max_chars: int = 1500) -> str:
 
 
 def _parse_ai_json(message) -> dict:
-    """Safely parse JSON from an AI response. Handles markdown fences and
-    truncated responses (max_tokens hit) by salvaging the items that
-    completed before the cut-off."""
+    """Safely parse JSON from an AI response. Handles:
+    - markdown code fences
+    - prose preamble before the JSON ("Let me plan first: ...")
+    - prose preamble that itself contains { example } blocks
+    - max_tokens truncation mid-list (salvages completed items)
+    """
     if not message.content:
         raise ValueError("AI returned an empty response — try again.")
     raw = message.content[0].text.strip()
     raw = raw.replace("```json", "").replace("```", "").strip()
     stop_reason = getattr(message, "stop_reason", None)
 
+    # Strategy 1: parse the whole thing as-is
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Try to extract JSON from mixed text (model added prose around it)
+    # Strategy 2: first { to last } (cheap, works for simple cases)
     start = raw.find("{")
     end = raw.rfind("}") + 1
     if start >= 0 and end > start:
@@ -213,8 +217,19 @@ def _parse_ai_json(message) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Truncation salvage: if max_tokens hit mid-array, close the last
-    # complete item and the wrapping structures so we keep partial work.
+    # Strategy 3: find the LAST balanced {...} block by walking backward
+    # from the last `}`, counting brace depth. This skips past any
+    # preamble {example} blocks the AI included while planning. Only
+    # looks at braces OUTSIDE strings so '"a":"x{y}z"' doesn't confuse it.
+    block = _extract_last_balanced_json_block(raw)
+    if block is not None:
+        try:
+            return json.loads(block)
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 4: truncation salvage (max_tokens hit mid-list — close the
+    # last complete item and return what we got)
     if stop_reason == "max_tokens":
         salvaged = _salvage_truncated_json(raw)
         if salvaged is not None:
@@ -224,6 +239,54 @@ def _parse_ai_json(message) -> dict:
         f"AI returned invalid JSON (stop_reason={stop_reason}, length={len(raw)} chars). "
         f"First 300 chars: {raw[:300]}\n\nLast 200 chars: ...{raw[-200:]}"
     )
+
+
+def _extract_last_balanced_json_block(raw: str) -> str | None:
+    """Find the last brace-balanced {...} substring of raw, ignoring braces
+    that appear inside JSON string literals. Returns None if not found."""
+    end_pos = raw.rfind("}")
+    if end_pos < 0:
+        return None
+    end_pos += 1  # exclusive
+
+    depth = 0
+    in_str = False
+    escape = False
+    start_pos = -1
+
+    # Walk backward from end_pos so we find the OUTERMOST {...} that
+    # closes at end_pos. This works even when prose before the real JSON
+    # contains its own { ... } examples — we land inside the actual
+    # response, not the prose.
+    for i in range(end_pos - 1, -1, -1):
+        c = raw[i]
+        # Walking backward, an unescaped quote toggles in_str. We can't
+        # tell if a quote is escaped without scanning the whole prefix,
+        # so we use a conservative check: if the char BEFORE a quote is
+        # backslash AND not double-escaped, treat it as escaped. This
+        # isn't perfect but handles common cases.
+        if c == '"':
+            preceding_backslashes = 0
+            j = i - 1
+            while j >= 0 and raw[j] == "\\":
+                preceding_backslashes += 1
+                j -= 1
+            if preceding_backslashes % 2 == 0:
+                in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if c == "}":
+            depth += 1
+        elif c == "{":
+            depth -= 1
+            if depth == 0:
+                start_pos = i
+                break
+
+    if start_pos < 0:
+        return None
+    return raw[start_pos:end_pos]
 
 
 def _salvage_truncated_json(raw: str) -> dict | None:
