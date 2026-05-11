@@ -224,8 +224,26 @@ def _render_unclustered(unclustered, cluster_names):
         unsafe_allow_html=True,
     )
 
-    # Count assigned
-    assigned = sum(1 for p in unclustered if st.session_state.get(f"sf_assign_{stable_hash(p['url'])}", ""))
+    # Persistent assignment store — survives widget unmount.
+    # Streamlit clears session_state[<widget_key>] when the widget is no
+    # longer rendered (after pagination, filter change, or "Hide already
+    # assigned" hiding the row). The selectbox itself is therefore NOT a
+    # safe place to read the user's pick from at save time. We mirror
+    # every pick into _cluster_assignment_picks where we control the
+    # lifecycle, and the save handler reads from there.
+    if "_cluster_assignment_picks" not in st.session_state:
+        st.session_state["_cluster_assignment_picks"] = {}
+    picks = st.session_state["_cluster_assignment_picks"]
+
+    def _on_pick_change(url_hash: str):
+        widget_val = st.session_state.get(f"sf_assign_widget_{url_hash}", "")
+        if widget_val:
+            st.session_state["_cluster_assignment_picks"][url_hash] = widget_val
+        else:
+            st.session_state["_cluster_assignment_picks"].pop(url_hash, None)
+
+    # Count assigned (read from the persistent dict, NOT widget state)
+    assigned = sum(1 for p in unclustered if picks.get(stable_hash(p["url"])))
     st.progress(assigned / max(1, total), text=f"{assigned}/{total} assigned to clusters")
 
     # Filter controls
@@ -233,13 +251,13 @@ def _render_unclustered(unclustered, cluster_names):
     with col_f1:
         type_filter = st.selectbox("Filter by type", ["All"] + sorted(set(p["page_type"] for p in unclustered)), key="sf_type_filter")
     with col_f2:
-        show_assigned = st.checkbox("Hide already assigned", value=True, key="sf_hide_assigned")
+        show_assigned = st.checkbox("Hide already assigned", value=False, key="sf_hide_assigned")
 
     filtered = unclustered
     if type_filter != "All":
         filtered = [p for p in filtered if p["page_type"] == type_filter]
     if show_assigned:
-        filtered = [p for p in filtered if not st.session_state.get(f"sf_assign_{stable_hash(p['url'])}", "")]
+        filtered = [p for p in filtered if not picks.get(stable_hash(p["url"]))]
 
     # Pagination
     per_page = 25
@@ -255,6 +273,7 @@ def _render_unclustered(unclustered, cluster_names):
 
     for p in visible:
         url = p["url"]
+        url_hash = stable_hash(url)
         col1, col2, col3, col4 = st.columns([4, 1, 1, 3])
         with col1:
             st.markdown(
@@ -267,7 +286,19 @@ def _render_unclustered(unclustered, cluster_names):
         with col3:
             st.markdown(f"<div style='font-size:0.8rem; color:#9b9bb8; padding-top:0.5rem;'>{p['clicks']:,} clicks</div>", unsafe_allow_html=True)
         with col4:
-            st.selectbox("Cluster", options, key=f"sf_assign_{stable_hash(url)}", label_visibility="collapsed")
+            # Pre-fill widget from the persistent pick so the dropdown
+            # shows the user's earlier choice if they navigate back.
+            existing = picks.get(url_hash, "")
+            widget_key = f"sf_assign_widget_{url_hash}"
+            if widget_key not in st.session_state:
+                st.session_state[widget_key] = existing
+            st.selectbox(
+                "Cluster", options,
+                key=widget_key,
+                on_change=_on_pick_change,
+                args=(url_hash,),
+                label_visibility="collapsed",
+            )
 
     st.markdown("---")
 
@@ -281,21 +312,28 @@ def _render_unclustered(unclustered, cluster_names):
         cluster_by_name = {c["topic"]: c for c in clusters_list}
 
         saved = 0
+        skipped_already = 0
+        skipped_unknown_cluster = 0
         for p in unclustered:
-            chosen = st.session_state.get(f"sf_assign_{stable_hash(p['url'])}", "")
+            url_hash = stable_hash(p["url"])
+            chosen = picks.get(url_hash, "")
             if not chosen:
                 continue
             norm = normalize_url(p["url"])
             if norm in page_topics:
+                skipped_already += 1
                 continue  # Already assigned
 
             # Add to page_topics
             page_topics[norm] = [{"topic": chosen, "queries_in_topic": 0, "clicks": p["clicks"]}]
 
-            # Add to cluster's pages list
+            # Add to cluster's pages list (defensive: cluster may not exist
+            # under that name, or its pages key may be missing)
             cluster = cluster_by_name.get(chosen)
-            if cluster:
-                cluster["pages"].append({
+            if cluster is None:
+                skipped_unknown_cluster += 1
+            else:
+                cluster.setdefault("pages", []).append({
                     "page": norm,
                     "query_count": 0,
                     "total_clicks": p["clicks"],
@@ -311,10 +349,30 @@ def _render_unclustered(unclustered, cluster_names):
             st.session_state["topic_clusters"] = topic_clusters
             from utils.persistence import save
             save("topic_clusters")
-            st.success(f"Saved {saved} cluster assignments")
+            # Clear the persistent picks for saved rows so the dropdowns
+            # reset and the same pick can't be saved twice.
+            st.session_state["_cluster_assignment_picks"] = {}
+            note = ""
+            if skipped_already:
+                note += f" ({skipped_already} already had a cluster, skipped)"
+            if skipped_unknown_cluster:
+                note += f" ({skipped_unknown_cluster} cluster name not found in topic_clusters)"
+            st.success(f"Saved {saved} cluster assignments{note}")
             st.rerun()
         else:
-            st.info("No new assignments to save")
+            n_picks = len(picks)
+            if n_picks == 0:
+                st.info(
+                    "No assignments to save — pick a cluster from the dropdown next "
+                    "to a page first."
+                )
+            else:
+                st.warning(
+                    f"You picked clusters for {n_picks} pages, but none were saved. "
+                    f"This usually means they were already assigned. Skipped: "
+                    f"{skipped_already} already-clustered, "
+                    f"{skipped_unknown_cluster} unknown cluster name."
+                )
 
 
 def _render_cluster_balance(clusters, audit_lookup):
