@@ -41,7 +41,10 @@ from utils.url_helpers import shorten_url_path as _shorten  # single source of t
 
 
 def _render_structure_actions(ideal, audit_lookup):
-    """Tab 1: Merge / Delete / Create actions from ideal structure."""
+    """Merge / Delete / Create actions from AI ideal structure.
+    Each item supports persistent ✓ Mark done / ↶ Undo via utils.action_status."""
+    from utils import action_status as _as_sf
+    from utils import action_ui as _aui_sf
     merges = ideal.get("merge", []) or []
     deletes = ideal.get("delete", []) or []
     creates = ideal.get("create", []) or []
@@ -50,15 +53,15 @@ def _render_structure_actions(ideal, audit_lookup):
         st.info("No structural actions found. Run Step 10 (Generate Ideal Structure) first.")
         return
 
-    # Summary metrics
-    merge_approved = sum(1 for m in merges if st.session_state.get(f"sf_merge_{stable_hash(m.get('to', ''))}"))
-    delete_approved = sum(1 for d in deletes if st.session_state.get(f"sf_delete_{stable_hash(d.get('url', ''))}"))
-    create_approved = sum(1 for c in creates if st.session_state.get(f"sf_create_{stable_hash(c.get('url', ''))}"))
+    # Summary metrics — based on persistent action_status, not widget state
+    merge_done = _as_sf.done_count("merge")
+    delete_done = _as_sf.done_count("delete")
+    create_done = _as_sf.done_count("create")
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Merges", f"{merge_approved}/{len(merges)} approved")
-    c2.metric("Deletes", f"{delete_approved}/{len(deletes)} approved")
-    c3.metric("Creates", f"{create_approved}/{len(creates)} approved")
+    c1.metric("Merges", f"{merge_done}/{len(merges)} done")
+    c2.metric("Deletes", f"{delete_done}/{len(deletes)} done")
+    c3.metric("Creates", f"{create_done}/{len(creates)} done")
 
     st.markdown("---")
 
@@ -81,29 +84,30 @@ def _render_structure_actions(ideal, audit_lookup):
             unsafe_allow_html=True,
         )
 
-        for m in merges:
+        show_merge = _aui_sf.filter_toolbar("merge", len(merges), key_prefix="sf_")
+        visible_merges = _aui_sf.filter_visible(merges, "merge", lambda m: stable_hash(m.get("to", "")), show_merge)
+        for m in visible_merges:
             to_url = m.get("to", "")
             from_urls = m.get("from", [])
             why = m.get("why", "")
             to_audit = audit_lookup.get(normalize_url(to_url), {})
             to_impr = to_audit.get("impressions", 0) or 0
 
-            # Card
             from_lines = ""
             for fu in from_urls:
                 fa = audit_lookup.get(normalize_url(fu), {})
                 fi = fa.get("impressions", 0) or 0
                 from_lines += f"<div style='color:#ff6644; font-size:0.8rem;'>FROM: {_shorten(fu)} <span style='color:#6b6b8a;'>({fi:,} impr)</span></div>"
 
-            st.markdown(
-                f"<div style='background:#12121f; border-left:3px solid #ffaa33; padding:0.8rem; margin-bottom:0.5rem; border-radius:0 6px 6px 0;'>"
+            content = (
+                f"<div style='background:#12121f; border-left:3px solid #ffaa33; padding:0.8rem; border-radius:0 6px 6px 0;'>"
                 f"{from_lines}"
                 f"<div style='color:#33dd88; font-size:0.8rem; margin-top:0.3rem;'>TO: {_shorten(to_url)} <span style='color:#6b6b8a;'>({to_impr:,} impr)</span></div>"
                 f"<div style='color:#9b9bb8; font-size:0.75rem; margin-top:0.3rem;'>{why}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
+                f"</div>"
             )
-            st.checkbox("Approved", key=f"sf_merge_{stable_hash(to_url)}")
+            _aui_sf.render_action_row("merge", stable_hash(to_url), content, key_suffix="sf_m")
+        _aui_sf.bulk_done_button("merge", [stable_hash(m.get("to", "")) for m in visible_merges], key_suffix="sf_m")
 
     # ── Deletes ──
     if deletes:
@@ -135,7 +139,13 @@ def _render_structure_actions(ideal, audit_lookup):
             unsafe_allow_html=True,
         )
 
-        for d in deletes:
+        # Note: this section uses the 'delete' action_type. The 3-option
+        # checkboxes below (robots/noindex/delete) capture which approach
+        # the user chose. Marking the row as DONE means "I handled it via
+        # one of these methods — stop showing it".
+        show_del = _aui_sf.filter_toolbar("delete", len(deletes), key_prefix="sf_del_")
+        visible_deletes = _aui_sf.filter_visible(deletes, "delete", lambda d: stable_hash(d.get("url", "")), show_del)
+        for d in visible_deletes:
             url = d.get("url", "")
             why = d.get("why", "")
             da = audit_lookup.get(normalize_url(url), {})
@@ -144,21 +154,15 @@ def _render_structure_actions(ideal, audit_lookup):
             border_color = "#ff4455" if impr > 100 else "#2a2a40"
             warning = f"<div style='color:#ffaa33; font-size:0.7rem;'>This page has {impr:,} impressions — consider <strong>noindex</strong> instead of deleting</div>" if impr > 100 else ""
 
-            st.markdown(
-                f"<div style='background:#12121f; border-left:3px solid {border_color}; padding:0.8rem; margin-bottom:0.5rem; border-radius:0 6px 6px 0;'>"
+            content = (
+                f"<div style='background:#12121f; border-left:3px solid {border_color}; padding:0.8rem; border-radius:0 6px 6px 0;'>"
                 f"<div style='color:#e8e8f0; font-size:0.85rem;'>{_shorten(url)} <span style='color:#6b6b8a;'>({impr:,} impr)</span></div>"
                 f"{warning}"
                 f"<div style='color:#9b9bb8; font-size:0.75rem; margin-top:0.3rem;'>{why}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
+                f"</div>"
             )
-            col_d1, col_d2, col_d3 = st.columns(3)
-            with col_d1:
-                st.checkbox("Block in robots.txt", key=f"sf_robots_{stable_hash(url)}")
-            with col_d2:
-                st.checkbox("Noindex (has backlinks)", key=f"sf_noindex_{stable_hash(url)}")
-            with col_d3:
-                st.checkbox("Delete + redirect", key=f"sf_delete_{stable_hash(url)}")
+            _aui_sf.render_action_row("delete", stable_hash(url), content, key_suffix="sf_d")
+        _aui_sf.bulk_done_button("delete", [stable_hash(d.get("url", "")) for d in visible_deletes], key_suffix="sf_d")
 
     # ── Creates ──
     if creates:
@@ -179,21 +183,23 @@ def _render_structure_actions(ideal, audit_lookup):
             unsafe_allow_html=True,
         )
 
-        for c in creates:
+        show_cr = _aui_sf.filter_toolbar("create", len(creates), key_prefix="sf_cr_")
+        visible_creates = _aui_sf.filter_visible(creates, "create", lambda c: stable_hash(c.get("url", "")), show_cr)
+        for c in visible_creates:
             url = c.get("url", "")
             kw = c.get("kw", "")
             ctype = c.get("type", "")
             why = c.get("why", "")
 
-            st.markdown(
-                f"<div style='background:#12121f; border-left:3px solid #5bb4d4; padding:0.8rem; margin-bottom:0.5rem; border-radius:0 6px 6px 0;'>"
+            content = (
+                f"<div style='background:#12121f; border-left:3px solid #5bb4d4; padding:0.8rem; border-radius:0 6px 6px 0;'>"
                 f"<div style='color:#e8e8f0; font-size:0.85rem;'>{_shorten(url)} <span style='color:#5bb4d4; font-size:0.7rem;'>[{ctype}]</span></div>"
                 f"<div style='color:#c8b4ff; font-size:0.8rem; margin-top:0.2rem;'>Target keyword: {kw}</div>"
                 f"<div style='color:#9b9bb8; font-size:0.75rem; margin-top:0.3rem;'>{why}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
+                f"</div>"
             )
-            st.checkbox("Approved", key=f"sf_create_{stable_hash(url)}")
+            _aui_sf.render_action_row("create", stable_hash(url), content, key_suffix="sf_c")
+        _aui_sf.bulk_done_button("create", [stable_hash(c.get("url", "")) for c in visible_creates], key_suffix="sf_c")
 
 
 def _render_unclustered(unclustered, cluster_names):

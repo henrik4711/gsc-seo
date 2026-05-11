@@ -1573,6 +1573,7 @@ def render():
 
     # ── TAB 3: REDIRECT ──────────────────────────────────────
     with tab3:
+        from utils import action_ui as _aui
         redirects = _pages_to_redirect()
         st.markdown(f"### {len(redirects)} broken pages to redirect")
         _novice_box(
@@ -1609,10 +1610,21 @@ def render():
         )
         if not redirects:
             st.success("No broken pages detected")
-        for r in redirects[:30]:
-            priority = "🔴 HIGH" if r["referring_domains"] > 0 else "⚪ LOW"
-            st.markdown(f"- {priority} `{r['url']}` ({r['status']}) · {r['referring_domains']} backlinks")
-            st.markdown(f"  <div style='color:#9b9bb8; font-size:0.8rem; margin-left:1rem;'>{r['action']}</div>", unsafe_allow_html=True)
+        else:
+            show_done = _aui.filter_toolbar("redirect", len(redirects))
+            visible = _aui.filter_visible(redirects, "redirect", lambda r: stable_hash(r["url"]), show_done)
+            visible = visible[:30]
+            for r in visible:
+                priority = "🔴 HIGH" if r["referring_domains"] > 0 else "⚪ LOW"
+                content = (
+                    f"<div>{priority} <code>{r['url']}</code> "
+                    f"<span style='color:#6b6b8a;'>({r['status']})</span> · "
+                    f"{r['referring_domains']} backlinks</div>"
+                    f"<div style='color:#9b9bb8; font-size:0.8rem; margin-left:1rem; margin-top:0.2rem;'>"
+                    f"{r['action']}</div>"
+                )
+                _aui.render_action_row("redirect", stable_hash(r["url"]), content, key_suffix="t3")
+            _aui.bulk_done_button("redirect", [stable_hash(r["url"]) for r in visible], key_suffix="t3")
 
     # ── TAB 4: NOINDEX ───────────────────────────────────────
     with tab4:
@@ -1660,13 +1672,28 @@ def render():
         for n in noindex:
             by_type.setdefault(n["type"], []).append(n)
 
+        if noindex:
+            from utils import action_ui as _aui_t4
+            show_done_t4 = _aui_t4.filter_toolbar("noindex", len(noindex), key_prefix="t4")
+        else:
+            show_done_t4 = False
+
         for type_key, items in by_type.items():
             with st.expander(f"{type_key.upper()} ({len(items)} pages)", expanded=False):
                 if type_key == "faceted":
                     st.info("Magento 1.9 faceted URLs. Block via robots.txt:")
                     st.code("Disallow: /*?dir=\nDisallow: /*?limit=\nDisallow: /*?mode=\nDisallow: /*?order=\nDisallow: /*?p=\nDisallow: /*?SID=", language="text")
-                for item in items[:30]:
-                    st.markdown(f"- `{item['url']}` — {item['reason']}")
+                from utils import action_ui as _aui_t4i
+                visible_items = _aui_t4i.filter_visible(items, "noindex", lambda it: stable_hash(it["url"]), show_done_t4)
+                visible_items = visible_items[:30]
+                for item in visible_items:
+                    content = (
+                        f"<div><code>{item['url']}</code></div>"
+                        f"<div style='color:#9b9bb8; font-size:0.8rem; margin-left:1rem; margin-top:0.2rem;'>"
+                        f"{item['reason']}</div>"
+                    )
+                    _aui_t4i.render_action_row("noindex", stable_hash(item["url"]), content, key_suffix=f"t4_{type_key}")
+                _aui_t4i.bulk_done_button("noindex", [stable_hash(it["url"]) for it in visible_items], key_suffix=f"t4_{type_key}")
 
     # ── TAB 5: DELETE ────────────────────────────────────────
     with tab5:
@@ -1724,35 +1751,61 @@ def render():
             cols[3].metric("📝 Needs content (products)", len(orphan_buckets["needs_content"]))
             cols[4].metric("❓ Investigate", len(orphan_buckets["investigate"]))
 
+            from utils import action_ui as _aui_t5
+
+            def _render_orphan_bucket(label_emoji_count, info_msg, info_kind, bucket_items, action_type, suffix):
+                with st.expander(label_emoji_count, expanded=False):
+                    if info_kind == "info":
+                        st.info(info_msg)
+                    elif info_kind == "warn":
+                        st.warning(info_msg)
+                    if not bucket_items:
+                        return
+                    show = _aui_t5.filter_toolbar(action_type, len(bucket_items), key_prefix=f"t5_{suffix}_")
+                    visible = _aui_t5.filter_visible(bucket_items, action_type, lambda o: stable_hash(o["url"]), show)
+                    visible = visible[:50]
+                    for o in visible:
+                        bl_extra = f" · {o.get('referring_domains', 0)} backlinks" if action_type == "redirect" else ""
+                        content = (
+                            f"<div><code>{o['url']}</code> "
+                            f"<span style='color:#6b6b8a;'>({o.get('page_type', '?')}, {o.get('word_count', 0)}w{bl_extra})</span></div>"
+                            f"<div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem; margin-top:0.2rem;'>"
+                            f"{o.get('reason', '')}</div>"
+                        )
+                        _aui_t5.render_action_row(action_type, stable_hash(o["url"]), content, key_suffix=f"t5_{suffix}")
+                    _aui_t5.bulk_done_button(action_type, [stable_hash(o["url"]) for o in visible], key_suffix=f"t5_{suffix}")
+
             if orphan_buckets["needs_content"]:
-                with st.expander(f"📝 Products needing content ({len(orphan_buckets['needs_content'])}) — DO NOT delete", expanded=False):
-                    st.info("These are PRODUCT pages with thin/missing content. They can still be sold — add descriptions in Magento and assign to the right category. Never auto-delete products.")
-                    for o in orphan_buckets["needs_content"][:50]:
-                        st.markdown(f"- `{o['url']}` ({o['word_count']}w)")
-                        st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{o['reason']}</div>", unsafe_allow_html=True)
+                _render_orphan_bucket(
+                    f"📝 Products needing content ({len(orphan_buckets['needs_content'])}) — DO NOT delete",
+                    "These are PRODUCT pages with thin/missing content. They can still be sold — add descriptions in Magento and assign to the right category. Never auto-delete products.",
+                    "info", orphan_buckets["needs_content"], "needs_content", "needs",
+                )
 
-            with st.expander(f"🔗 Reconnect ({len(orphan_buckets['reconnect'])}) — DO NOT delete", expanded=False):
-                st.info("These pages have traffic, backlinks, or are in topic clusters. They lost their internal link but should be RECONNECTED via category navigation, not deleted.")
-                for o in orphan_buckets["reconnect"][:50]:
-                    st.markdown(f"- `{o['url']}` ({o['page_type']}, {o['word_count']}w)")
-                    st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{o['reason']}</div>", unsafe_allow_html=True)
+            _render_orphan_bucket(
+                f"🔗 Reconnect ({len(orphan_buckets['reconnect'])}) — DO NOT delete",
+                "These pages have traffic, backlinks, or are in topic clusters. They lost their internal link but should be RECONNECTED via category navigation, not deleted.",
+                "info", orphan_buckets["reconnect"], "reconnect", "rec",
+            )
 
-            with st.expander(f"↗ Redirect ({len(orphan_buckets['redirect'])}) — preserve link equity", expanded=False):
-                st.info("These pages have backlinks but zero traffic. 301-redirect them to the closest live, related page to preserve link equity. Do NOT just delete — you'd lose the backlinks.")
-                for o in orphan_buckets["redirect"][:50]:
-                    st.markdown(f"- `{o['url']}` ({o['referring_domains']} backlinks)")
-                    st.markdown(f"  <div style='color:#9b9bb8; font-size:0.75rem; margin-left:1rem;'>{o['reason']}</div>", unsafe_allow_html=True)
+            _render_orphan_bucket(
+                f"↗ Redirect ({len(orphan_buckets['redirect'])}) — preserve link equity",
+                "These pages have backlinks but zero traffic. 301-redirect them to the closest live, related page to preserve link equity. Do NOT just delete — you'd lose the backlinks.",
+                "info", orphan_buckets["redirect"], "redirect", "redir",
+            )
 
-            with st.expander(f"🗑 True orphans to delete ({len(orphan_buckets['delete'])})", expanded=False):
-                st.warning("These have NO traffic, NO backlinks, NO cluster, and thin content. Safe to delete.")
-                for o in orphan_buckets["delete"][:50]:
-                    st.markdown(f"- `{o['url']}` ({o['page_type']}, {o['word_count']}w)")
+            _render_orphan_bucket(
+                f"🗑 True orphans to delete ({len(orphan_buckets['delete'])})",
+                "These have NO traffic, NO backlinks, NO cluster, and thin content. Safe to delete.",
+                "warn", orphan_buckets["delete"], "delete", "del",
+            )
 
             if orphan_buckets["investigate"]:
-                with st.expander(f"❓ Investigate ({len(orphan_buckets['investigate'])})", expanded=False):
-                    st.markdown("Edge cases — manual review needed.")
-                    for o in orphan_buckets["investigate"][:50]:
-                        st.markdown(f"- `{o['url']}` — {o['reason']}")
+                _render_orphan_bucket(
+                    f"❓ Investigate ({len(orphan_buckets['investigate'])})",
+                    "Edge cases — manual review needed.",
+                    "info", orphan_buckets["investigate"], "delete", "inv",
+                )
             st.markdown("---")
 
         deletes = _pages_to_delete()
@@ -1765,8 +1818,18 @@ def render():
                 "<p style='color:#9b9bb8; font-size:0.85rem;'>Pages the AI recommends deleting based on site architecture review.</p>",
                 unsafe_allow_html=True,
             )
-            for d in ideal_deletes[:30]:
-                st.markdown(f"- `{d.get('url', '')}` — {d.get('why', '')}")
+            from utils import action_ui as _aui_id
+            show_id = _aui_id.filter_toolbar("delete", len(ideal_deletes), key_prefix="t5_ideal_")
+            visible_id = _aui_id.filter_visible(ideal_deletes, "delete", lambda d: stable_hash(d.get("url", "")), show_id)
+            visible_id = visible_id[:30]
+            for d in visible_id:
+                content = (
+                    f"<div><code>{d.get('url', '')}</code></div>"
+                    f"<div style='color:#9b9bb8; font-size:0.8rem; margin-left:1rem; margin-top:0.2rem;'>"
+                    f"{d.get('why', '')}</div>"
+                )
+                _aui_id.render_action_row("delete", stable_hash(d.get("url", "")), content, key_suffix="t5_ideal")
+            _aui_id.bulk_done_button("delete", [stable_hash(d.get("url", "")) for d in visible_id], key_suffix="t5_ideal")
             st.markdown("---")
 
         st.markdown("#### 📊 Data-driven candidates (no traffic, no backlinks, thin content)")
@@ -1777,8 +1840,19 @@ def render():
         )
         if not deletes:
             st.success("No clearly deletable pages from data analysis")
-        for d in deletes[:30]:
-            st.markdown(f"- `{d['url']}` ({d['page_type']}) · {d['word_count']} words · {d['impressions']} impressions")
+        else:
+            from utils import action_ui as _aui_dd
+            show_dd = _aui_dd.filter_toolbar("delete", len(deletes), key_prefix="t5_data_")
+            visible_dd = _aui_dd.filter_visible(deletes, "delete", lambda d: stable_hash(d["url"]), show_dd)
+            visible_dd = visible_dd[:30]
+            for d in visible_dd:
+                content = (
+                    f"<div><code>{d['url']}</code> "
+                    f"<span style='color:#6b6b8a;'>({d['page_type']}) · "
+                    f"{d['word_count']} words · {d['impressions']} impressions</span></div>"
+                )
+                _aui_dd.render_action_row("delete", stable_hash(d["url"]), content, key_suffix="t5_data")
+            _aui_dd.bulk_done_button("delete", [stable_hash(d["url"]) for d in visible_dd], key_suffix="t5_data")
 
     # ── TAB 6: BLOGS TO REVIEW ───────────────────────────────
     with tab6:
@@ -1823,16 +1897,28 @@ def render():
         )
         if not blogs:
             st.success("No blogs flagged for review")
-        for b in blogs[:30]:
-            v_color = {"REWRITE": "#ff4455", "IMPROVE": "#ffaa33", "ZERO TRAFFIC": "#6b6b8a"}.get(b["verdict"], "#6b6b8a")
-            with st.expander(f"[{b['verdict']}] {shorten_url(b['url'])} · {b['impressions']} impressions"):
-                st.markdown(f"**Score:** {b['score']}/10")
-                st.markdown(f"**Issue:** {b['summary']}")
-                st.markdown(f"**Options:**")
-                st.markdown("1. **Rewrite** — use Quick Wins to generate new content")
-                st.markdown("2. **Delete** — if topic is irrelevant or covered elsewhere")
-                st.markdown("3. **Merge** — combine with another article on same topic")
-                st.markdown("4. **Redirect** — if better content exists, 301 to that page")
+        else:
+            from utils import action_ui as _aui_t6, action_status as _as_t6
+            show_b = _aui_t6.filter_toolbar("blog_review", len(blogs), key_prefix="t6")
+            visible_b = _aui_t6.filter_visible(blogs, "blog_review", lambda b: stable_hash(b["url"]), show_b)
+            visible_b = visible_b[:30]
+            for b in visible_b:
+                bid = stable_hash(b["url"])
+                done = _as_t6.is_done("blog_review", bid)
+                badge = " " + _aui_t6.done_badge_html("blog_review", bid) if done else ""
+                row_cols = st.columns([8, 2])
+                with row_cols[0]:
+                    with st.expander(f"[{b['verdict']}] {shorten_url(b['url'])} · {b['impressions']} impressions{badge}"):
+                        st.markdown(f"**Score:** {b['score']}/10")
+                        st.markdown(f"**Issue:** {b['summary']}")
+                        st.markdown(f"**Options:**")
+                        st.markdown("1. **Rewrite** — use Quick Wins to generate new content")
+                        st.markdown("2. **Delete** — if topic is irrelevant or covered elsewhere")
+                        st.markdown("3. **Merge** — combine with another article on same topic")
+                        st.markdown("4. **Redirect** — if better content exists, 301 to that page")
+                with row_cols[1]:
+                    _aui_t6.mark_button("blog_review", bid, key_suffix="t6")
+            _aui_t6.bulk_done_button("blog_review", [stable_hash(b["url"]) for b in visible_b], key_suffix="t6")
 
     # ── TAB 7: TOPIC GAPS ────────────────────────────────────
     with tab7:
@@ -1880,27 +1966,50 @@ def render():
         if not gaps:
             st.info("No gaps found — run **Build Topic Clusters** in Run Pipeline first.")
         else:
+            from utils import action_ui as _aui_t7, action_status as _as_t7
             high = [g for g in gaps if isinstance(g, dict) and g.get("priority") == "high"]
             medium = [g for g in gaps if isinstance(g, dict) and g.get("priority") == "medium"]
+            all_gaps = high + medium
 
-            if high:
-                st.markdown("#### 🔴 High priority")
-                for g in high[:30]:
-                    with st.expander(f"{g.get('topic','?')} · {g.get('impressions',0):,} impressions · {g.get('queries',0)} queries"):
-                        for issue in g.get("issues", []):
-                            st.markdown(f"- {issue}")
-                        st.markdown(
-                            "<div style='color:#9b9bb8; font-size:0.75rem; margin-top:0.5rem;'>"
-                            "Action: review in Topic Clusters view for consolidation, new content, or link building.</div>",
-                            unsafe_allow_html=True,
-                        )
+            def _gap_id(g):
+                return stable_hash(f"{g.get('topic', '')}::{g.get('queries', 0)}")
 
-            if medium:
-                st.markdown("#### 🟡 Medium priority")
-                for g in medium[:30]:
-                    with st.expander(f"{g.get('topic','?')} · {g.get('impressions',0):,} impressions · {g.get('queries',0)} queries"):
-                        for issue in g.get("issues", []):
-                            st.markdown(f"- {issue}")
+            show_gaps = _aui_t7.filter_toolbar("topic_gap", len(all_gaps), key_prefix="t7")
+
+            def _render_gap_section(gap_list, header):
+                if not gap_list:
+                    return
+                visible = _aui_t7.filter_visible(gap_list, "topic_gap", _gap_id, show_gaps)[:30]
+                if not visible:
+                    return
+                st.markdown(header)
+                for g in visible:
+                    gid = _gap_id(g)
+                    done = _as_t7.is_done("topic_gap", gid)
+                    badge = " " + _aui_t7.done_badge_html("topic_gap", gid) if done else ""
+                    cols = st.columns([8, 2])
+                    with cols[0]:
+                        with st.expander(
+                            f"{g.get('topic','?')} · {g.get('impressions',0):,} impressions · {g.get('queries',0)} queries{badge}"
+                        ):
+                            for issue in g.get("issues", []):
+                                st.markdown(f"- {issue}")
+                            if header.startswith("#### 🔴"):
+                                st.markdown(
+                                    "<div style='color:#9b9bb8; font-size:0.75rem; margin-top:0.5rem;'>"
+                                    "Action: review in Topic Clusters view for consolidation, new content, or link building.</div>",
+                                    unsafe_allow_html=True,
+                                )
+                    with cols[1]:
+                        _aui_t7.mark_button("topic_gap", gid, key_suffix="t7")
+                _aui_t7.bulk_done_button(
+                    "topic_gap",
+                    [_gap_id(g) for g in visible],
+                    key_suffix=f"t7_{header[:8]}",
+                )
+
+            _render_gap_section(high, "#### 🔴 High priority")
+            _render_gap_section(medium, "#### 🟡 Medium priority")
 
     # ── TAB 8: UNCLUSTERED PAGES ─────────────────────────────
     with tab8:

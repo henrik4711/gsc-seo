@@ -49,6 +49,9 @@ PERSIST_KEYS = {
     # active and editable, plus the URL→internal-id lookup needed for
     # per-page push of intro text + meta title + meta description.
     "mshop_active_pages": "json",
+    # User-managed "I've handled this" flags per Site Cleanup action item.
+    # Owned by utils/action_status.py — see that module for shape.
+    "action_status": "json",
 }
 
 # Prefixes for dynamic AI cache keys — stored as individual files
