@@ -3484,6 +3484,13 @@ def _render_per_page_tab():
         _hit = find_page_index(pages, _jump_url)
         if _hit is not None:
             st.session_state["_qw_page_idx"] = _hit
+            # CRITICAL: also push the new index into the "Go to page"
+            # number_input's session_state key. Without this, the widget
+            # keeps its previous value (e.g. 1) and its
+            # `if int(jump) - 1 != idx` check below overwrites
+            # _qw_page_idx back to that stale value — which is why deep
+            # links were landing on the WRONG page.
+            st.session_state["_qw_page_jump"] = _hit + 1
         else:
             # URL exists in audit but was filtered out of Quick Wins
             # (marked done, or scheduled for merge/delete). Tell the user.

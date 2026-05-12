@@ -66,7 +66,10 @@ def generate_ai_fixes_for_page(page: dict) -> dict | None:
     if plan_key in st.session_state and not plan_is_errored:
         return existing_plan  # already generated; nothing to do
 
-    with st.spinner("Generating implementation plan..."):
+    with st.spinner(
+        f"AI is reviewing this page (~30-60 sec): meta + intro + bottom + "
+        f"link suggestions + action steps for {url[-40:]}…"
+    ):
         try:
             result = generate_page_implementation_plan(
                 client, audit, site_context, all_site_urls, language, topic_clusters,
