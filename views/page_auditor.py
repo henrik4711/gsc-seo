@@ -940,6 +940,40 @@ def render():
 
         with st.expander(expander_label):
 
+            # ── Action bar: jump straight to AI fixes for this page ──
+            # Single source of truth: both the generation flow and the
+            # cross-view jump live in utils/. No duplicated orchestration.
+            from utils.page_fix_runner import generate_ai_fixes_for_page, page_audit_to_page_dict
+            from utils.page_deeplink import open_in_quick_wins
+            from utils.ui_helpers import stable_hash as _qa_sh
+            _ai_plan_present = f"_ai_plan_{_qa_sh(r['url'])}" in st.session_state
+
+            act1, act2, act3 = st.columns([2, 2, 3])
+            with act1:
+                if _ai_plan_present:
+                    if st.button("🚀 Open in Quick Wins", key=f"qa_open_{_qa_sh(r['url'])}", use_container_width=True):
+                        open_in_quick_wins(r["url"])
+                        st.rerun()
+                else:
+                    if st.button("🤖 Generate AI fixes + open", key=f"qa_gen_{_qa_sh(r['url'])}", type="primary", use_container_width=True):
+                        generate_ai_fixes_for_page(page_audit_to_page_dict(r))
+                        open_in_quick_wins(r["url"])
+                        st.rerun()
+            with act2:
+                if _ai_plan_present:
+                    if st.button("🔄 Regenerate AI fixes", key=f"qa_regen_{_qa_sh(r['url'])}", use_container_width=True):
+                        # Drop cached plan so the runner regenerates fresh
+                        st.session_state.pop(f"_ai_plan_{_qa_sh(r['url'])}", None)
+                        generate_ai_fixes_for_page(page_audit_to_page_dict(r))
+                        open_in_quick_wins(r["url"])
+                        st.rerun()
+            with act3:
+                status = "✓ AI fixes ready — click Open to review + push to Mshop" if _ai_plan_present else "○ No AI fixes generated yet for this page"
+                st.markdown(
+                    f"<div style='padding-top:0.4rem; font-size:0.75rem; color:#9b9bb8;'>{status}</div>",
+                    unsafe_allow_html=True,
+                )
+
             # Data quality warnings
             dw = r.get("_data_warnings", [])
             if dw:

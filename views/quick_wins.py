@@ -783,85 +783,11 @@ def _detect_issues(page):
 
 
 def _generate_all_fixes(page):
-    """Generate all AI fixes for a page in parallel-ish (sequential but quick)."""
-    url = page["url"]
-    url_hash = stable_hash(url)
-    audit = page["audit"]
-
-    if not has_anthropic_key():
-        st.error("Anthropic API key missing")
-        return
-
-    from utils.ai_generator import (
-        get_client,
-        generate_page_implementation_plan,
-        generate_page_content,
-        generate_intro_rewrite,
-    )
-
-    client = get_client(get_anthropic_key())
-    site_context = st.session_state.get("site_context", "")
-    language = st.session_state.get("content_language", "Swedish")
-    topic_clusters = st.session_state.get("topic_clusters", {})
-
-    # Build site URLs
-    audit_results = st.session_state.get("audit_results", [])
-    raw_urls = set(r["url"] for r in audit_results if r.get("url"))
-    gsc = st.session_state.get("gsc_data")
-    if gsc is not None and hasattr(gsc, "page"):
-        raw_urls.update(gsc["page"].unique().tolist())
-    all_site_urls = sorted(raw_urls)
-
-    # ── Gather CTR gaps for this page ──
-    # Build profile once — single source for all derived data
-    from utils.page_profile import build_page_profile
-    _profile = build_page_profile(url)
-
-    # ── Generate implementation plan (includes meta, steps, links, articles)
-    plan_key = f"_ai_plan_{url_hash}"
-    # Re-attempt error-stamped plans so the user can recover from a
-    # transient API failure (e.g. credit balance exhausted) without
-    # manually clearing cache.
-    _existing_plan = st.session_state.get(plan_key)
-    _plan_is_errored = isinstance(_existing_plan, dict) and bool(_existing_plan.get("error"))
-    if plan_key not in st.session_state or _plan_is_errored:
-        with st.spinner("Generating implementation plan..."):
-            try:
-                result = generate_page_implementation_plan(
-                    client, audit, site_context, all_site_urls, language, topic_clusters,
-                    ctr_gaps_for_page=_profile.get("ctr_gaps") or [],
-                    cannibal_link_targets=_profile.get("cannibal_link_targets") or [],
-                    cluster_link_outgoing=_profile.get("cluster_link_outgoing") or [],
-                    structural_signals=_profile.get("structural_signals") or {},
-                    editorial_images=_profile.get("editorial_images") or [],
-                )
-                st.session_state[plan_key] = result
-            except Exception as e:
-                import traceback as _tb
-                show_ai_error(
-                    "Implementation plan generation",
-                    e,
-                    context={
-                        "url": url,
-                        "page_type": page.get("page_type"),
-                        "site_urls_count": len(all_site_urls),
-                        "language": language,
-                    },
-                )
-                st.session_state[plan_key] = {
-                    "error": str(e),
-                    "error_class": type(e).__name__,
-                    "error_status_code": getattr(e, "status_code", None),
-                    "error_request_id": getattr(e, "request_id", None),
-                    "error_traceback": _tb.format_exc()[-3000:],
-                    "steps": [],
-                }
-
-    # ── Bottom text + intro text are generated on-demand (not auto) to keep page load fast
-    # They will be triggered by buttons in the page view below
-
-    from utils.persistence import save_ai_cache
-    save_ai_cache()
+    """Thin wrapper — delegates to utils.page_fix_runner so Page Auditor
+    and Quick Wins run the EXACT same generation flow. Do not re-implement
+    here; extend the runner instead."""
+    from utils.page_fix_runner import generate_ai_fixes_for_page
+    generate_ai_fixes_for_page(page)
 
 
 def _build_total_plan(page, plan_data, text_data, intro_data):
@@ -3548,6 +3474,25 @@ def _render_per_page_tab():
 
     if "_qw_page_idx" not in st.session_state:
         st.session_state["_qw_page_idx"] = 0
+
+    # Honor cross-view deep-link request (e.g. from Page Auditor).
+    # Resolved against the SAME `pages` list that we paginate, so the
+    # index always lines up.
+    from utils.page_deeplink import consume_jump_request, find_page_index
+    _jump_url = consume_jump_request()
+    if _jump_url:
+        _hit = find_page_index(pages, _jump_url)
+        if _hit is not None:
+            st.session_state["_qw_page_idx"] = _hit
+        else:
+            # URL exists in audit but was filtered out of Quick Wins
+            # (marked done, or scheduled for merge/delete). Tell the user.
+            st.warning(
+                f"`{_jump_url}` was opened from another view, but Quick Wins "
+                "isn't currently showing it (likely marked done or scheduled "
+                "for merge/delete). Reset done-status or check Site Cleanup."
+            )
+
     idx = st.session_state["_qw_page_idx"]
     if idx >= len(pages):
         idx = 0
