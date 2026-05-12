@@ -847,11 +847,20 @@ def render():
         qr_start = (qr_pg - 1) * QR_PER_PAGE
         qr_visible = quality_results[qr_start:qr_start + QR_PER_PAGE]
 
+        # Look-up table: normalized URL -> raw audit row, so we can wire
+        # the same AI fix runner Quick Wins uses without re-querying.
+        from utils.ui_helpers import normalize_url as _qr_nu, stable_hash as _qr_sh
+        from utils.page_fix_runner import generate_ai_fixes_for_page, page_audit_to_page_dict
+        from utils.page_deeplink import open_in_quick_wins
+        _audit_by_url = {_qr_nu(r["url"]): r for r in results if r.get("url")}
+
         for q in qr_visible:
             verdict = q["verdict"]
             v_color = {"REWRITE": "#ff4455", "IMPROVE": "#ffaa33", "KEEP": "#33dd88"}.get(verdict, "#6b6b8a")
             score = q["score"]
             ptype = q["page_type"].upper()
+            url_hash = _qr_sh(q["url"])
+            ai_plan_present = f"_ai_plan_{url_hash}" in st.session_state
 
             st.markdown(
                 f"<div style='background:#12121f; border-left:4px solid {v_color}; "
@@ -875,6 +884,47 @@ def render():
             if q["specific_fixes"]:
                 fixes_html = " ".join(f"<span style='color:#c8b4ff; font-size:0.75rem;'>→ {fix}</span><br>" for fix in q["specific_fixes"][:3])
                 st.markdown(f"<div>{fixes_html}</div>", unsafe_allow_html=True)
+
+            # Action: rewrite this exact page via the same flow as Quick Wins
+            audit_row = _audit_by_url.get(_qr_nu(q["url"]))
+            if audit_row is not None and verdict in ("REWRITE", "IMPROVE"):
+                btn_cols = st.columns([3, 3, 6])
+                with btn_cols[0]:
+                    if ai_plan_present:
+                        if st.button(
+                            "🚀 Open in Quick Wins",
+                            key=f"qq_open_{url_hash}",
+                            use_container_width=True,
+                        ):
+                            open_in_quick_wins(q["url"])
+                            st.rerun()
+                    else:
+                        if st.button(
+                            "🤖 Rewrite with AI + open",
+                            key=f"qq_gen_{url_hash}",
+                            type="primary",
+                            use_container_width=True,
+                        ):
+                            generate_ai_fixes_for_page(page_audit_to_page_dict(audit_row))
+                            open_in_quick_wins(q["url"])
+                            st.rerun()
+                with btn_cols[1]:
+                    if ai_plan_present:
+                        if st.button(
+                            "🔄 Regenerate AI fixes",
+                            key=f"qq_regen_{url_hash}",
+                            use_container_width=True,
+                        ):
+                            st.session_state.pop(f"_ai_plan_{url_hash}", None)
+                            generate_ai_fixes_for_page(page_audit_to_page_dict(audit_row))
+                            open_in_quick_wins(q["url"])
+                            st.rerun()
+                with btn_cols[2]:
+                    status = "✓ AI fixes ready" if ai_plan_present else "○ No AI fixes generated yet"
+                    st.markdown(
+                        f"<div style='padding-top:0.4rem; font-size:0.75rem; color:#9b9bb8;'>{status} · review + push to Mshop in Quick Wins</div>",
+                        unsafe_allow_html=True,
+                    )
 
             st.markdown("</div>", unsafe_allow_html=True)
 
