@@ -2109,13 +2109,26 @@ You are rewriting the BODY TEXT for an e-commerce category page.
 {validation_block}
 {required_kw_block}
 {required_link_block}
-## CRITICAL: KEYWORD FOCUS
+## CRITICAL: KEYWORD FOCUS (with synonym variation — read carefully)
 The PRIMARY keyword for this page is: **{query}**
 This keyword MUST:
-- Appear in at least 2 of your H2 headings (naturally, not forced)
-- Be used in the first sentence of the top text
-- Be the SUBJECT of the text — the entire text is ABOUT "{query}"
-- NOT be replaced with synonyms or generic terms like "masturbator" or "sexleksak"
+- Appear in the page title context, H1, and the FIRST sentence of the top text
+- Appear in 1-2 of your H2 headings (naturally, not forced)
+- Be the SUBJECT of the text — the page is clearly ABOUT "{query}"
+
+BUT — and this is critical — synonyms ARE expected and ENCOURAGED in
+body prose for vocabulary diversity. Repeating the exact phrase 5+ times
+reads as keyword stuffing and gets the page penalized. Use natural
+synonyms for variation:
+- pocket pussy → sleeve, masturbator, kompakt masturbator, kompakt modell
+- dildo → vibrator (only if appropriate), leksak, modell
+- Generic substitutes ("sexleksak") are still off-limits for the SUBJECT
+  framing — but ARE fine for sentence-level variation in mid-text.
+
+The page must clearly READ as being about "{query}" (title, H1, opener,
+H2s reflect that), but the BODY paragraphs alternate between the primary
+phrase and 2-3 natural synonyms so vocabulary stays diverse.
+
 If the page is about "pocket pussy", write about pocket pussy specifically.
 If the page is about "dildo", write about dildos specifically.
 Do NOT write generic category text that could apply to any product.
@@ -2236,7 +2249,34 @@ selection", rewrite either the anchor or the sentence so they agree
 about.
 
 ## CONTENT RULES
-1. NO keyword stuffing — primary keyword max 2x in top, max 5-6x in bottom (natural use across 1000 words)
+1. NO keyword stuffing — primary keyword max 2x in top, max **3-4x in
+   bottom** across 800-2000 words. Counted as case-insensitive exact-phrase
+   matches. Use synonyms for the rest (sleeve, masturbator, kompakt
+   modell, etc.). Repeating the same phrase 5+ times = automatic reject.
+1b. NEVER write the primary keyword's MISSPELLINGS in body prose — even
+    framed as "alternative spellings" or "also known as". Phrases like
+    "ibland stavat...", "även kallad...", "also spelled...", "även känt
+    som [misspelling]" that introduce typos are obvious keyword-spinning
+    signals that destroy E-E-A-T.
+    EXAMPLE BAD: "En pocket pussy – ibland stavat poket pussy eller
+    pocket puzzy – är..."
+    EXAMPLE OK: nothing — just don't mention misspellings.
+    If a misspelling has search volume worth capturing, place it ONLY in
+    a single FAQ ANSWER body (the <p itemprop="text">), framed as a
+    correction — never in the question, never in main prose.
+1c. VOCABULARY DIVERSITY — type/token ratio target ≥ 25% (i.e. unique
+    words ÷ total words). Practically: vary phrasing, use synonyms,
+    don't restate the same noun in consecutive sentences. If you find
+    yourself writing "pocket pussy" three sentences in a row, swap two
+    for "sleeve", "masturbator", or "kompakt modell". Repetitive content
+    reads as filler and gets flagged as low-quality by AI-detection.
+1d. NO GENERIC OPENERS — never open the bottom text or any H2 section
+    with a hollow generality like "X är den mest populära/vanliga/
+    efterfrågade typen av Y" or "X är ett av de mest sålda Y". This is
+    the hallmark of AI SEO filler. Open with a CONCRETE, buyer-relevant
+    statement: a material distinction, a use-case, a price/feature
+    tradeoff, a specific question buyers actually ask. The first
+    sentence must teach the reader something they didn't already know.
 2. Mention product NAMES and BRANDS — but NEVER specific prices (they change).
    This includes FAQ answers — do NOT mention price ranges like "1000-3000 kr".
    Instead say "priserna varierar beroende på funktioner och kvalitet".
@@ -2361,6 +2401,72 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
         # Max 4 bold tags per bottom text; everything beyond reads spammy.
         strong_tags = _re_count.findall(r'<(?:strong|b)\b[^>]*>', full_html, flags=_re_count.IGNORECASE)
         bold_overuse = len(strong_tags) > 4
+
+        # ── Quality-check validators (mirror the AI quality assessor) ──
+        # Strip HTML once for these checks so we measure prose, not markup.
+        _bottom_plain = _re_count.sub(r'<[^>]+>', ' ', result.get("bottom_html") or "")
+        _bottom_plain = _re_count.sub(r'\s+', ' ', _bottom_plain).strip()
+
+        # 1) Primary-keyword overuse — max 4 occurrences across full bottom.
+        #    Counted as case-insensitive whole-phrase matches.
+        _kw_pat = _re_count.compile(
+            rf'\b{_re_count.escape(query)}\b',
+            flags=_re_count.IGNORECASE,
+        ) if query else None
+        primary_kw_count = len(_kw_pat.findall(_bottom_plain)) if _kw_pat else 0
+        keyword_overuse = primary_kw_count > 4
+
+        # 2) Vocabulary diversity — type/token ratio. Target ≥ 25%.
+        #    Tokens = lowercase words ≥ 3 chars (drops stopwords noise).
+        _tokens = [
+            w.lower() for w in _re_count.findall(r"[A-Za-zÅÄÖåäöÆØæø]+", _bottom_plain)
+            if len(w) >= 3
+        ]
+        vocab_diversity = (len(set(_tokens)) / len(_tokens)) if _tokens else 1.0
+        vocab_diversity_low = bool(_tokens) and vocab_diversity < 0.25
+
+        # 3) Misspelling-capture phrases — these are the AI's tell when
+        #    it tries to harvest typo-traffic in body prose. EXACT regex
+        #    list of patterns we banned in the prompt.
+        misspelling_capture_patterns = [
+            r"ibland stavat",
+            r"även stavat",
+            r"även kallad",
+            r"även känt som",
+            r"också (?:kallad|kallat|stavat)",
+            r"alternativ stavning",
+            r"also spelled",
+            r"also known as",
+            r"sometimes spelled",
+            r"variant(?:er)? som ['\"]?[a-zA-ZåäöÅÄÖæøÆØ]+",
+        ]
+        misspelling_capture_hits = []
+        for _pat in misspelling_capture_patterns:
+            for m in _re_count.finditer(_pat, _bottom_plain, flags=_re_count.IGNORECASE):
+                # Capture surrounding context so the retry feedback is concrete.
+                _start = max(0, m.start() - 40)
+                _end = min(len(_bottom_plain), m.end() + 60)
+                misspelling_capture_hits.append(_bottom_plain[_start:_end].strip())
+                if len(misspelling_capture_hits) >= 3:
+                    break
+            if len(misspelling_capture_hits) >= 3:
+                break
+
+        # 4) Generic AI-filler opener — match the first 200 chars of bottom
+        #    against patterns like "X är den mest populära/vanligaste typen av Y".
+        _opener = _bottom_plain[:200]
+        generic_opener_patterns = [
+            r"\b(?:är|is)\s+(?:den|det|ett|en|the)\s+(?:mest\s+populära|vanligaste|mest\s+sålda|mest\s+efterfrågade|most\s+popular|most\s+common|most\s+sold)",
+            r"\b(?:welcome\s+to|välkommen\s+till)\b",
+            r"\b(?:utforska|upptäck|discover|explore)\s+(?:vår|vårt|our)\b",
+            r"\b(?:perfekt\s+för\s+dig\s+som|perfect\s+for\s+(?:those|anyone))",
+        ]
+        generic_opener_hit = None
+        for _pat in generic_opener_patterns:
+            m = _re_count.search(_pat, _opener, flags=_re_count.IGNORECASE)
+            if m:
+                generic_opener_hit = _opener[:160]
+                break
 
         # Detect duplicate-slug links — linking from /alla/satisfyer to
         # /sexleksaker/vibratorer/satisfyer dilutes both pages because
@@ -2553,10 +2659,72 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
         if isinstance(result, dict) and hallucinated_products:
             result["_potential_hallucinations"] = list(hallucinated_products)
 
+        # Surface every quality-check metric on the result, regardless of
+        # whether retry triggered or not. The UI uses these to render a
+        # "Quality gate" panel so the user can see exactly which rules
+        # passed/failed BEFORE pushing the text live.
+        if isinstance(result, dict):
+            _checks = []
+            _checks.append({
+                "id": "kw_overuse", "label": f"Primary keyword count ≤ 4",
+                "passed": not keyword_overuse,
+                "actual": f"{primary_kw_count}× '{query}'",
+            })
+            _checks.append({
+                "id": "vocab_diversity", "label": "Vocabulary diversity ≥ 25%",
+                "passed": not vocab_diversity_low,
+                "actual": f"{vocab_diversity*100:.1f}% ({len(set(_tokens))}/{len(_tokens)} unique)",
+            })
+            _checks.append({
+                "id": "no_misspelling_capture", "label": "No misspelling-capture phrases",
+                "passed": not misspelling_capture_hits,
+                "actual": (misspelling_capture_hits[:1][0][:80] + "…") if misspelling_capture_hits else "clean",
+            })
+            _checks.append({
+                "id": "no_generic_opener", "label": "Concrete first sentence (no AI-filler opener)",
+                "passed": not generic_opener_hit,
+                "actual": (generic_opener_hit[:80] + "…") if generic_opener_hit else "clean",
+            })
+            _checks.append({
+                "id": "internal_links_count", "label": f"Internal links 8-12 (was {internal_links_count})",
+                "passed": not link_count_too_low,
+                "actual": f"{internal_links_count} link(s)",
+            })
+            _checks.append({
+                "id": "no_price_violations", "label": "No specific prices (kr/kronor)",
+                "passed": not price_violations,
+                "actual": (", ".join(set(price_violations[:3])) if price_violations else "clean"),
+            })
+            _checks.append({
+                "id": "bold_count", "label": "Bold tags ≤ 4",
+                "passed": not bold_overuse,
+                "actual": f"{len(strong_tags)} <strong> tag(s)",
+            })
+            _checks.append({
+                "id": "no_dupe_slug_links", "label": "No duplicate-slug links",
+                "passed": not dupe_slug_links,
+                "actual": (", ".join(set(dupe_slug_links[:2])) if dupe_slug_links else "clean"),
+            })
+            _checks.append({
+                "id": "faq_brand_spelling", "label": "FAQ headlines use correct brand spelling",
+                "passed": not faq_typo_hits,
+                "actual": ("misspelled brand in question" if faq_typo_hits else "clean"),
+            })
+            _checks.append({
+                "id": "anchor_target_match", "label": "Anchor text matches target page",
+                "passed": not anchor_target_mismatches,
+                "actual": (f"{len(anchor_target_mismatches)} mismatch(es)" if anchor_target_mismatches else "clean"),
+            })
+            result["_quality_checks"] = _checks
+            result["_quality_pass_count"] = sum(1 for c in _checks if c["passed"])
+            result["_quality_total"] = len(_checks)
+
         if (missing_kws or missing_links or link_count_too_low
                 or price_violations or bold_overuse
                 or dupe_slug_links or faq_typo_hits
-                or anchor_target_mismatches):
+                or anchor_target_mismatches
+                or keyword_overuse or vocab_diversity_low
+                or misspelling_capture_hits or generic_opener_hit):
             new_fixes = list(validation_fixes or [])
             if missing_kws:
                 new_fixes.append(
@@ -2661,6 +2829,52 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                     f"(b) replace the link with a different URL whose slug "
                     f"matches the anchor's meaning. Never wrap a sentence "
                     f"about topic X with an anchor pointing at topic Y."
+                )
+            if keyword_overuse:
+                new_fixes.append(
+                    f"Primary keyword '{query}' appears {primary_kw_count} times "
+                    f"in bottom_html — HARD LIMIT is 3-4 occurrences. Replace the "
+                    f"surplus with natural synonyms (sleeve, masturbator, kompakt "
+                    f"modell, leksaken, modellen, produkten, denna typ). The page "
+                    f"must still READ as being about '{query}' (title, H1, opener, "
+                    f"H2s confirm that), but body prose alternates between the "
+                    f"primary phrase and 2-3 synonyms."
+                )
+            if vocab_diversity_low:
+                new_fixes.append(
+                    f"Vocabulary diversity is too low — type/token ratio is "
+                    f"{vocab_diversity*100:.1f}% (target ≥ 25%). Out of "
+                    f"{len(_tokens)} word-tokens only {len(set(_tokens))} are "
+                    f"unique. Symptoms: same nouns/verbs reused across many "
+                    f"sentences, padded filler phrasing, restated ideas. Fix by "
+                    f"(a) using synonyms for the primary keyword and other "
+                    f"frequent nouns, (b) cutting filler sentences that add no "
+                    f"new information, (c) rephrasing parallel sentences with "
+                    f"different verbs and structure."
+                )
+            if misspelling_capture_hits:
+                examples = " | ".join(f"\"...{h}...\"" for h in misspelling_capture_hits[:3])
+                new_fixes.append(
+                    f"Misspelling-capture phrase(s) detected in body prose: "
+                    f"{examples}. REMOVE every phrase like 'ibland stavat...', "
+                    f"'även kallad...', 'also spelled...', 'variant som [typo]' — "
+                    f"these are obvious keyword-spinning signals that destroy "
+                    f"E-E-A-T. The body must use the CORRECT spelling only. "
+                    f"Misspellings may stay ONLY inside one FAQ ANSWER body, "
+                    f"framed as a correction (e.g. 'Stavningen \"X\" är den "
+                    f"korrekta — \"Y\" är en vanlig felstavning'), never in "
+                    f"main prose, never in headings, never in questions."
+                )
+            if generic_opener_hit:
+                new_fixes.append(
+                    f"Generic AI-filler opener detected: \"{generic_opener_hit}…\". "
+                    f"Rewrite the FIRST sentence of bottom_html with a concrete, "
+                    f"buyer-relevant statement: a material distinction, a use-case, "
+                    f"a price/feature tradeoff, or a specific question buyers "
+                    f"actually ask. Never open with 'X är den mest populära/"
+                    f"vanligaste typen av Y', 'Welcome to', 'Utforska/Upptäck "
+                    f"vår...', or 'Perfekt för dig som...'. The first sentence "
+                    f"must teach the reader something they didn't already know."
                 )
             return generate_page_content(
                 url,

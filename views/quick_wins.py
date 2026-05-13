@@ -2445,19 +2445,104 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                     f"<span style='color:{lix_color};'>**LIX {lix}**</span>",
                     unsafe_allow_html=True,
                 )
-                with st.popover("View HTML preview"):
-                    st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")
-                st.download_button(
-                    "Download HTML",
-                    data=html,
-                    file_name=f"{shorten_url(url).replace('/', '_').strip('_')}_bottom.html",
-                    mime="text/html",
-                    key=f"dl_text_{url_hash}",
-                )
+                _btn_col1, _btn_col2, _btn_col3 = st.columns(3)
+                with _btn_col1:
+                    with st.popover("👁 View HTML preview", use_container_width=True):
+                        st.code(html[:3000] + ("..." if len(html) > 3000 else ""), language="html")
+                with _btn_col2:
+                    with st.popover("✏️ Edit before push", use_container_width=True):
+                        st.markdown(
+                            "<div style='font-size:0.75rem; color:#9b9bb8; margin-bottom:0.4rem;'>"
+                            "Edit the HTML directly. Changes are kept in session and used "
+                            "by the Push button below. Click <strong>Save edits</strong> "
+                            "before closing this popover.</div>",
+                            unsafe_allow_html=True,
+                        )
+                        edit_key = f"edit_bottom_{url_hash}"
+                        edited = st.text_area(
+                            "Bottom HTML",
+                            value=html,
+                            height=400,
+                            key=edit_key,
+                            label_visibility="collapsed",
+                        )
+                        save_col, reset_col = st.columns([1, 1])
+                        with save_col:
+                            if st.button(
+                                "💾 Save edits",
+                                key=f"save_bottom_{url_hash}",
+                                type="primary",
+                                use_container_width=True,
+                            ):
+                                _td = dict(st.session_state.get(text_key) or {})
+                                _td["bottom_html"] = edited
+                                _td["bottom_word_count"] = len(
+                                    __import__("re").sub(r"<[^>]+>", " ", edited).split()
+                                )
+                                _td["_user_edited"] = True
+                                st.session_state[text_key] = _td
+                                from utils.persistence import save_ai_cache
+                                save_ai_cache()
+                                st.success("Saved. Close this popover and click Push to send the edited version.")
+                                st.rerun()
+                        with reset_col:
+                            if st.button(
+                                "↩ Discard edits",
+                                key=f"reset_bottom_{url_hash}",
+                                use_container_width=True,
+                            ):
+                                # Remove user-edited flag so next render shows original
+                                _td = dict(st.session_state.get(text_key) or {})
+                                _td.pop("_user_edited", None)
+                                st.session_state[text_key] = _td
+                                st.rerun()
+                with _btn_col3:
+                    st.download_button(
+                        "⬇ Download HTML",
+                        data=html,
+                        file_name=f"{shorten_url(url).replace('/', '_').strip('_')}_bottom.html",
+                        mime="text/html",
+                        key=f"dl_text_{url_hash}",
+                        use_container_width=True,
+                    )
+
+                # ── Quality gate (prompt-level validators run during generation) ──
+                _qc = text_data.get("_quality_checks") or []
+                if _qc:
+                    _qpass = text_data.get("_quality_pass_count", 0)
+                    _qtot = text_data.get("_quality_total", len(_qc))
+                    _qcolor = "#33dd88" if _qpass == _qtot else ("#ffaa33" if _qpass >= _qtot - 2 else "#ff4455")
+                    st.markdown(
+                        f"<div style='background:#0d0d15; border:2px solid {_qcolor}; "
+                        f"border-radius:6px; padding:0.6rem; margin:0.5rem 0;'>"
+                        f"<div style='font-size:0.85rem; color:{_qcolor}; font-weight:700;'>"
+                        f"Quality gate: {_qpass}/{_qtot} checks passed"
+                        f"</div>"
+                        f"<div style='font-size:0.7rem; color:#9b9bb8; margin-top:0.2rem;'>"
+                        f"Run automatically during generation. Failing checks trigger auto-retry "
+                        f"(up to 3 attempts) before showing the result here.</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    with st.expander(
+                        f"Quality gate detail ({_qpass}/{_qtot} passed)",
+                        expanded=(_qpass < _qtot),
+                    ):
+                        for c in _qc:
+                            _cicon = "✓" if c["passed"] else "✗"
+                            _ccolor = "#33dd88" if c["passed"] else "#ff4455"
+                            st.markdown(
+                                f"<div style='font-size:0.8rem; color:{_ccolor}; margin:0.2rem 0;'>"
+                                f"{_cicon} <strong>{c['label']}</strong> "
+                                f"<span style='color:#9b9bb8;'>· {c['actual']}</span></div>",
+                                unsafe_allow_html=True,
+                            )
 
                 # ── Push to Magento (preview → confirm) ──
+                # If the user edited the text, push the EDITED version, not the original.
+                _push_html = (st.session_state.get(text_key) or {}).get("bottom_html") or html
                 from utils.footer_push_ui import render_footer_push_block
-                render_footer_push_block(url, html, key_prefix=f"qw_push_{url_hash}")
+                render_footer_push_block(url, _push_html, key_prefix=f"qw_push_{url_hash}")
 
                 st.markdown(
                     "<div style='background:#0d0d15; border-left:3px solid #5533ff; padding:0.8rem; margin:0.5rem 0;'>"
