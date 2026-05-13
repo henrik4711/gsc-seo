@@ -415,27 +415,30 @@ with st.sidebar:
     # When code outside the sidebar (e.g. open_in_quick_wins() called
     # from a button) updates `selected_page`, it ALSO sets a
     # _pending_nav_to flag. The sidebar consumes that flag here BEFORE
-    # the radio widget renders — writes it into nav_radio so the
-    # widget displays the right page, then deletes the flag.
-    #
-    # Critical: this is a ONE-SHOT bridge. Doing it on every render
-    # would block sidebar clicks: when the user clicks a different
-    # radio option, Streamlit updates nav_radio first, THEN this
-    # sidebar code runs — and a permanent bridge would overwrite the
-    # user's click with the stale selected_page value.
+    # the radio widget renders.
     _pending = st.session_state.pop("_pending_nav_to", None)
     if _pending and _pending in page_labels:
         st.session_state["nav_radio"] = _pending
 
+    # Initialize the radio widget's session value if not present yet.
+    # We DON'T pass index= to st.radio because mixing key= + index= +
+    # programmatic session_state writes triggers Streamlit's "widget
+    # created with default value but also had its value set via Session
+    # State API" warning. With this pattern nav_radio is the single
+    # source of truth for the widget; selected_page mirrors it for
+    # persistence and programmatic nav.
+    if "nav_radio" not in st.session_state or st.session_state["nav_radio"] not in page_labels:
+        st.session_state["nav_radio"] = st.session_state["selected_page"]
+
     page = st.radio(
         "", page_labels,
-        index=page_labels.index(st.session_state["selected_page"]),
         label_visibility="collapsed",
         key="nav_radio",
     )
 
-    # Only update if user actually clicked a different page
-    if page != st.session_state.get("_last_rendered_page"):
+    # Mirror the radio's current value back into selected_page so the
+    # persisted nav state matches what's displayed.
+    if page != st.session_state.get("selected_page"):
         st.session_state["selected_page"] = page
     st.session_state["_last_rendered_page"] = page
 
