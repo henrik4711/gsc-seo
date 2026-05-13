@@ -992,12 +992,14 @@ def render():
                         # actually landed. Persisted to session_state
                         # so the upcoming st.rerun() doesn't discard it.
                         try:
-                            from utils.mshop_admin_api import read_push_log, lookup_url as _mlu
+                            # Admin log = intro_text + meta_title + meta_desc
+                            # (resolved via mshop_active_pages → page_id)
+                            from utils.mshop_admin_api import read_push_log as _read_admin, lookup_url as _mlu
                             active = st.session_state.get("mshop_active_pages") or {}
                             page_info = _mlu(active, q["url"])
-                            log = read_push_log(limit=200)
-                            relevant = []
-                            if page_info and isinstance(log, list):
+                            admin_log = _read_admin(limit=200)
+                            admin_entries = []
+                            if page_info and isinstance(admin_log, list):
                                 pid = page_info.get("id")
                                 ptype = page_info.get("type")
                                 pid_field = {
@@ -1005,14 +1007,20 @@ def render():
                                     "cms": "cmsPageId",
                                     "filterpage": "filterPageId",
                                 }.get(ptype, "")
-                                for entry in log:
+                                for entry in admin_log:
                                     payload = entry.get("payload") or {}
                                     if pid_field and payload.get(pid_field) == pid:
-                                        relevant.append(entry)
+                                        admin_entries.append(entry)
+                            # Footer log = bottom_text (separate API,
+                            # uses URL as identifier — does NOT need
+                            # the active-pages cache).
+                            from utils.footer_text_api import read_push_log as _read_footer
+                            footer_entries = _read_footer(url=q["url"])
                             st.session_state["_qq_diag"] = {
                                 "url": q["url"],
                                 "page_info": page_info,
-                                "entries": relevant[:5],
+                                "admin_entries": admin_entries[:5],
+                                "footer_entries": (footer_entries or [])[-5:][::-1],
                             }
                         except Exception as _push_log_err:
                             st.session_state["_qq_diag"] = {
@@ -1118,57 +1126,100 @@ def render():
                                                 st.error(f"Sync failed: {result.get('error', 'unknown')}")
                                         except Exception as _se:
                                             st.error(f"Sync error: {_se}")
-                        elif not _diag.get("entries"):
-                            pinfo = _diag["page_info"]
-                            st.warning(
-                                f"**No push entries logged for this page** "
-                                f"({pinfo.get('type')} id={pinfo.get('id')}).\n\n"
-                                "Either nothing was ever pushed for this page, OR the push log "
-                                "on disk got reset. If you DID push earlier, the most likely "
-                                "cause is that the Mshop URL→ID mapping pointed your push at a "
-                                "DIFFERENT page-id than this one."
-                            )
                         else:
-                            st.caption(
-                                f"Last {len(_diag['entries'])} push attempts for this exact "
-                                f"page ({_diag['page_info'].get('type')} id="
-                                f"{_diag['page_info'].get('id')}, newest first):"
-                            )
-                            for entry in _diag["entries"]:
+                            admin_entries = _diag.get("admin_entries") or []
+                            footer_entries = _diag.get("footer_entries") or []
+                            pinfo = _diag.get("page_info") or {}
+
+                            def _render_entry(entry, show_admin_fields=True):
                                 status_e = entry.get("status", "?")
                                 http = entry.get("http_code", "?")
                                 color = "#33dd88" if status_e == "success" else "#ff4455"
                                 payload = entry.get("payload") or {}
-                                desc = payload.get("description") or ""
-                                mt = payload.get("metaTitle") or ""
-                                md = payload.get("metaDescription") or ""
+                                if show_admin_fields:
+                                    desc = payload.get("description") or ""
+                                    mt = payload.get("metaTitle") or ""
+                                    md = payload.get("metaDescription") or ""
+                                    fields_line = (
+                                        f"description sent: <strong>{len(desc)}</strong> chars · "
+                                        f"meta_title sent: <strong>{len(mt)}</strong> chars · "
+                                        f"meta_desc sent: <strong>{len(md)}</strong> chars"
+                                    )
+                                else:
+                                    sections = entry.get("section_count", 0)
+                                    texts = payload.get("texts", []) if isinstance(payload, dict) else []
+                                    total_chars = sum(len((t.get("text") or "")) for t in texts) if texts else 0
+                                    fields_line = (
+                                        f"sections sent: <strong>{sections}</strong> · "
+                                        f"total chars: <strong>{total_chars}</strong>"
+                                    )
                                 body_excerpt = (entry.get("response_body") or "")[:300]
+                                ep = entry.get("endpoint") or ("(footer API)" if not show_admin_fields else "")
                                 st.markdown(
                                     f"<div style='background:#0d0d15; border-left:3px solid {color}; "
                                     f"padding:0.6rem; margin:0.4rem 0; border-radius:4px; "
                                     f"font-size:0.75rem; font-family:\"IBM Plex Mono\",monospace;'>"
                                     f"<div style='color:{color}; font-weight:700;'>"
                                     f"{status_e.upper()} · HTTP {http} · {entry.get('timestamp', '')}</div>"
-                                    f"<div style='color:#9b9bb8; margin-top:0.3rem;'>"
-                                    f"endpoint: {entry.get('endpoint', '')}</div>"
-                                    f"<div style='color:#e8e8f0; margin-top:0.3rem;'>"
-                                    f"description sent: <strong>{len(desc)}</strong> chars · "
-                                    f"meta_title sent: <strong>{len(mt)}</strong> chars · "
-                                    f"meta_desc sent: <strong>{len(md)}</strong> chars</div>"
+                                    f"<div style='color:#9b9bb8; margin-top:0.3rem;'>endpoint: {ep}</div>"
+                                    f"<div style='color:#e8e8f0; margin-top:0.3rem;'>{fields_line}</div>"
                                     f"<div style='color:#6b6b8a; margin-top:0.3rem; word-break:break-all;'>"
                                     f"response: {body_excerpt}</div>"
                                     f"</div>",
                                     unsafe_allow_html=True,
                                 )
+
+                            # ── Intro text + meta (admin API) ──
+                            st.markdown("##### 📝 Intro text + meta (admin API)")
+                            if not pinfo:
+                                st.warning(
+                                    "URL not in active-pages cache → intro/meta push buttons "
+                                    "in Quick Wins were HIDDEN for this page. Nothing was sent."
+                                )
+                            elif not admin_entries:
+                                st.warning(
+                                    f"No admin-API push entries for {pinfo.get('type')} "
+                                    f"id={pinfo.get('id')}. Either no intro/meta push was ever "
+                                    f"made, or the push log was reset."
+                                )
+                            else:
+                                st.caption(
+                                    f"Last {len(admin_entries)} push attempts (newest first):"
+                                )
+                                for e in admin_entries:
+                                    _render_entry(e, show_admin_fields=True)
+
+                            # ── Bottom text (footer API — separate system) ──
+                            st.markdown("##### 📄 Bottom text (footer API — separate from admin)")
+                            st.caption(
+                                "The footer push uses URL directly (not the active-pages "
+                                "cache), so it works independently of intro/meta pushes."
+                            )
+                            if not footer_entries:
+                                st.warning(
+                                    "No footer-API push entries for this URL. Either no "
+                                    "bottom-text push was ever made, or the footer log "
+                                    "(/data/footer_push_log.json) was reset."
+                                )
+                            else:
+                                st.caption(
+                                    f"Last {len(footer_entries)} bottom-text push attempts "
+                                    f"(newest first):"
+                                )
+                                for e in footer_entries:
+                                    _render_entry(e, show_admin_fields=False)
+
                             st.markdown(
                                 "**How to read this:**\n\n"
-                                "- ✅ `success` + non-zero `description sent` + still-bad live text → "
-                                "Magento full-page cache is stale; flush it in Magento Admin → System → "
-                                "Cache Management → Flush Magento Cache.\n"
-                                "- ❌ Non-200 HTTP or `network_error` → push never landed; check response body.\n"
-                                "- `description sent: 0 chars` → push button sent empty; AI output wasn't "
-                                "in the field when you clicked.\n"
-                                "- No entries → nothing pushed for this page-id, OR URL→ID mapping is wrong."
+                                "- ✅ `success` + non-zero chars + still-bad live text → Magento "
+                                "full-page cache stale; flush in Magento Admin → System → Cache → "
+                                "Flush Magento Cache.\n"
+                                "- ❌ Non-200 HTTP or `network_error` → push didn't land; read "
+                                "the response body for the Magento error.\n"
+                                "- 0 chars / 0 sections → push button sent empty payload; AI "
+                                "output wasn't loaded into the field.\n"
+                                "- No entries on either side → nothing was actually pushed for "
+                                "this URL, OR the relevant log got reset."
                             )
                         if st.button("Dismiss diagnostic", key=f"qq_dismiss_{url_hash}"):
                             st.session_state.pop("_qq_diag", None)
