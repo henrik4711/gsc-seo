@@ -1152,7 +1152,10 @@ def render():
                                     payload = e.get("payload") or {}
                                     sections = e.get("section_count", 0)
                                     texts = payload.get("texts", []) if isinstance(payload, dict) else []
-                                    total_chars = sum(len((t.get("text") or "")) for t in texts) if texts else 0
+                                    total_chars = sum(
+                                        len((t.get("content") or t.get("text") or ""))
+                                        for t in texts
+                                    ) if texts else 0
                                     body_excerpt = (e.get("response_body") or "")[:300]
                                     st.markdown(
                                         f"<div style='background:#0d0d15; border-left:3px solid {color}; "
@@ -1191,9 +1194,17 @@ def render():
                                 else:
                                     sections = entry.get("section_count", 0)
                                     texts = payload.get("texts", []) if isinstance(payload, dict) else []
-                                    total_chars = sum(len((t.get("text") or "")) for t in texts) if texts else 0
+                                    # Footer API uses field "content" — earlier
+                                    # this read "text" and always showed 0,
+                                    # falsely suggesting empty pushes.
+                                    total_chars = sum(
+                                        len((t.get("content") or t.get("text") or ""))
+                                        for t in texts
+                                    ) if texts else 0
+                                    faq_count = sum(1 for t in texts if t.get("tagAsFaq"))
                                     fields_line = (
-                                        f"sections sent: <strong>{sections}</strong> · "
+                                        f"sections sent: <strong>{sections}</strong> "
+                                        f"({sections - faq_count} body + {faq_count} FAQ) · "
                                         f"total chars: <strong>{total_chars}</strong>"
                                     )
                                 body_excerpt = (entry.get("response_body") or "")[:300]
