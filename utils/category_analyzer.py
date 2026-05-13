@@ -47,8 +47,17 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
     """
     Classify a page as category, product, blog, faq, or other.
     Uses URL patterns + schema + HTML structure signals.
+
+    Uses the Mshop active-pages cache as AUTHORITATIVE ground truth
+    when available: that cache lists every category, CMS page, and
+    filterpage in Magento by URL → page-id. If a URL is in the cache
+    we use the recorded type directly; if a URL is NOT in the cache
+    then it cannot be a category (must be a product, blog, or other).
+    This prevents the longstanding bug where product pages with
+    "related products" sections were classified as categories.
     """
     from utils.url_helpers import url_path as _url_path, url_segments as _url_segments
+    from utils.ui_helpers import normalize_url as _norm
     url_lower = url.lower()
     path = _url_path(url_lower)
     segments = _url_segments(url_lower)
@@ -58,6 +67,55 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
         "confidence": "low",
         "signals": [],
     }
+
+    # ── 0. AUTHORITATIVE: Mshop active-pages cache (when available) ──
+    # The cache is only present when the user has clicked "Sync Mshop
+    # active pages now". It lists every Magento category, CMS page, and
+    # filterpage by URL. Pages outside that cache are products / blogs /
+    # other — they cannot be categories.
+    try:
+        import streamlit as _st
+        _active = _st.session_state.get("mshop_active_pages") or {}
+        _lookup = _active.get("lookup") or {} if isinstance(_active, dict) else {}
+        if _lookup:
+            _norm_url = _norm(url)
+            _hit = _lookup.get(_norm_url)
+            if _hit:
+                _t = (_hit.get("type") or "").lower()
+                if _t == "category":
+                    result["page_type"] = "category"
+                    result["confidence"] = "high"
+                    result["signals"].append(
+                        f"Mshop active-pages cache: registered as category id={_hit.get('id')}"
+                    )
+                    return result
+                if _t == "cms":
+                    result["page_type"] = "info"
+                    result["confidence"] = "high"
+                    result["signals"].append(
+                        f"Mshop active-pages cache: registered as CMS page id={_hit.get('id')}"
+                    )
+                    return result
+                if _t == "filterpage":
+                    result["page_type"] = "category"
+                    result["confidence"] = "high"
+                    result["signals"].append(
+                        f"Mshop active-pages cache: registered as filterpage id={_hit.get('id')} (treated as category)"
+                    )
+                    return result
+            else:
+                # URL is NOT in the active-pages cache — it CANNOT be a
+                # category. Block any later code path from setting it
+                # to category by stamping a flag we check below.
+                result["_blocked_category"] = True
+                result["signals"].append(
+                    "Not in Mshop active-pages cache → not a category "
+                    "(likely a product or non-Magento page)"
+                )
+    except Exception:
+        # Streamlit may not be available in some runtime contexts (tests,
+        # CLI). Fall through to the heuristic-only path.
+        pass
 
     # ── 1. URL pattern matching ───────────────────────────────
     # All patterns come from site_patterns module which has universal defaults
@@ -275,6 +333,39 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             elif len(segments) == 1:
                 result["page_type"] = "category"
                 result["signals"].append("Single URL segment = likely category/landing page")
+
+    # ── BLOCKED-CATEGORY GUARD ──
+    # If the active-pages cache told us this URL is NOT in Magento as a
+    # category, the heuristics above may still have set it to "category"
+    # (e.g. on the basis of "shows 3+ products" — common on product pages
+    # with cross-sells). Override that here: page_type "category" is
+    # reserved for URLs Mshop actually has registered as categories.
+    if result.pop("_blocked_category", False) and result["page_type"] == "category":
+        # Re-derive a non-category type from the strongest available
+        # signal: schema "Product", accordion-product, or has_add_to_cart
+        # → product. Otherwise fall back to "product" since most pages
+        # outside the active-pages cache on an e-commerce site are
+        # products. Blog/info would have matched URL patterns earlier.
+        if page_data:
+            schema_str = " ".join(str(s).lower() for s in (page_data.get("schema_types") or []))
+            if "product" in schema_str and "itemlist" not in schema_str:
+                result["page_type"] = "product"
+                result["signals"].append("Reclassified to product: schema + not in active-pages cache")
+            elif page_data.get("has_accordion_product"):
+                result["page_type"] = "product"
+                result["signals"].append("Reclassified to product: accordion + not in active-pages cache")
+            else:
+                _body = (page_data.get("body_text") or "").lower()
+                _has_atc = any(s in _body[:3000] for s in ["lägg i varukorg", "add to cart", "buy now"])
+                if _has_atc:
+                    result["page_type"] = "product"
+                    result["signals"].append("Reclassified to product: add-to-cart + not in active-pages cache")
+                else:
+                    result["page_type"] = "product"
+                    result["signals"].append("Reclassified to product: not in active-pages cache (default fallback)")
+        else:
+            result["page_type"] = "product"
+            result["signals"].append("Reclassified to product: not in active-pages cache (no page_data)")
 
     if result["page_type"] != "unknown":
         result["confidence"] = "high" if len(result["signals"]) >= 2 else "medium"

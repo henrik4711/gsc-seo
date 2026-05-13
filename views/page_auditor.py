@@ -565,8 +565,16 @@ def render():
 
     if run_reclassify:
         from utils.category_analyzer import classify_page_type
+        from utils.ui_helpers import stable_hash as _rc_sh
+        from utils.quality_check_runner import quality_key as _rc_qk
         before = Counter((r.get("page_type") or "missing") for r in results)
         changed = 0
+        # Track which URLs flipped type so we can drop their per-URL caches
+        # (quality verdict, plan, bottom text, intro). Keeping verdicts
+        # generated under the wrong page-type assumption leads to confusing
+        # stale data — e.g. a product page still showing "REWRITE" from
+        # when it was misclassified as a category.
+        flipped_urls = []
         with st.status("Reclassifying...", expanded=True) as rc_status:
             for r in results:
                 old_type = r.get("page_type")
@@ -577,8 +585,33 @@ def render():
                         r["page_type"] = new_type
                         r["_reclassify_signals"] = classification.get("signals", [])
                         changed += 1
+                        flipped_urls.append(r.get("url", ""))
                 except Exception:
                     pass
+
+            # Drop per-URL AI caches for pages that flipped type — the
+            # cached verdict/plan/text was generated under the wrong
+            # type-assumption and would mislead the user.
+            import os as _os_pc
+            from utils.persistence import AI_CACHE_DIR as _ACD_pc
+            for _u in flipped_urls:
+                if not _u:
+                    continue
+                _h = _rc_sh(_u)
+                _per_url_keys = [
+                    _rc_qk(_u),
+                    f"_ai_plan_{_h}",
+                    f"_bottom_text_{_h}",
+                    f"_intro_text_{_h}",
+                ]
+                for _k in _per_url_keys:
+                    st.session_state.pop(_k, None)
+                    _p = _os_pc.path.join(_ACD_pc, f"{_k}.json")
+                    if _os_pc.path.exists(_p):
+                        try:
+                            _os_pc.remove(_p)
+                        except Exception:
+                            pass
             st.session_state["audit_results"] = results
             from utils.persistence import save_key
             save_key("audit_results")
