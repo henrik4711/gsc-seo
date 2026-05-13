@@ -411,6 +411,17 @@ with st.sidebar:
     if st.session_state["selected_page"] not in page_labels:
         st.session_state["selected_page"] = page_labels[next_idx]
 
+    # ── Programmatic-nav bridge ──
+    # When code outside the sidebar (e.g. open_in_quick_wins() called
+    # from a button) updates `selected_page`, the radio widget needs
+    # its keyed session value (nav_radio) updated too — otherwise the
+    # widget shows its OWN remembered value and the app appears to
+    # ignore the navigation. We bridge here BEFORE the widget renders;
+    # setting nav_radio AFTER it renders raises StreamlitAPIException.
+    _desired_nav = st.session_state["selected_page"]
+    if _desired_nav in page_labels and st.session_state.get("nav_radio") != _desired_nav:
+        st.session_state["nav_radio"] = _desired_nav
+
     page = st.radio(
         "", page_labels,
         index=page_labels.index(st.session_state["selected_page"]),
