@@ -3475,31 +3475,116 @@ def _render_per_page_tab():
     if "_qw_page_idx" not in st.session_state:
         st.session_state["_qw_page_idx"] = 0
 
-    # Honor cross-view deep-link request (e.g. from Page Auditor).
-    # Resolved against the SAME `pages` list that we paginate, so the
-    # index always lines up.
-    from utils.page_deeplink import consume_jump_request, find_page_index
-    _jump_url = consume_jump_request()
-    if _jump_url:
-        _hit = find_page_index(pages, _jump_url)
-        if _hit is not None:
-            st.session_state["_qw_page_idx"] = _hit
-            # CRITICAL: also push the new index into the "Go to page"
-            # number_input's session_state key. Without this, the widget
-            # keeps its previous value (e.g. 1) and its
-            # `if int(jump) - 1 != idx` check below overwrites
-            # _qw_page_idx back to that stale value — which is why deep
-            # links were landing on the WRONG page.
-            st.session_state["_qw_page_jump"] = _hit + 1
-        else:
-            # URL exists in audit but was filtered out of Quick Wins
-            # (marked done, or scheduled for merge/delete). Tell the user.
-            st.warning(
-                f"`{_jump_url}` was opened from another view, but Quick Wins "
-                "isn't currently showing it (likely marked done or scheduled "
-                "for merge/delete). Reset done-status or check Site Cleanup."
-            )
+    # ── FOCUS MODE: cross-view deep link bypasses pagination entirely ──
+    # Identity is the URL itself, not a list-position index. This avoids
+    # all the Streamlit widget-lifecycle issues that previously caused
+    # deep links to land on the wrong page.
+    from utils.page_deeplink import current_focus_url, clear_focus, find_page_index
+    focus_url = current_focus_url()
+    if focus_url:
+        from utils.ui_helpers import normalize_url as _qw_nu
+        focus_norm = _qw_nu(focus_url)
 
+        # 1. Try to find it in the sorted Quick Wins pages list (top_n)
+        focus_page = next(
+            (p for p in pages if _qw_nu(p.get("url", "")) == focus_norm),
+            None,
+        )
+        rank_in_list = find_page_index(pages, focus_url)
+        from_filtered_list = focus_page is not None
+
+        # 2. If not in the top_n list, build a synthetic page dict
+        # straight from audit_results so the user can still work on it.
+        if focus_page is None:
+            audit_row = next(
+                (r for r in audit_results
+                 if _qw_nu(r.get("url", "")) == focus_norm),
+                None,
+            )
+            if audit_row is not None:
+                # Reuse the same shape _get_top_pages produces so
+                # render_page_actions_card sees no difference.
+                from utils.page_profile import build_page_profile as _bpp
+                _prof = _bpp(audit_row.get("url", ""))
+                _flost = sum(g.get("lost_clicks", 0) for g in _prof.get("ctr_gaps", []))
+                focus_page = {
+                    "url": audit_row.get("url", ""),
+                    "page_type": audit_row.get("page_type", "unknown"),
+                    "impressions": _prof.get("total_impressions", 0),
+                    "lost_clicks": _flost,
+                    "meta_score": audit_row.get("meta_score") or 0,
+                    "content_score": audit_row.get("content_score") or 0,
+                    "title": audit_row.get("title", ""),
+                    "meta_description": audit_row.get("meta_description", ""),
+                    "h1": audit_row.get("h1", ""),
+                    "word_count": audit_row.get("word_count", 0),
+                    "intro_text": audit_row.get("intro_text", ""),
+                    "bottom_text": audit_row.get("bottom_text", ""),
+                    "audit": audit_row,
+                }
+
+        if focus_page is None:
+            # Truly not in audit_results — wrong URL or page never audited.
+            st.error(
+                f"Couldn't find this URL in audit_results:\n\n`{focus_url}`\n\n"
+                "Re-run **Page Auditor → Re-scrape ALL pages** (or scrape "
+                "this single URL) and try again. Falling back to the top "
+                "opportunity list below."
+            )
+            clear_focus()
+        else:
+            # ── Render focused page banner + card + back button ──
+            top_a, top_b = st.columns([5, 2])
+            with top_a:
+                where = (
+                    f"opening directly (this URL is rank "
+                    f"<strong>#{rank_in_list + 1}</strong> of {len(pages)} "
+                    "in the top opportunities list)"
+                    if from_filtered_list else
+                    "opening directly (NOT in the top opportunities list — "
+                    "may be marked done, scheduled for merge/delete, or "
+                    "below the top-N cutoff)"
+                )
+                st.markdown(
+                    f"<div style='background:#0d0d15; border:1px solid #5533ff; "
+                    f"border-radius:8px; padding:0.8rem 1rem; margin-bottom:0.5rem;'>"
+                    f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.7rem; "
+                    f"color:#c8b4ff; letter-spacing:0.05em;'>FOCUSED ON URL</div>"
+                    f"<div style='font-size:0.95rem; color:#e8e8f0; margin-top:0.2rem;'>"
+                    f"{focus_page['url']}</div>"
+                    f"<div style='font-size:0.75rem; color:#9b9bb8; margin-top:0.3rem;'>"
+                    f"{where}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with top_b:
+                if st.button(
+                    "← Back to opportunity list",
+                    key="qw_clear_focus",
+                    use_container_width=True,
+                    help="Clear focus and resume paginated browsing of "
+                         "all top opportunities.",
+                ):
+                    clear_focus()
+                    st.rerun()
+
+            st.markdown("---")
+
+            def _skip_focused():
+                # In focus mode, "skip" just clears focus so the user
+                # returns to the paginated list rather than guessing the
+                # next URL.
+                clear_focus()
+
+            render_page_actions_card(
+                focus_page,
+                idx=rank_in_list if rank_in_list is not None else None,
+                total_pages=len(pages),
+                on_skip=_skip_focused,
+            )
+            return  # Done — focus mode bypasses pagination entirely
+
+    # ── BROWSING MODE: paginated walk through top opportunities ──
     idx = st.session_state["_qw_page_idx"]
     if idx >= len(pages):
         idx = 0
