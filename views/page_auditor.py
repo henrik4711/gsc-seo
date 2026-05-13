@@ -1126,6 +1126,49 @@ def render():
                                                 st.error(f"Sync failed: {result.get('error', 'unknown')}")
                                         except Exception as _se:
                                             st.error(f"Sync error: {_se}")
+
+                            # Footer-text pushes use URL directly (no
+                            # active-pages cache needed), so even when
+                            # the admin lookup failed we can still show
+                            # whether bottom-text pushes landed.
+                            footer_entries_no_pinfo = _diag.get("footer_entries") or []
+                            st.markdown("---")
+                            st.markdown("##### 📄 Bottom text (footer API — works without active-pages cache)")
+                            if not footer_entries_no_pinfo:
+                                st.warning(
+                                    "No footer-API push entries for this URL either. "
+                                    "Either no bottom-text push was ever made, or the "
+                                    "footer log (/data/footer_push_log.json) was reset."
+                                )
+                            else:
+                                st.caption(
+                                    f"Last {len(footer_entries_no_pinfo)} bottom-text "
+                                    f"push attempts (newest first):"
+                                )
+                                for e in footer_entries_no_pinfo:
+                                    status_e = e.get("status", "?")
+                                    http = e.get("http_code", "?")
+                                    color = "#33dd88" if status_e == "success" else "#ff4455"
+                                    payload = e.get("payload") or {}
+                                    sections = e.get("section_count", 0)
+                                    texts = payload.get("texts", []) if isinstance(payload, dict) else []
+                                    total_chars = sum(len((t.get("text") or "")) for t in texts) if texts else 0
+                                    body_excerpt = (e.get("response_body") or "")[:300]
+                                    st.markdown(
+                                        f"<div style='background:#0d0d15; border-left:3px solid {color}; "
+                                        f"padding:0.6rem; margin:0.4rem 0; border-radius:4px; "
+                                        f"font-size:0.75rem; font-family:\"IBM Plex Mono\",monospace;'>"
+                                        f"<div style='color:{color}; font-weight:700;'>"
+                                        f"{status_e.upper()} · HTTP {http} · {e.get('timestamp', '')}</div>"
+                                        f"<div style='color:#9b9bb8; margin-top:0.3rem;'>endpoint: (footer API)</div>"
+                                        f"<div style='color:#e8e8f0; margin-top:0.3rem;'>"
+                                        f"sections sent: <strong>{sections}</strong> · "
+                                        f"total chars: <strong>{total_chars}</strong></div>"
+                                        f"<div style='color:#6b6b8a; margin-top:0.3rem; word-break:break-all;'>"
+                                        f"response: {body_excerpt}</div>"
+                                        f"</div>",
+                                        unsafe_allow_html=True,
+                                    )
                         else:
                             admin_entries = _diag.get("admin_entries") or []
                             footer_entries = _diag.get("footer_entries") or []
