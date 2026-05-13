@@ -52,6 +52,12 @@ PERSIST_KEYS = {
     # User-managed "I've handled this" flags per Site Cleanup action item.
     # Owned by utils/action_status.py — see that module for shape.
     "action_status": "json",
+    # Re-check history: set of URLs already re-checked via "Re-check ALL
+    # flagged pages" button. Stored as a list on disk (sorted), reloaded
+    # as a list and converted to a set in the UI. Lets the button skip
+    # work the user has already done — survives Railway redeploys that
+    # would otherwise wipe session_state and force re-doing everything.
+    "_recheck_history": "json",
 }
 
 # Prefixes for dynamic AI cache keys — stored as individual files

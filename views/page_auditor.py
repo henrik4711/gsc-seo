@@ -898,17 +898,27 @@ def render():
         from utils.ui_helpers import normalize_url as _qr_nu_top
         _audit_by_url_top = {_qr_nu_top(r["url"]): r for r in results if r.get("url")}
 
+        # Re-check history: URLs already re-checked previously, persisted
+        # to disk so we can skip them if user clicks Re-check ALL again.
+        # Stored as list, used as set here for fast membership test.
+        _recheck_history = set(st.session_state.get("_recheck_history") or [])
+
         rc_col1, rc_col2, rc_col3 = st.columns([2, 2, 2])
         if not _recheck_running:
             with rc_col1:
-                _eligible_urls = [
+                # All flagged URLs
+                _all_flagged = [
                     q["url"] for q in quality_results
                     if q["verdict"] in ("REWRITE", "IMPROVE")
                 ]
+                # Filter out ones already re-checked previously
+                _eligible_urls = [u for u in _all_flagged if u not in _recheck_history]
+                _skipped_count = len(_all_flagged) - len(_eligible_urls)
                 _btn_label = (
-                    f"🔄 Re-check ALL flagged pages ({len(_eligible_urls)})"
+                    f"🔄 Re-check {len(_eligible_urls)} pending"
+                    + (f" (skipping {_skipped_count} already done)" if _skipped_count else "")
                     if _eligible_urls
-                    else "🔄 Re-check ALL flagged pages (none flagged)"
+                    else "🔄 Re-check ALL flagged (all already done)"
                 )
                 if st.button(
                     _btn_label,
@@ -916,19 +926,18 @@ def render():
                     type="primary",
                     use_container_width=True,
                     disabled=not _eligible_urls,
-                    help="Re-scrapes every REWRITE+IMPROVE page from mshop.se "
-                         "with cache-bypass headers, drops the cached verdict, "
-                         "and re-runs the AI quality check using the fixed "
-                         "editorial-only measurement. Many earlier verdicts "
-                         "were false positives caused by product-grid "
-                         "contamination — this gives the real picture.",
+                    help="Re-scrapes every REWRITE+IMPROVE page that hasn't been "
+                         "re-checked yet, with cache-bypass headers. Skips pages "
+                         "already in the re-check history (persisted across "
+                         "Railway restarts). Click 'Clear re-check history' to "
+                         "force re-doing everything from scratch.",
                 ):
                     st.session_state[_recheck_state_key] = {
                         "running": True,
                         "pending_urls": list(_eligible_urls),
                         "done_urls": [],
                         "errors": [],
-                        "before": {q["url"]: q["verdict"] for q in quality_results if q["verdict"] in ("REWRITE", "IMPROVE")},
+                        "before": {q["url"]: q["verdict"] for q in quality_results if q["url"] in _eligible_urls},
                         "started_at": time.time(),
                     }
                     st.rerun()
@@ -942,6 +951,58 @@ def render():
                         f"Last re-check: {flipped}/{total} pages flipped to "
                         f"better verdict ({_last.get('seconds', 0):.0f}s)"
                     )
+                # History stats + clear button
+                if _recheck_history:
+                    st.caption(
+                        f"Re-check history: {len(_recheck_history)} URLs already done"
+                    )
+                    if st.button(
+                        "🗑 Clear re-check history",
+                        key="recheck_clear_history",
+                        help="Wipes the persisted set of already-re-checked URLs "
+                             "so the next Re-check ALL run starts fresh.",
+                    ):
+                        st.session_state["_recheck_history"] = []
+                        from utils.persistence import save_key as _sk_clear
+                        try:
+                            _sk_clear("_recheck_history")
+                        except Exception:
+                            pass
+                        st.rerun()
+            with rc_col3:
+                # "Seed" history with all URLs that already have a verdict.
+                # Useful right now: user re-scraped ~120 pages BEFORE the
+                # history-tracking was added, so those 120 aren't in the
+                # set yet. Clicking this once adds every currently-checked
+                # URL to history, so next Re-check ALL run only processes
+                # NEW flagged pages.
+                _flagged_not_in_history = [
+                    q["url"] for q in quality_results
+                    if q["verdict"] in ("REWRITE", "IMPROVE")
+                    and q["url"] not in _recheck_history
+                ]
+                if _flagged_not_in_history:
+                    if st.button(
+                        f"✓ Mark all {len(_flagged_not_in_history)} flagged as re-checked",
+                        key="recheck_mark_done",
+                        help="Adds every flagged URL with a current verdict to "
+                             "re-check history. Use this if you've already "
+                             "re-checked them via the per-page button (or in "
+                             "an earlier batch run before history tracking was "
+                             "added). Future Re-check ALL runs will skip them.",
+                    ):
+                        _h = list(_recheck_history)
+                        for u in _flagged_not_in_history:
+                            if u not in _h:
+                                _h.append(u)
+                        st.session_state["_recheck_history"] = _h
+                        from utils.persistence import save_key as _sk_mark
+                        try:
+                            _sk_mark("_recheck_history")
+                        except Exception:
+                            pass
+                        st.success(f"Marked {len(_flagged_not_in_history)} URLs as re-checked.")
+                        st.rerun()
         else:
             # Live progress while running
             pending = _recheck_state.get("pending_urls") or []
@@ -1011,6 +1072,17 @@ def render():
                     _sk("audit_results")
                 except Exception:
                     pass
+                # Add to persistent re-check history so we don't redo this URL
+                # on the next Re-check ALL run (survives Railway restart).
+                _hist = list(st.session_state.get("_recheck_history") or [])
+                if next_url not in _hist:
+                    _hist.append(next_url)
+                    st.session_state["_recheck_history"] = _hist
+                    try:
+                        from utils.persistence import save_key as _sk2
+                        _sk2("_recheck_history")
+                    except Exception:
+                        pass
                 st.rerun()
             else:
                 # Queue empty — finalize
@@ -1092,30 +1164,47 @@ def render():
                 fixes_html = " ".join(f"<span style='color:#c8b4ff; font-size:0.75rem;'>→ {fix}</span><br>" for fix in q["specific_fixes"][:3])
                 st.markdown(f"<div>{fixes_html}</div>", unsafe_allow_html=True)
 
-            # Action: rewrite this exact page via the same flow as Quick Wins
+            # Action buttons — Re-scrape is ALWAYS available (diagnostic
+            # works on any verdict, including KEEP, since the user might
+            # want to verify a recent push didn't break anything).
+            # Generation buttons are only meaningful for flagged pages.
             audit_row = _audit_by_url.get(_qr_nu(q["url"]))
-            if audit_row is not None and verdict in ("REWRITE", "IMPROVE"):
+            if audit_row is not None:
                 btn_cols = st.columns([3, 3, 3, 3])
                 with btn_cols[0]:
-                    if ai_plan_present:
+                    # Open / Rewrite — only for REWRITE/IMPROVE pages
+                    if verdict in ("REWRITE", "IMPROVE"):
+                        if ai_plan_present:
+                            if st.button(
+                                "🚀 Open in Quick Wins",
+                                key=f"qq_open_{url_hash}",
+                                use_container_width=True,
+                            ):
+                                open_in_quick_wins(q["url"])
+                                st.rerun()
+                        else:
+                            if st.button(
+                                "🤖 Rewrite with AI + open",
+                                key=f"qq_gen_{url_hash}",
+                                type="primary",
+                                use_container_width=True,
+                            ):
+                                generate_ai_fixes_for_page(page_audit_to_page_dict(audit_row))
+                                open_in_quick_wins(q["url"])
+                                st.rerun()
+                    elif ai_plan_present:
+                        # KEEP page that already has an AI plan — let user
+                        # still navigate to Quick Wins (e.g. to push a
+                        # tweak or review the cached output).
                         if st.button(
                             "🚀 Open in Quick Wins",
-                            key=f"qq_open_{url_hash}",
+                            key=f"qq_open_keep_{url_hash}",
                             use_container_width=True,
                         ):
-                            open_in_quick_wins(q["url"])
-                            st.rerun()
-                    else:
-                        if st.button(
-                            "🤖 Rewrite with AI + open",
-                            key=f"qq_gen_{url_hash}",
-                            type="primary",
-                            use_container_width=True,
-                        ):
-                            generate_ai_fixes_for_page(page_audit_to_page_dict(audit_row))
                             open_in_quick_wins(q["url"])
                             st.rerun()
                 with btn_cols[1]:
+                    # Regenerate — only if plan exists, regardless of verdict
                     if ai_plan_present:
                         if st.button(
                             "🔄 Regenerate AI fixes",
