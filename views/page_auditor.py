@@ -1289,16 +1289,21 @@ def render():
                 _fix_state["pending_urls"] = pending_fix[1:]
                 _fix_state["done_urls"] = done_fix + [next_fix_url]
                 st.session_state[_fix_state_key] = _fix_state
-                # Persist fix history so we don't redo on Railway restart
-                _fhist = list(st.session_state.get("_fix_history") or [])
-                if next_fix_url not in _fhist:
-                    _fhist.append(next_fix_url)
-                    st.session_state["_fix_history"] = _fhist
-                    try:
-                        from utils.persistence import save_key as _sk_fh
-                        _sk_fh("_fix_history")
-                    except Exception:
-                        pass
+                # Persist fix history ONLY if this URL had no errors. A
+                # transient AI/network failure shouldn't permanently mark
+                # a page as "done" — otherwise resuming Fix ALL would
+                # silently skip pages that never actually got fixed.
+                _url_had_error = any(next_fix_url in str(e) for e in _fix_state.get("errors", []))
+                if not _url_had_error:
+                    _fhist = list(st.session_state.get("_fix_history") or [])
+                    if next_fix_url not in _fhist:
+                        _fhist.append(next_fix_url)
+                        st.session_state["_fix_history"] = _fhist
+                        try:
+                            from utils.persistence import save_key as _sk_fh
+                            _sk_fh("_fix_history")
+                        except Exception:
+                            pass
                 st.rerun()
             else:
                 # Queue empty — finalize

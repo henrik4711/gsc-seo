@@ -577,10 +577,89 @@ def _parse_ai_json(message) -> dict:
         if salvaged is not None:
             return salvaged
 
+    # Strategy 5: field-by-field regex extraction. Last resort for when
+    # the AI emits well-structured response BUT mid-string has an
+    # unescaped quote inside HTML (e.g. <a title="X">text</a> where the
+    # outer string-literal quote isn't escaped). Recovers the major
+    # fields independently — better partial result than total failure.
+    fields = _extract_known_fields_via_regex(raw)
+    if fields and ("top_html" in fields or "bottom_html" in fields or "optimized_text" in fields):
+        return fields
+
     raise ValueError(
         f"AI returned invalid JSON (stop_reason={stop_reason}, length={len(raw)} chars). "
         f"First 300 chars: {raw[:300]}\n\nLast 200 chars: ...{raw[-200:]}"
     )
+
+
+def _extract_known_fields_via_regex(raw: str) -> dict | None:
+    """Recover individual JSON fields by regex when full parse fails.
+    Handles the common AI failure mode where one HTML attribute inside
+    a string value has an unescaped quote, breaking the entire JSON.
+    Returns dict of recovered fields, or None if nothing extracted.
+
+    Strategy per string field: look for "fieldname" : " ... " followed
+    by either a comma+newline-quote pattern (next field) or close-brace.
+    The final close-quote is matched LAZILY against the next valid JSON
+    structural token, so unescaped inner quotes don't break extraction.
+    """
+    import re as _re_rj
+    result: dict = {}
+
+    # String fields: value starts after `:` and a quote, ends at the
+    # quote that's followed by `,\n  "<otherfield>":` OR `\n}` at end.
+    # Inner quotes (unescaped or escaped) are tolerated.
+    string_fields = [
+        "top_html", "bottom_html", "target_keyword", "optimized_text",
+    ]
+    for fname in string_fields:
+        pat = (
+            rf'"{fname}"\s*:\s*"'                          # field opener: "field":"
+            r'(.*?)'                                       # value (lazy)
+            r'"\s*(?:,\s*"[a-zA-Z_]+"\s*:|}\s*$)'          # closer: ",  "next": OR }EOF
+        )
+        m = _re_rj.search(pat, raw, _re_rj.DOTALL)
+        if m:
+            val = m.group(1)
+            # Restore JSON-escaped sequences the AI did write correctly.
+            try:
+                val = (
+                    val.replace(r'\"', '"')
+                       .replace(r'\\', '\\')
+                       .replace(r'\n', '\n')
+                       .replace(r'\t', '\t')
+                       .replace(r'\/', '/')
+                )
+            except Exception:
+                pass
+            result[fname] = val
+
+    # Numeric fields
+    for fname in ["top_word_count", "bottom_word_count", "word_count", "score"]:
+        m = _re_rj.search(rf'"{fname}"\s*:\s*(\d+)', raw)
+        if m:
+            try:
+                result[fname] = int(m.group(1))
+            except ValueError:
+                pass
+
+    # List-of-strings fields — best-effort extraction of complete entries.
+    list_fields = ["internal_links", "keywords_integrated", "issues_fixed",
+                   "products_featured", "main_issues", "specific_fixes"]
+    for fname in list_fields:
+        pat = rf'"{fname}"\s*:\s*\[(.*?)\]'
+        m = _re_rj.search(pat, raw, _re_rj.DOTALL)
+        if m:
+            inner = m.group(1)
+            # Try to JSON-parse just this list (it's usually well-formed
+            # even when the surrounding object is broken).
+            try:
+                result[fname] = json.loads(f"[{inner}]")
+            except Exception:
+                # Fall back to extracting quoted strings
+                result[fname] = _re_rj.findall(r'"((?:[^"\\]|\\.)*)"', inner)
+
+    return result or None
 
 
 def _extract_last_balanced_json_block(raw: str) -> str | None:
