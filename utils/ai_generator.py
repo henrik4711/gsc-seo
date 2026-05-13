@@ -362,6 +362,175 @@ def _mechanical_post_process(text_data: dict) -> dict:
     return text_data
 
 
+def _validate_cluster_link_directions(
+    url: str,
+    full_html: str,
+    topic_clusters: dict | None,
+    audit_by_url: dict | None,
+) -> list:
+    """Check that cluster links flow correctly between hub and spokes.
+
+    Returns a list of issue strings — empty if everything is fine. Each
+    issue describes ONE concrete problem the AI must fix on the next
+    pass (so the retry feedback can quote it back verbatim).
+
+    Three patterns checked:
+    1. HUB linking DOWN to a spoke with an anchor that's just the hub's
+       head term. Wastes the spoke's keyword opportunity — Google sees
+       the hub repeating its own keyword, not the spoke's modifier.
+    2. SPOKE that has zero links to its hub. Vertical authority
+       transfer relies on the spoke pointing UP at least once.
+    3. SPOKE linking UP to its hub but with an anchor that doesn't
+       contain the hub's head term. Wastes the up-link's signal.
+    """
+    issues = []
+    if not topic_clusters or not isinstance(topic_clusters, dict):
+        return issues
+    try:
+        from utils.topical_scope import get_topical_scope, _url_tail_segment
+        from utils.ui_helpers import normalize_url as _nu
+    except Exception:
+        return issues
+
+    scope = get_topical_scope(url, topic_clusters)
+    if not scope:
+        return issues
+
+    import re as _re_cl
+
+    # Extract every internal anchor from the body
+    anchor_re = _re_cl.compile(
+        r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        flags=_re_cl.IGNORECASE | _re_cl.DOTALL,
+    )
+    body_links = []
+    for m in anchor_re.finditer(full_html or ""):
+        href = m.group(1)
+        anchor_text = _re_cl.sub(r"<[^>]+>", "", m.group(2)).strip()
+        if anchor_text:
+            body_links.append((href, anchor_text))
+
+    hub_url = scope.get("hub_url", "")
+    hub_norm = _nu(hub_url) if hub_url else ""
+    cluster_topic = (scope.get("cluster_topic") or "").lower().strip()
+    hub_tail = (_url_tail_segment(hub_url) or "").lower() if hub_url else ""
+
+    # Build the hub's "head term" set — words that should appear in any
+    # spoke→hub anchor. Pulls from cluster topic + hub URL slug + hub's
+    # own H1/title (most authoritative when available).
+    head_term_words = set()
+    for src in (cluster_topic, hub_tail.replace("-", " ")):
+        for w in src.split():
+            if len(w) >= 3:
+                head_term_words.add(w.lower())
+    if audit_by_url and hub_norm:
+        hub_audit = audit_by_url.get(hub_norm, {}) or {}
+        hub_h1 = (hub_audit.get("h1") or "").lower()
+        hub_title = (hub_audit.get("title") or "").split("|")[0].split("»")[0].lower()
+        for src in (hub_h1, hub_title):
+            for w in _re_cl.findall(r"[a-zåäöéèà]+", src):
+                if len(w) >= 4 and w.lower() not in {"och", "för", "till", "med", "den", "det", "som"}:
+                    head_term_words.add(w.lower())
+
+    # Build the cluster's spoke URL set so we can identify down-links
+    spoke_norms = set()
+    for cluster in topic_clusters.get("clusters", []) or []:
+        if (cluster.get("topic") or "").strip().lower() != cluster_topic:
+            continue
+        for p in cluster.get("pages", []) or []:
+            cp_url = p.get("page", "")
+            if cp_url:
+                cp_norm = _nu(cp_url)
+                if cp_norm and cp_norm != hub_norm:
+                    spoke_norms.add(cp_norm)
+        break
+
+    own_norm = _nu(url)
+
+    # ── Pattern 1: HUB linking DOWN with hub-keyword anchor ──
+    if scope.get("is_hub") and head_term_words:
+        for href, anchor in body_links:
+            try:
+                href_norm = _nu(href)
+            except Exception:
+                continue
+            if href_norm not in spoke_norms:
+                continue
+            # If anchor is JUST the head term (1-3 words, all in head_term_words),
+            # it's wasted on the spoke link.
+            anchor_words = _re_cl.findall(r"[a-zåäöéèà]+", anchor.lower())
+            anchor_words = [w for w in anchor_words if len(w) >= 3]
+            if not anchor_words:
+                continue
+            if len(anchor_words) <= 3 and all(w in head_term_words for w in anchor_words):
+                # Try to suggest the spoke's modifier from its slug
+                spoke_tail = _url_tail_segment(href).replace("-", " ")
+                modifier_words = [w for w in spoke_tail.split() if w.lower() not in head_term_words]
+                modifier_phrase = " ".join(modifier_words) or spoke_tail
+                issues.append(
+                    f"HUB→SPOKE direction error: hub page links to "
+                    f"{href} with anchor '{anchor}' (just the head term). "
+                    f"Use the spoke's modifier — try anchor like "
+                    f"'{modifier_phrase} {' '.join(sorted(head_term_words)[:1])}' — "
+                    f"so the spoke ranks for its own keyword, not the hub's."
+                )
+
+    # ── Patterns 2 & 3: SPOKE → hub link ──
+    if not scope.get("is_hub") and hub_norm:
+        # Find every link from this page that points at the hub
+        hub_links = [
+            (h, a) for (h, a) in body_links
+            if _nu(h) == hub_norm
+        ]
+
+        if not hub_links:
+            # Pattern 2: spoke has NO hub link at all → weak vertical signal
+            sibling_links = [
+                (h, a) for (h, a) in body_links
+                if _nu(h) in spoke_norms and _nu(h) != own_norm
+            ]
+            if sibling_links:
+                # Spoke is linking sideways but never up — the worst case
+                _suggested_anchor = " ".join(sorted(head_term_words)[:2]) or cluster_topic
+                issues.append(
+                    f"SPOKE missing hub link: this page is a SPOKE in cluster "
+                    f"'{cluster_topic}' (hub: {hub_url}) and links to "
+                    f"{len(sibling_links)} sibling spoke(s) but ZERO link to "
+                    f"the hub. Add at least one in-body link to {hub_url} with "
+                    f"anchor '{_suggested_anchor}' (or close variant) so "
+                    f"vertical topical authority flows up to the hub."
+                )
+            else:
+                # No hub link AND no sibling links — softer warning, only
+                # flag if hub exists at all (already checked).
+                _suggested_anchor = " ".join(sorted(head_term_words)[:2]) or cluster_topic
+                issues.append(
+                    f"SPOKE missing hub link: this page is a SPOKE in cluster "
+                    f"'{cluster_topic}' but contains no link to its hub "
+                    f"({hub_url}). Add one in-body link with anchor "
+                    f"'{_suggested_anchor}' so the spoke transfers signal "
+                    f"upward to the hub."
+                )
+        else:
+            # Pattern 3: hub link exists — does its anchor include hub's head term?
+            for href, anchor in hub_links:
+                anchor_words = set(
+                    w.lower() for w in _re_cl.findall(r"[a-zåäöéèà]+", anchor)
+                    if len(w) >= 3
+                )
+                if not (anchor_words & head_term_words):
+                    issues.append(
+                        f"SPOKE→HUB anchor mismatch: link to hub {href} uses "
+                        f"anchor '{anchor}' which doesn't contain any of the "
+                        f"hub's head-term words "
+                        f"({', '.join(sorted(head_term_words)[:5])}). Rewrite "
+                        f"the anchor to include the hub's primary keyword so "
+                        f"the up-link transfers topical authority correctly."
+                    )
+
+    return issues
+
+
 def _parse_ai_json(message) -> dict:
     """Safely parse JSON from an AI response. Handles:
     - markdown code fences
@@ -2523,6 +2692,31 @@ Add EACH link recommended above into the new text. Vertical-up links (spoke→pi
 go in the BOTTOM TEXT; horizontal links (sibling→sibling) go wherever they fit
 naturally. Use the EXACT anchor text shown — don't paraphrase.
 
+## ⛔ CLUSTER LINK DIRECTION RULES (validated post-generation)
+These rules are programmatically enforced; violating any triggers retry.
+
+1. IF this page is a HUB (pillar):
+   - When linking DOWN to a spoke, the anchor must include the SPOKE'S
+     modifier-keyword, NOT just the hub's head term. Example:
+       BAD:  Hub /dildo links to spoke /klassisk-dildo with anchor "dildo".
+       GOOD: Hub /dildo links to spoke /klassisk-dildo with anchor "klassisk dildo".
+     Reason: anchor "dildo" wastes the spoke's keyword opportunity. The
+     spoke needs to rank for "klassisk dildo", not the head term.
+
+2. IF this page is a SPOKE:
+   - You MUST include at least ONE in-body link UP to the cluster's hub
+     page. Without an upward link the spoke's topical authority doesn't
+     transfer to the hub.
+   - The anchor for the hub-link must INCLUDE the hub's head-term keyword.
+     Example: from spoke /klassisk-dildo to hub /dildo, anchor should be
+     "dildos", "vårt sortiment av dildos", "alla dildos" — NOT generic
+     phrases like "vår sida", "läs mer", "klick här", or topic-irrelevant
+     anchors.
+
+3. SPOKE-to-SPOKE links (siblings) are ENCOURAGED for horizontal cluster
+   linking, but they DO NOT replace the upward hub link. A spoke that
+   links only sideways with no upward link is a topology error.
+
 ## STRUCTURAL SIGNALS — what containers exist on this page
 {struct_block}
 Use this to know what kind of page you are rewriting and where text lives.
@@ -2836,6 +3030,16 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
             adverb_opener_hits += _re_count.findall(_pat, _bottom_plain, flags=_re_count.IGNORECASE)
         adverb_opener_overuse = len(adverb_opener_hits) > 1
 
+        # 8) Cluster-link direction — hub-to-spoke, spoke-to-hub, missing
+        #    hub link from spoke. Reads cluster topology from session.
+        try:
+            _topic_clusters_local = st.session_state.get("topic_clusters", {}) or {}
+        except Exception:
+            _topic_clusters_local = {}
+        cluster_direction_issues = _validate_cluster_link_directions(
+            url, full_html, _topic_clusters_local, audit_by_url,
+        )
+
         # Detect duplicate-slug links — linking from /alla/satisfyer to
         # /sexleksaker/vibratorer/satisfyer dilutes both pages because
         # they cover the same topic. Heuristic: any internal href whose
@@ -3098,6 +3302,15 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                 "passed": not adverb_opener_overuse,
                 "actual": f"{len(adverb_opener_hits)} (Importantly,/Notably,/Viktigt,-style)",
             })
+            _checks.append({
+                "id": "cluster_link_directions",
+                "label": "Cluster link directions correct (hub↔spoke)",
+                "passed": not cluster_direction_issues,
+                "actual": (
+                    f"{len(cluster_direction_issues)} issue(s): "
+                    + (cluster_direction_issues[0][:80] + "…" if cluster_direction_issues else "")
+                ) if cluster_direction_issues else "clean",
+            })
             result["_quality_checks"] = _checks
             result["_quality_pass_count"] = sum(1 for c in _checks if c["passed"])
             result["_quality_total"] = len(_checks)
@@ -3109,7 +3322,7 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                 or keyword_overuse or vocab_diversity_low
                 or misspelling_capture_hits or generic_opener_hit
                 or em_dash_overuse or transition_word_overuse
-                or adverb_opener_overuse):
+                or adverb_opener_overuse or cluster_direction_issues):
             new_fixes = list(validation_fixes or [])
             if missing_kws:
                 new_fixes.append(
@@ -3290,6 +3503,10 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                     f"'Interestingly,', 'Viktigt,', 'Notera,'. These are "
                     f"unmistakable AI tells. Start with the noun/verb/subject "
                     f"of the sentence instead, or rephrase entirely."
+                )
+            for _issue in cluster_direction_issues[:3]:
+                new_fixes.append(
+                    f"Cluster link-direction issue: {_issue}"
                 )
             return generate_page_content(
                 url,
