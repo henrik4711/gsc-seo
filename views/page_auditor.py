@@ -1118,6 +1118,210 @@ def render():
                     )
                 st.rerun()
 
+        # ── Fix ALL flagged pages (generate + push everything in batch) ──
+        # The big "do it all for me" button: for every flagged page,
+        # generate plan + bottom + intro, then push all three to Mshop.
+        # Same rerun-based iteration as Re-check ALL so the spinner stays
+        # responsive and the user can stop mid-run. Uses a separate
+        # history key so re-checks and fixes don't interfere.
+        st.markdown("---")
+        _fix_state_key = "_fix_all_state"
+        _fix_state = st.session_state.get(_fix_state_key) or {}
+        _fix_running = bool(_fix_state.get("running"))
+        _fix_history = set(st.session_state.get("_fix_history") or [])
+
+        fix_col1, fix_col2, fix_col3 = st.columns([2, 2, 2])
+        if not _fix_running:
+            with fix_col1:
+                _all_flagged_fix = [
+                    q["url"] for q in quality_results
+                    if q["verdict"] in ("REWRITE", "IMPROVE")
+                ]
+                _eligible_fix = [u for u in _all_flagged_fix if u not in _fix_history]
+                _skipped_fix = len(_all_flagged_fix) - len(_eligible_fix)
+                # Cost estimate for transparency — Anthropic Sonnet 4.6
+                # rough cost: ~$0.02 per page (plan + bottom + intro
+                # + retries). 400 pages ≈ $8. Show before commit.
+                _est_cost_usd = len(_eligible_fix) * 0.02
+                _est_min = len(_eligible_fix) * 2  # ~2 min per page
+                _btn_label = (
+                    f"🤖 Fix ALL {len(_eligible_fix)} pending "
+                    f"(~${_est_cost_usd:.0f}, ~{_est_min // 60}h{_est_min % 60}m)"
+                    + (f" · skip {_skipped_fix} done" if _skipped_fix else "")
+                    if _eligible_fix
+                    else "🤖 Fix ALL flagged (all already done)"
+                )
+                if st.button(
+                    _btn_label,
+                    key="fix_all_btn",
+                    type="primary" if _eligible_fix else "secondary",
+                    use_container_width=True,
+                    disabled=not _eligible_fix,
+                    help="For EACH flagged page in sequence: generate AI plan + "
+                         "bottom text + intro (if needed), then push everything "
+                         "to Mshop (bottom text via footer API, meta + intro "
+                         "via admin API). Skips pages already in fix history. "
+                         "Click 'Stop' anytime — state is saved per page so a "
+                         "Railway restart resumes from the last completed URL.",
+                ):
+                    st.session_state[_fix_state_key] = {
+                        "running": True,
+                        "pending_urls": list(_eligible_fix),
+                        "done_urls": [],
+                        "errors": [],
+                        "started_at": time.time(),
+                        "stage_counts": {"generated": 0, "pushed": 0},
+                    }
+                    st.rerun()
+            with fix_col2:
+                _last_fix = st.session_state.get("_fix_all_last_summary")
+                if _last_fix:
+                    st.caption(
+                        f"Last fix run: {_last_fix.get('done', 0)} pages done · "
+                        f"{_last_fix.get('errors', 0)} errors · "
+                        f"{_last_fix.get('seconds', 0):.0f}s"
+                    )
+                if _fix_history:
+                    st.caption(f"Fix history: {len(_fix_history)} URLs already done")
+                    if st.button(
+                        "🗑 Clear fix history",
+                        key="fix_clear_history",
+                        help="Wipes the persisted set of already-fixed URLs so "
+                             "the next Fix ALL run starts fresh.",
+                    ):
+                        st.session_state["_fix_history"] = []
+                        from utils.persistence import save_key as _sk_fc
+                        try:
+                            _sk_fc("_fix_history")
+                        except Exception:
+                            pass
+                        st.rerun()
+        else:
+            pending_fix = _fix_state.get("pending_urls") or []
+            done_fix = _fix_state.get("done_urls") or []
+            errors_fix = _fix_state.get("errors") or []
+            total_fix = len(pending_fix) + len(done_fix)
+            elapsed_fix = time.time() - (_fix_state.get("started_at") or time.time())
+            with fix_col1:
+                pct = (len(done_fix) / max(total_fix, 1)) * 100
+                eta_seconds = (elapsed_fix / max(len(done_fix), 1)) * len(pending_fix) if done_fix else 0
+                st.markdown(
+                    f"<div style='background:#0d0d15; border:2px solid #ffaa33; "
+                    f"border-radius:6px; padding:0.6rem;'>"
+                    f"<div style='font-size:0.85rem; color:#ffaa33; font-weight:700;'>"
+                    f"Fixing {len(done_fix)}/{total_fix} ({pct:.0f}%)</div>"
+                    f"<div style='font-size:0.7rem; color:#9b9bb8;'>"
+                    f"Elapsed: {elapsed_fix/60:.1f}min · ETA: ~{eta_seconds/60:.0f}min · "
+                    f"Errors: {len(errors_fix)}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with fix_col2:
+                if st.button(
+                    "⏸ Stop fix run",
+                    key="fix_stop_btn",
+                    use_container_width=True,
+                ):
+                    st.session_state[_fix_state_key] = {**_fix_state, "running": False}
+                    st.rerun()
+
+            # Process the next URL — generate everything, push everything
+            if pending_fix:
+                next_fix_url = pending_fix[0]
+                _row = _audit_by_url_top.get(_qr_nu_top(next_fix_url))
+                with st.spinner(
+                    f"Fixing {next_fix_url[-50:]} "
+                    f"(generate plan + bottom + intro + push to Mshop)…"
+                ):
+                    try:
+                        if _row is None:
+                            raise ValueError("URL not in audit_results")
+                        # Build page dict the runner expects
+                        from utils.page_fix_runner import (
+                            generate_all_fixes_for_page, page_audit_to_page_dict
+                        )
+                        from utils.ui_helpers import stable_hash as _sh
+                        _page = page_audit_to_page_dict(_row)
+                        # 1. Generate plan + bottom + intro
+                        _gen_status = generate_all_fixes_for_page(_page)
+
+                        # 2. Push bottom text via footer API
+                        _url_hash = _sh(next_fix_url)
+                        _bottom = (st.session_state.get(f"_bottom_text_{_url_hash}") or {}).get("bottom_html") or ""
+                        if _bottom:
+                            from utils.footer_text_api import push_footer_text
+                            _br = push_footer_text(next_fix_url, _bottom)
+                            if _br.get("status") != "success":
+                                _fix_state["errors"].append(
+                                    f"{next_fix_url}: bottom push failed — {_br.get('error', _br.get('status'))}"
+                                )
+
+                        # 3. Push intro + meta via admin API
+                        _plan = st.session_state.get(f"_ai_plan_{_url_hash}") or {}
+                        _intro_obj = st.session_state.get(f"_intro_text_{_url_hash}") or {}
+                        _intro_html = _intro_obj.get("optimized_text") or ""
+                        _meta_t = _plan.get("meta_title", "") if isinstance(_plan, dict) else ""
+                        _meta_d = _plan.get("meta_description", "") if isinstance(_plan, dict) else ""
+                        if _intro_html or _meta_t or _meta_d:
+                            from utils.mshop_admin_api import update_for_page, lookup_url as _mlu_fix
+                            _active = st.session_state.get("mshop_active_pages") or {}
+                            _pi = _mlu_fix(_active, next_fix_url)
+                            if _pi:
+                                _adm = update_for_page(
+                                    _pi,
+                                    description=_intro_html or None,
+                                    meta_title=_meta_t or None,
+                                    meta_description=_meta_d or None,
+                                )
+                                if _adm.get("status") != "success":
+                                    _fix_state["errors"].append(
+                                        f"{next_fix_url}: admin push failed — {_adm.get('error', _adm.get('status'))}"
+                                    )
+                            else:
+                                _fix_state["errors"].append(
+                                    f"{next_fix_url}: no Mshop page-info "
+                                    f"(URL not in active-pages cache — sync first)"
+                                )
+                    except Exception as _fix_e:
+                        _fix_state["errors"].append(
+                            f"{next_fix_url}: {type(_fix_e).__name__}: {_fix_e}"
+                        )
+                _fix_state["pending_urls"] = pending_fix[1:]
+                _fix_state["done_urls"] = done_fix + [next_fix_url]
+                st.session_state[_fix_state_key] = _fix_state
+                # Persist fix history so we don't redo on Railway restart
+                _fhist = list(st.session_state.get("_fix_history") or [])
+                if next_fix_url not in _fhist:
+                    _fhist.append(next_fix_url)
+                    st.session_state["_fix_history"] = _fhist
+                    try:
+                        from utils.persistence import save_key as _sk_fh
+                        _sk_fh("_fix_history")
+                    except Exception:
+                        pass
+                st.rerun()
+            else:
+                # Queue empty — finalize
+                st.session_state["_fix_all_last_summary"] = {
+                    "done": len(done_fix),
+                    "errors": len(errors_fix),
+                    "seconds": elapsed_fix,
+                }
+                st.session_state[_fix_state_key] = {"running": False}
+                if errors_fix:
+                    st.warning(
+                        f"Fix run done with {len(errors_fix)} error(s). "
+                        f"Processed {len(done_fix)} pages in {elapsed_fix/60:.1f}min.\n\n"
+                        + "\n".join(f"- {e}" for e in errors_fix[:5])
+                    )
+                else:
+                    st.success(
+                        f"Fix run done. {len(done_fix)} pages fixed in "
+                        f"{elapsed_fix/60:.1f}min. Click Re-check ALL to "
+                        f"verify the new verdicts."
+                    )
+                st.rerun()
+
         # Pagination
         QR_PER_PAGE = 15
         qr_total = len(quality_results)

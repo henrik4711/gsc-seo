@@ -58,6 +58,10 @@ PERSIST_KEYS = {
     # work the user has already done — survives Railway redeploys that
     # would otherwise wipe session_state and force re-doing everything.
     "_recheck_history": "json",
+    # Fix history: same idea but for the "Fix ALL flagged pages" batch
+    # which generates AND pushes for every flagged URL. Persisted so a
+    # Railway restart mid-run doesn't replay 300 already-fixed pages.
+    "_fix_history": "json",
 }
 
 # Prefixes for dynamic AI cache keys — stored as individual files

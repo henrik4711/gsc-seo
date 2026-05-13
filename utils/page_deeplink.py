@@ -31,9 +31,21 @@ _FOCUS_KEY = "_qw_focus_url"
 
 def open_in_quick_wins(url: str) -> None:
     """Navigate to Quick Wins and focus on the given URL. Caller should
-    call st.rerun() right after."""
+    call st.rerun() right after.
+
+    Sets THREE keys so the navigation actually sticks across reruns
+    triggered by push dialogs and similar widgets:
+      - _qw_focus_url: tells Quick Wins which page to render
+      - selected_page: persisted nav state for app refresh restore
+      - nav_radio: the actual sidebar widget's session value — without
+        this, Streamlit's keyed radio keeps showing the OLD page
+        (Page Auditor) on subsequent reruns triggered by dialogs
+        within Quick Wins (e.g. push-to-Magento), causing the app
+        to jump back to Page Auditor mid-workflow.
+    """
     st.session_state[_FOCUS_KEY] = url
     st.session_state["selected_page"] = "⚡ Quick Wins"
+    st.session_state["nav_radio"] = "⚡ Quick Wins"
 
 
 def current_focus_url() -> str | None:
