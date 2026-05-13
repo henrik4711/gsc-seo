@@ -846,20 +846,41 @@ def assess_content_quality_batch(
     """
     page_sections = []
     for i, p in enumerate(pages):
-        body = _clean_body_text(p, 800)
         # Use EDITORIAL text (intro + bottom) for quality checks on category pages.
-        # Full body_text includes product grid prices ("kr rea" x26 = product cards).
+        # full body_text includes product-grid markup ("REA", "köp", product
+        # names repeated 50+ times) which destroys vocabulary diversity
+        # measurements and makes the AI claim things appear in OUR text
+        # when they're actually in product cards.
         _intro = (p.get("intro_text") or "")
         _bottom = (p.get("bottom_text") or "")
-        _editorial = (_intro + " " + _bottom).strip().lower()
-        full_body = _editorial if _editorial and len(_editorial) > 50 else (p.get("body_text") or "").lower()
+        _editorial = (_intro + " " + _bottom).strip()
+        _editorial_lower = _editorial.lower()
+        _has_editorial = bool(_editorial_lower and len(_editorial_lower) > 50)
+        full_body = _editorial_lower if _has_editorial else (p.get("body_text") or "").lower()
+
+        # Word count to USE for all quality math — editorial when available,
+        # otherwise full body. Earlier code used p.get("word_count") which
+        # always returned the WHOLE page count (intro + bottom + product
+        # grid + footer + nav) → AI saw "3343 words" with low diversity
+        # because product cards padded the count, then concluded the
+        # editorial text was filler. Now we use the right number.
+        _intro_wc = p.get("intro_word_count", 0) or 0
+        _bottom_wc = p.get("bottom_word_count", 0) or 0
+        editorial_word_count = (_intro_wc + _bottom_wc) if (_intro_wc + _bottom_wc) > 0 else len(_editorial.split())
+        word_count_for_check = editorial_word_count if _has_editorial else (p.get("word_count", 0) or 0)
+
+        # Pass MORE of the editorial text to the AI — 800 chars is too
+        # short to fairly judge a 1000-word category bottom text. 1800
+        # chars covers ~270 words, enough for a real assessment.
+        body = _clean_body_text(p, 1800)
 
         # ── Deterministic content quality checks (no AI needed) ──
         auto_flags = []
-        word_count = p.get("word_count", 0)
 
-        # 1. Keyword stuffing: any 2-3 word phrase repeated >5 times
-        if full_body and word_count > 100:
+        # 1. Keyword stuffing: any 2-3 word phrase repeated >5 times.
+        #    Run only on editorial text — product-grid bigrams ("kr rea",
+        #    "lägg varukorg") would always trip this otherwise.
+        if full_body and word_count_for_check > 100:
             from collections import Counter
             words = full_body.split()
             bigrams = [f"{words[j]} {words[j+1]}" for j in range(len(words)-1)]
@@ -868,22 +889,20 @@ def assess_content_quality_batch(
             trigram_counts = Counter(trigrams).most_common(5)
             stuffed = []
             for phrase, count in bigram_counts + trigram_counts:
-                # Skip very common/generic phrases
                 if count >= 6 and len(phrase) > 5:
                     stuffed.append(f"'{phrase}' x{count}")
             if stuffed:
                 auto_flags.append(f"KEYWORD STUFFING: {', '.join(stuffed[:3])}")
 
         # 2. No product/brand mentions on category pages
-        if p.get("page_type") == "category" and word_count > 200:
-            # Check for brand names, product names, prices
+        if p.get("page_type") == "category" and word_count_for_check > 200:
             has_brand = any(b in full_body for b in ["fleshlight", "satisfyer", "tenga", "womanizer", "lovense", "we-vibe", "lelo"])
             has_price = any(p_word in full_body for p_word in [" kr", ":-", "pris"])
             if not has_brand and not has_price:
                 auto_flags.append("NO PRODUCT/BRAND/PRICE mentions — generic text without real product references")
 
         # 3. Repetitive sentence structure (many sentences start the same way)
-        if full_body and word_count > 200:
+        if full_body and word_count_for_check > 200:
             sentences = [s.strip() for s in full_body.replace(".", ".\n").split("\n") if len(s.strip()) > 20]
             if len(sentences) >= 5:
                 starts = [s[:20] for s in sentences]
@@ -892,12 +911,23 @@ def assess_content_quality_batch(
                 if repetitive:
                     auto_flags.append(f"REPETITIVE STRUCTURE: {repetitive[0][1]} sentences start with '{repetitive[0][0][:15]}...'")
 
-        # 4. Very high word count but low information density (filler text)
-        if word_count > 1000:
-            unique_words = len(set(full_body.split()))
-            ratio = unique_words / max(word_count, 1)
+        # 4. Vocabulary diversity — but ONLY on editorial text, not full body.
+        #    Tokens >=3 chars to drop "och", "att" noise. 25% target matches
+        #    what the bottom-text generator's own quality gate enforces.
+        if word_count_for_check > 300 and _has_editorial:
+            import re as _re_vocab
+            _ed_tokens = [
+                w.lower() for w in _re_vocab.findall(r"[A-Za-zÅÄÖåäöÆØæø]+", _editorial)
+                if len(w) >= 3
+            ]
+            unique_words = len(set(_ed_tokens))
+            ratio = unique_words / max(len(_ed_tokens), 1)
             if ratio < 0.25:
-                auto_flags.append(f"LOW VOCABULARY DIVERSITY: {unique_words} unique words in {word_count} total ({ratio:.0%}) — likely filler/repetitive content")
+                auto_flags.append(
+                    f"LOW VOCABULARY DIVERSITY: {unique_words} unique words "
+                    f"in {len(_ed_tokens)} editorial tokens ({ratio:.0%}) — "
+                    f"likely filler/repetitive content"
+                )
 
         auto_flags_text = ""
         if auto_flags:
@@ -924,6 +954,29 @@ def assess_content_quality_batch(
 
         internal_links = p.get("internal_links", 0)
         link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
+        # Word-count line shown to AI: BOTH editorial and total. AI was
+        # previously only shown total page word count (~3000 incl. product
+        # grid + nav + footer) and concluded "low diversity in 3000 words"
+        # even when the editorial portion was 800 words and well-written.
+        _wc_total = p.get("word_count", 0) or 0
+        _wc_line = (
+            f"Editorial word count (intro + bottom): {editorial_word_count}  "
+            f"·  Total page word count (incl. product grid, nav, footer): {_wc_total}\n"
+            f"⚠️ Evaluate quality based on the EDITORIAL count. Total page count "
+            f"is inflated by repeating product cards and is NOT what we control.\n"
+        ) if _has_editorial else f"Word count: {_wc_total}\n"
+        # Mark whether the text sample we're showing is the COMPLETE
+        # editorial text or only a truncated head. AI hallucinated "filler"
+        # before because it assumed 800 chars was a snippet of much more.
+        _sample_marker = (
+            "Text sample (COMPLETE editorial text — intro + bottom — this is "
+            "ALL the content we control on this page; everything else is "
+            "product cards / navigation / footer):"
+            if _has_editorial and len(body) >= len(_editorial) - 5
+            else "Text sample (first 1800 chars of editorial text):"
+            if _has_editorial
+            else "Text sample (full body — no editorial split available):"
+        )
         page_sections.append(
             f"### PAGE {i+1}\n"
             f"URL: {p.get('url', '')}\n"
@@ -931,13 +984,13 @@ def assess_content_quality_batch(
             f"Title: \"{(p.get('title') or '')[:80]}\" ({len(p.get('title') or '')} chars)\n"
             f"Meta description: \"{(p.get('meta_description') or '')[:80]}\" ({len(p.get('meta_description') or '')} chars)\n"
             f"H1: \"{(p.get('h1') or '')[:80]}\"\n"
-            f"Word count: {p.get('word_count', 0)}\n"
+            f"{_wc_line}"
             f"Internal links: {link_count}\n"
             f"Impressions: {p.get('impressions', 0):,}\n"
             f"{cluster_info}"
             f"{auto_flags_text}"
             f"Target keywords: {', '.join(p.get('target_keywords', [])[:5])}\n"
-            f"Text sample:\n{body}\n"
+            f"{_sample_marker}\n{body}\n"
         )
 
     prompt = f"""You are a Google Search Quality Rater evaluating page content quality.
@@ -953,6 +1006,26 @@ Language: {language}
 
 ## PAGES TO EVALUATE
 {chr(10).join(page_sections)}
+
+## ⚠️ CRITICAL — WHAT TO EVALUATE
+Evaluate ONLY the "Text sample" shown for each page. That sample is the
+EDITORIAL text we control (intro + bottom text on a category page). It
+does NOT include the product grid, navigation, footer, breadcrumbs, or
+trust badges — those exist on every page on the site and we cannot
+edit them per page.
+
+Do NOT:
+- Claim a word appears in our text just because the URL slug contains
+  it. The slug is not part of the editorial body.
+- Cite product names, prices, "REA" badges, "köp", "lägg i varukorg",
+  category navigation breadcrumbs, or footer trust phrases as evidence
+  of repetitive/generic content. None of those are in the Text sample.
+- Use the Total page word count as the basis for vocabulary or filler
+  judgments. Use the Editorial word count when shown.
+
+If you make a specific claim ("'lös fitta' appears in the text"), the
+exact phrase MUST be visible in the Text sample below. If you cannot
+quote it from the sample, do not cite it as an issue.
 
 ## EVALUATE EACH PAGE ON:
 1. **Helpfulness**: Does the text actually help the user? Does it answer questions, guide decisions, or provide unique value? Or is it generic filler anyone could write?
