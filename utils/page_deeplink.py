@@ -33,16 +33,18 @@ def open_in_quick_wins(url: str) -> None:
     """Navigate to Quick Wins and focus on the given URL. Caller should
     call st.rerun() right after.
 
-    Sets selected_page (the persisted nav-state key). The sidebar code
-    in app.py bridges selected_page → nav_radio BEFORE the radio widget
-    renders, so Streamlit doesn't error out from setting widget state
-    after instantiation. Don't set nav_radio here directly — that
-    raises StreamlitAPIException because by the time this function
-    runs (button-click handler) the sidebar radio has already rendered
-    on the current frame.
+    Sets selected_page AND a one-shot _pending_nav_to flag. The sidebar
+    code in app.py reads (and CLEARS) that flag BEFORE the radio widget
+    renders, then writes nav_radio so the widget shows the right page.
+    Setting nav_radio directly here would raise StreamlitAPIException
+    (widget already rendered this frame). And updating nav_radio
+    UNCONDITIONALLY in the sidebar would block user clicks on the
+    sidebar radio — the flag makes the sync happen ONCE per
+    programmatic nav, not on every render.
     """
     st.session_state[_FOCUS_KEY] = url
     st.session_state["selected_page"] = "⚡ Quick Wins"
+    st.session_state["_pending_nav_to"] = "⚡ Quick Wins"
 
 
 def current_focus_url() -> str | None:

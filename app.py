@@ -411,16 +411,21 @@ with st.sidebar:
     if st.session_state["selected_page"] not in page_labels:
         st.session_state["selected_page"] = page_labels[next_idx]
 
-    # ── Programmatic-nav bridge ──
+    # ── Programmatic-nav bridge (ONE-SHOT) ──
     # When code outside the sidebar (e.g. open_in_quick_wins() called
-    # from a button) updates `selected_page`, the radio widget needs
-    # its keyed session value (nav_radio) updated too — otherwise the
-    # widget shows its OWN remembered value and the app appears to
-    # ignore the navigation. We bridge here BEFORE the widget renders;
-    # setting nav_radio AFTER it renders raises StreamlitAPIException.
-    _desired_nav = st.session_state["selected_page"]
-    if _desired_nav in page_labels and st.session_state.get("nav_radio") != _desired_nav:
-        st.session_state["nav_radio"] = _desired_nav
+    # from a button) updates `selected_page`, it ALSO sets a
+    # _pending_nav_to flag. The sidebar consumes that flag here BEFORE
+    # the radio widget renders — writes it into nav_radio so the
+    # widget displays the right page, then deletes the flag.
+    #
+    # Critical: this is a ONE-SHOT bridge. Doing it on every render
+    # would block sidebar clicks: when the user clicks a different
+    # radio option, Streamlit updates nav_radio first, THEN this
+    # sidebar code runs — and a permanent bridge would overwrite the
+    # user's click with the stale selected_page value.
+    _pending = st.session_state.pop("_pending_nav_to", None)
+    if _pending and _pending in page_labels:
+        st.session_state["nav_radio"] = _pending
 
     page = st.radio(
         "", page_labels,
