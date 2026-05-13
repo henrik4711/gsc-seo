@@ -56,6 +56,15 @@ WRITING STYLE — the text MUST read like a real person wrote it, NOT AI.
 This is a HARD requirement. Output that contains any banned pattern below
 fails the brief and must be rewritten.
 
+GOAL — what "passes" looks like:
+- A modern AI-detector (e.g. GPTZero, Originality.ai, Copyleaks) should
+  classify this text as HUMAN-written. If the text reads as polished,
+  balanced, neutral, or "comprehensive" — it has failed.
+- A reader who knows AI-writing tells should not be able to spot any
+  obvious tell in the first 200 words.
+- The voice should sound like ONE specific person with opinions, not a
+  brand-neutral content team.
+
 BANNED OPENERS / CLOSERS (never use):
 - "Sammanfattningsvis" / "Avslutningsvis" / "I slutändan" / "In conclusion" / "To sum up"
 - "Det är viktigt att notera/komma ihåg" / "It is important to note" / "Worth noting"
@@ -67,6 +76,10 @@ BANNED OPENERS / CLOSERS (never use):
 - "Indeed," / "Faktum är att" as a sentence opener
 - "Are you looking for …?" as opener — never open with a rhetorical question
 - "Welcome to" / "Välkommen till"
+- META-NARRATION openers: "Låt mig förklara", "Let me explain", "Here's
+  the thing", "Here's what you need to know", "Här är vad du behöver veta",
+  "So, what is X?" — never address the act of writing/explaining itself.
+- "Tänk dig att..." / "Imagine that..." / "Picture this..." as opener.
 
 BANNED VOCABULARY (AI tells — never use):
 - delve, leverage, utilize (use 'use'), navigate (in figurative sense),
@@ -76,22 +89,48 @@ BANNED VOCABULARY (AI tells — never use):
   state-of-the-art, world-class, world of, in the realm of,
   testament to, treasure trove, kaleidoscope, symphony, journey
   (in figurative sense), elevate, transform (in figurative sense)
+- Swedish equivalents to avoid: "skräddarsydd" (figurative), "genomsyrar",
+  "i sann anda", "i en värld där", "när det kommer till", "på riktigt",
+  "verkligen", "definitivt" used as filler intensifiers.
 - "It's not just X, it's Y" sentence pattern — banned in ALL forms
 - "Whether you're a beginner or an expert" and any "X or Y" hedge
 - Hedging phrases: "It's worth noting", "Keep in mind that",
   "It goes without saying", "Needless to say", "Suffice it to say"
+- TRANSITION-WORD OVERUSE — AI loves connecting every sentence with
+  "However,", "Moreover,", "Furthermore,", "Additionally,", "In addition,",
+  "Nevertheless,", "On the other hand,". Swedish equivalents: "Dessutom,",
+  "Dock,", "Emellertid,", "Vidare,", "Likaså,", "Å andra sidan,". Use
+  AT MOST 2 of these in the entire bottom text. Real writers connect
+  ideas with periods and structure, not connector words.
+- ADVERB-LED sentence openers: "Importantly,", "Notably,", "Interestingly,",
+  "Crucially,", "Significantly,", "Essentially,". Swedish: "Viktigt,",
+  "Notera att", "Intressant nog,". Banned — start with the noun, verb,
+  or subject instead.
 
 BANNED STRUCTURE (these scream AI):
 - Em-dashes (—) used more than ONCE per ~150 words. Prefer commas, periods,
-  parentheses. AI famously over-uses em-dashes.
+  parentheses. AI famously over-uses em-dashes. HARD CAP: max 4 em-dashes
+  in the entire bottom_html.
 - Three-item parallel lists in body prose ("X, Y, and Z") more than once
   per paragraph
+- "BOTH X AND Y" balanced-clause pattern repeated more than 2× total —
+  AI loves balanced contrast ("Det är både elegant och funktionellt",
+  "Both compact and powerful"). Real writers commit to ONE side.
+- "FIRST, ... SECOND, ... THIRD, ..." or "Förstens, ..., Andra, ..."
+  numbered-list style sentence prose — banned. Use proper bullet/numbered
+  HTML lists if you need order, never embed list markers in paragraphs.
+- "ON ONE HAND ... ON THE OTHER HAND ..." balanced-comparison structure —
+  banned. Pick a side. Real expertise has opinions.
 - Every paragraph the same length (3-4 sentences each = AI tell)
 - Every bullet point the same length and grammatical structure
 - Every H2/H3 starting with the same part of speech (all gerunds, or all
   imperatives, or all nouns)
 - Closing every section with a summary sentence
 - Ending the whole article with "In conclusion / To sum up / Overall"
+- "OVERLY POLISHED" tone — every sentence grammatically perfect, every
+  paragraph cleanly closed, no rough edges, no asymmetric phrasing. This
+  is THE biggest AI tell. Leave one sentence slightly clipped. End a
+  paragraph mid-thought when natural. Use a fragment for emphasis.
 
 REQUIRED:
 - Write like a knowledgeable friend who actually uses the product, NOT a
@@ -101,7 +140,8 @@ REQUIRED:
   even a fragment. Don't average everything to 12-15 words.
 - Use "du/dig" / "you" — talk TO the reader, not ABOUT them
 - Real opinions: "Vi gillar X för att …" / "Ärligt talat är Y bättre" /
-  "Honestly, Z is overrated" / "We don't recommend …"
+  "Honestly, Z is overrated" / "We don't recommend …" / "Hoppa över X om
+  du letar efter Y" / "Det här är inte värt pengarna om..."
 - Include at least one unexpected expert detail per ~300 words — a tip,
   caveat, or counter-intuitive fact a generalist wouldn't know
 - Vary paragraph length: some 1 sentence, some 4-5 sentences. Single-
@@ -115,6 +155,10 @@ REQUIRED:
   twice. NEVER bold every variant ("sexleksaker för män", "sex toys",
   "sexleksaker män", "billiga sexleksaker" all bolded = automatic reject).
 - Don't start adjacent sentences with the same word ("The" after "The")
+- COMMIT to a position. AI hedges; humans pick a side. If TPE feels
+  better than silicone for most users, say that. Don't write "TPE has
+  its strengths and silicone has its strengths — it depends on your
+  preferences." That sentence is the smoking gun of AI writing.
 - It's OK — preferred, even — to leave a sentence imperfect or slightly
   asymmetric. AI polishes everything to glassy uniformity; humans don't.
 - For FAQ: use FAQPage schema microdata (itemscope/itemprop attributes)"""
@@ -2468,6 +2512,33 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                 generic_opener_hit = _opener[:160]
                 break
 
+        # 5) Em-dash overuse — AI famously over-uses em-dashes.
+        #    HARD CAP: 4 in entire bottom_html.
+        em_dash_count = _bottom_plain.count("—") + _bottom_plain.count("–")
+        em_dash_overuse = em_dash_count > 4
+
+        # 6) Transition-word overuse — connector words at sentence-starts
+        #    are an AI tell. HARD CAP: 2 across entire bottom.
+        transition_word_patterns = [
+            r"(?:^|[\.\?!]\s+|\n)\s*(?:However|Moreover|Furthermore|Additionally|In addition|Nevertheless|Therefore|Consequently|Thus,)",
+            r"(?:^|[\.\?!]\s+|\n)\s*(?:Dessutom|Dock|Emellertid|Vidare|Likaså|Därutöver|Således|Följaktligen|Å andra sidan|Å andra sidan)\b",
+        ]
+        transition_word_hits = []
+        for _pat in transition_word_patterns:
+            transition_word_hits += _re_count.findall(_pat, _bottom_plain, flags=_re_count.IGNORECASE)
+        transition_word_overuse = len(transition_word_hits) > 2
+
+        # 7) Adverb-led sentence openers — "Importantly,", "Notably,",
+        #    "Crucially,". Banned outright: HARD CAP 1.
+        adverb_opener_patterns = [
+            r"(?:^|[\.\?!]\s+|\n)\s*(?:Importantly|Notably|Interestingly|Crucially|Significantly|Essentially|Fundamentally|Ultimately|Indeed|Arguably),",
+            r"(?:^|[\.\?!]\s+|\n)\s*(?:Viktigt|Notera|Intressant nog|Avgörande|Väsentligt|Faktum är|Onekligen),",
+        ]
+        adverb_opener_hits = []
+        for _pat in adverb_opener_patterns:
+            adverb_opener_hits += _re_count.findall(_pat, _bottom_plain, flags=_re_count.IGNORECASE)
+        adverb_opener_overuse = len(adverb_opener_hits) > 1
+
         # Detect duplicate-slug links — linking from /alla/satisfyer to
         # /sexleksaker/vibratorer/satisfyer dilutes both pages because
         # they cover the same topic. Heuristic: any internal href whose
@@ -2715,6 +2786,21 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                 "passed": not anchor_target_mismatches,
                 "actual": (f"{len(anchor_target_mismatches)} mismatch(es)" if anchor_target_mismatches else "clean"),
             })
+            _checks.append({
+                "id": "em_dash_count", "label": "Em-dashes ≤ 4 (AI-tell)",
+                "passed": not em_dash_overuse,
+                "actual": f"{em_dash_count} em-dash(es)",
+            })
+            _checks.append({
+                "id": "transition_words", "label": "Connector-word sentence starts ≤ 2 (AI-tell)",
+                "passed": not transition_word_overuse,
+                "actual": f"{len(transition_word_hits)} (However/Moreover/Dessutom/Dock-style)",
+            })
+            _checks.append({
+                "id": "adverb_openers", "label": "Adverb-led openers ≤ 1 (AI-tell)",
+                "passed": not adverb_opener_overuse,
+                "actual": f"{len(adverb_opener_hits)} (Importantly,/Notably,/Viktigt,-style)",
+            })
             result["_quality_checks"] = _checks
             result["_quality_pass_count"] = sum(1 for c in _checks if c["passed"])
             result["_quality_total"] = len(_checks)
@@ -2724,7 +2810,9 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                 or dupe_slug_links or faq_typo_hits
                 or anchor_target_mismatches
                 or keyword_overuse or vocab_diversity_low
-                or misspelling_capture_hits or generic_opener_hit):
+                or misspelling_capture_hits or generic_opener_hit
+                or em_dash_overuse or transition_word_overuse
+                or adverb_opener_overuse):
             new_fixes = list(validation_fixes or [])
             if missing_kws:
                 new_fixes.append(
@@ -2875,6 +2963,36 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                     f"vanligaste typen av Y', 'Welcome to', 'Utforska/Upptäck "
                     f"vår...', or 'Perfekt för dig som...'. The first sentence "
                     f"must teach the reader something they didn't already know."
+                )
+            if em_dash_overuse:
+                new_fixes.append(
+                    f"Em-dash overuse — found {em_dash_count} em-dashes (— or –) "
+                    f"in bottom_html. HARD CAP is 4. AI-generated text famously "
+                    f"over-uses em-dashes; humans use commas, periods, or "
+                    f"parentheses instead. Replace surplus em-dashes with one "
+                    f"of those — keep at most 4 across the entire bottom text."
+                )
+            if transition_word_overuse:
+                _examples = ", ".join(set(t.strip().rstrip(",") for t in transition_word_hits[:5]))
+                new_fixes.append(
+                    f"Transition-word overuse — found {len(transition_word_hits)} "
+                    f"sentences starting with connector words ({_examples}). "
+                    f"HARD CAP is 2 across entire bottom_html. AI-generated "
+                    f"text loves connecting every sentence with 'However,', "
+                    f"'Moreover,', 'Furthermore,', 'Additionally,', 'Dessutom,', "
+                    f"'Dock,'. Real writers connect ideas via structure and "
+                    f"flow, not connector words. Remove the surplus and let "
+                    f"sentences stand on their own."
+                )
+            if adverb_opener_overuse:
+                _examples = ", ".join(set(t.strip().rstrip(",") for t in adverb_opener_hits[:5]))
+                new_fixes.append(
+                    f"Adverb-led sentence opener(s) detected ({_examples}). "
+                    f"HARD CAP is 1 across entire bottom_html. Never start "
+                    f"sentences with 'Importantly,', 'Notably,', 'Crucially,', "
+                    f"'Interestingly,', 'Viktigt,', 'Notera,'. These are "
+                    f"unmistakable AI tells. Start with the noun/verb/subject "
+                    f"of the sentence instead, or rephrase entirely."
                 )
             return generate_page_content(
                 url,
