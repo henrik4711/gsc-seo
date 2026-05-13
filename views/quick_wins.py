@@ -2872,6 +2872,86 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                     note="Place above the product grid. Front-load the primary keyword in the first sentence.",
                 )
 
+                # ── Quality gate (anti-AI-tell validators on the intro) ──
+                _iqc = intro_data.get("_quality_checks") or []
+                if _iqc:
+                    _ipass = intro_data.get("_quality_pass_count", 0)
+                    _itot = intro_data.get("_quality_total", len(_iqc))
+                    _icolor = "#33dd88" if _ipass == _itot else ("#ffaa33" if _ipass >= _itot - 1 else "#ff4455")
+                    st.markdown(
+                        f"<div style='background:#0d0d15; border:2px solid {_icolor}; "
+                        f"border-radius:6px; padding:0.6rem; margin:0.5rem 0;'>"
+                        f"<div style='font-size:0.85rem; color:{_icolor}; font-weight:700;'>"
+                        f"Intro quality gate: {_ipass}/{_itot} checks passed</div>"
+                        f"<div style='font-size:0.7rem; color:#9b9bb8; margin-top:0.2rem;'>"
+                        f"Same anti-AI-tell rules as bottom text (subset relevant to intros). "
+                        f"Failing checks trigger auto-retry up to 2 attempts before showing here.</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    with st.expander(
+                        f"Intro quality detail ({_ipass}/{_itot} passed)",
+                        expanded=(_ipass < _itot),
+                    ):
+                        for c in _iqc:
+                            _cicon = "✓" if c["passed"] else "✗"
+                            _ccolor = "#33dd88" if c["passed"] else "#ff4455"
+                            st.markdown(
+                                f"<div style='font-size:0.8rem; color:{_ccolor}; margin:0.2rem 0;'>"
+                                f"{_cicon} <strong>{c['label']}</strong> "
+                                f"<span style='color:#9b9bb8;'>· {c['actual']}</span></div>",
+                                unsafe_allow_html=True,
+                            )
+
+                # ── Auto-fix transparency (intro) ──
+                _iaf = intro_data.get("_auto_fixes") or {}
+                if any(_iaf.values()):
+                    st.caption(
+                        f"Auto-fixed by post-processor — Cyrillic typos: {_iaf.get('cyrillic',0)} · "
+                        f"em-dash surplus → comma: {_iaf.get('em_dash',0)} · "
+                        f"whitespace collapse: {_iaf.get('whitespace',0)} char(s)"
+                    )
+
+                # ── Edit before push (intro) ──
+                with st.popover("✏️ Edit intro before push", use_container_width=False):
+                    st.markdown(
+                        "<div style='font-size:0.75rem; color:#9b9bb8; margin-bottom:0.4rem;'>"
+                        "Edit the intro text directly. Changes are kept in session and used "
+                        "by the Push button below.</div>",
+                        unsafe_allow_html=True,
+                    )
+                    edited_intro = st.text_area(
+                        "Intro text",
+                        value=new_intro or "",
+                        height=200,
+                        key=f"edit_intro_{url_hash}",
+                        label_visibility="collapsed",
+                    )
+                    if st.button(
+                        "💾 Save intro edits",
+                        key=f"save_intro_{url_hash}",
+                        type="primary",
+                    ):
+                        _id = dict(st.session_state.get(intro_key) or {})
+                        _id["optimized_text"] = edited_intro
+                        _id["word_count"] = len(edited_intro.split())
+                        _id["_user_edited"] = True
+                        # Re-run quality gate on the edited text so the
+                        # badge updates immediately.
+                        try:
+                            from utils.ai_generator import _intro_quality_gate
+                            _checks, _pc, _tot = _intro_quality_gate(edited_intro)
+                            _id["_quality_checks"] = _checks
+                            _id["_quality_pass_count"] = _pc
+                            _id["_quality_total"] = _tot
+                        except Exception:
+                            pass
+                        st.session_state[intro_key] = _id
+                        from utils.persistence import save_ai_cache
+                        save_ai_cache()
+                        st.success("Saved. Push will send the edited version.")
+                        st.rerun()
+
                 # Show full raw response when we couldn't extract any content
                 if new_intro_wc == 0:
                     st.warning(

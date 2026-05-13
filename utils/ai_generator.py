@@ -233,6 +233,135 @@ def _clean_body_text(page_data, max_chars: int = 1500) -> str:
     return cleaned[:max_chars].strip()
 
 
+# ── Cyrillic↔Latin confusables (AI sometimes emits Cyrillic letters
+# inside Latin words: "sleeveн" instead of "sleeven"). When a Cyrillic
+# letter appears inside an otherwise-Latin word, we substitute it.
+# Source: Unicode TR39 confusables, narrowed to the most common AI hits.
+_CYRILLIC_TO_LATIN = {
+    "а": "a", "А": "A", "е": "e", "Е": "E", "о": "o", "О": "O",
+    "р": "p", "Р": "P", "с": "c", "С": "C", "у": "y", "У": "Y",
+    "х": "x", "Х": "X", "В": "B", "Н": "H", "К": "K", "М": "M",
+    "Т": "T", "і": "i", "І": "I", "ј": "j", "Ј": "J", "ѕ": "s",
+    "Ѕ": "S", "ԁ": "d", "ԛ": "q", "ԝ": "w", "Ԝ": "W",
+    # Lowercase cyrillic that look like Latin lowercase
+    "н": "n",  # the one we just hit in "sleeveн"
+    "к": "k", "м": "m", "т": "t", "в": "B", "ь": "b",
+}
+
+
+def _fix_cyrillic_confusables(text: str) -> tuple[str, int]:
+    """Replace Cyrillic letters that are almost certainly typos in
+    Latin-script context. We ONLY substitute when a Cyrillic letter
+    appears DIRECTLY adjacent to Latin letters (so a real Russian word
+    is left alone, but 'sleeveн' becomes 'sleeven'). Returns the fixed
+    text and the count of substitutions made — surface that for UI."""
+    import re as _re_cy
+    if not text:
+        return text, 0
+    fixes = 0
+
+    def _maybe_swap(match):
+        nonlocal fixes
+        word = match.group(0)
+        # Only mess with words that contain BOTH Latin and Cyrillic
+        # letters. Pure Cyrillic words (a real Russian quote) are left
+        # alone; pure Latin obviously needs no fix.
+        has_latin = bool(_re_cy.search(r"[A-Za-zÅÄÖåäöÆØæø]", word))
+        has_cyrillic = bool(_re_cy.search(r"[Ѐ-ӿ]", word))
+        if not (has_latin and has_cyrillic):
+            return word
+        out = []
+        for ch in word:
+            if ch in _CYRILLIC_TO_LATIN:
+                out.append(_CYRILLIC_TO_LATIN[ch])
+                fixes += 1
+            else:
+                out.append(ch)
+        return "".join(out)
+
+    # Match "words" that may contain ANY mix of Latin/Cyrillic letters
+    # plus internal hyphens. Simpler than language-aware tokenizing.
+    fixed = _re_cy.sub(r"[A-Za-zÅÄÖåäöÆØæøЀ-ӿ]+(?:[-'][A-Za-zÅÄÖåäöÆØæøЀ-ӿ]+)*", _maybe_swap, text)
+    return fixed, fixes
+
+
+def _reduce_em_dash_overuse(html: str, max_keep: int = 4) -> tuple[str, int]:
+    """Em-dashes (— or –) are an AI tell. When the count exceeds
+    `max_keep`, replace the surplus with commas. Strategy: keep the
+    first `max_keep` em-dashes (which usually fall in early headlines/
+    sentences and read naturally), comma-substitute the rest.
+
+    The substitution is mechanical — it doesn't try to detect whether
+    a period would be more natural — but a comma is always grammatically
+    safe in the position an em-dash sat in.
+
+    Returns (fixed_html, substitutions_made)."""
+    if not html:
+        return html, 0
+    # Count em-dashes preserving their order
+    indexes = []
+    for i, ch in enumerate(html):
+        if ch in ("—", "–"):
+            indexes.append(i)
+    if len(indexes) <= max_keep:
+        return html, 0
+    # Build new string replacing every em-dash AFTER the first max_keep
+    out = list(html)
+    surplus_indexes = indexes[max_keep:]
+    for idx in surplus_indexes:
+        out[idx] = ","
+    # Collapse "x ," → "x," and ",  " → ", " so the result reads natural
+    fixed = "".join(out)
+    import re as _re_em
+    fixed = _re_em.sub(r"\s+,", ",", fixed)
+    fixed = _re_em.sub(r",\s+", ", ", fixed)
+    return fixed, len(surplus_indexes)
+
+
+def _collapse_extra_whitespace(html: str) -> tuple[str, int]:
+    """Collapse runs of whitespace OUTSIDE tags. Pure cosmetic, but it
+    prevents auto-fixed em-dash sites from leaving double-spaces.
+    Returns (fixed_html, substitutions_made)."""
+    if not html:
+        return html, 0
+    import re as _re_ws
+    # Outside tags only — easier to do as a two-pass scan
+    fixed = _re_ws.sub(r"  +", " ", html)
+    fixed = _re_ws.sub(r"\n{3,}", "\n\n", fixed)
+    return fixed, len(html) - len(fixed)
+
+
+def _mechanical_post_process(text_data: dict) -> dict:
+    """Apply purely mechanical fixes that don't need AI intelligence:
+    - Cyrillic→Latin confusable substitutions (catches 'sleeveн')
+    - Em-dash overuse reduction (HARD CAP 4, surplus → comma)
+    - Whitespace collapse
+
+    These run BEFORE the quality-gate validators, so the validators see
+    the cleaned version and (a) don't trigger needless retries for
+    fixable cosmetics, (b) don't fail the cyrillic-typo check.
+
+    Surfaces _auto_fixes on the dict so the UI can display what changed.
+    """
+    if not isinstance(text_data, dict):
+        return text_data
+    fixes = {"cyrillic": 0, "em_dash": 0, "whitespace": 0}
+    for field in ("top_html", "bottom_html"):
+        v = text_data.get(field) or ""
+        if not isinstance(v, str) or not v:
+            continue
+        v, n_cyr = _fix_cyrillic_confusables(v)
+        v, n_em = _reduce_em_dash_overuse(v, max_keep=4)
+        v, n_ws = _collapse_extra_whitespace(v)
+        text_data[field] = v
+        fixes["cyrillic"] += n_cyr
+        fixes["em_dash"] += n_em
+        fixes["whitespace"] += n_ws
+    if any(fixes.values()):
+        text_data["_auto_fixes"] = fixes
+    return text_data
+
+
 def _parse_ai_json(message) -> dict:
     """Safely parse JSON from an AI response. Handles:
     - markdown code fences
@@ -1011,6 +1140,103 @@ Current text (excerpt):
     return _parse_ai_json(message)
 
 
+def _intro_quality_gate(text: str) -> tuple[list, int, int]:
+    """Run the SUBSET of quality validators that make sense for an
+    intro paragraph (80-150 words). Returns (checks, pass_count, total).
+    Different from the bottom-text gate because intro has different
+    constraints — it's short, intentionally keyword-leading, and has no
+    internal links."""
+    import re as _re_iq
+    checks = []
+    plain = _re_iq.sub(r"<[^>]+>", " ", text or "")
+    plain = _re_iq.sub(r"\s+", " ", plain).strip()
+
+    # Generic opener — same patterns as bottom-text gate
+    opener = plain[:200]
+    generic_opener_patterns = [
+        r"\b(?:är|is)\s+(?:den|det|ett|en|the)\s+(?:mest\s+populära|vanligaste|mest\s+sålda|mest\s+efterfrågade|most\s+popular|most\s+common|most\s+sold)",
+        r"\b(?:welcome\s+to|välkommen\s+till)\b",
+        r"\b(?:utforska|upptäck|discover|explore)\s+(?:vår|vårt|our)\b",
+        r"\b(?:perfekt\s+för\s+dig\s+som|perfect\s+for\s+(?:those|anyone))",
+        r"^\s*(?:I\s+dagens|In\s+today's)",
+    ]
+    generic_opener_hit = any(
+        _re_iq.search(p, opener, flags=_re_iq.IGNORECASE)
+        for p in generic_opener_patterns
+    )
+    checks.append({
+        "id": "no_generic_opener",
+        "label": "No AI-filler opener",
+        "passed": not generic_opener_hit,
+        "actual": (opener[:80] + "…") if generic_opener_hit else "clean",
+    })
+
+    # Misspelling-capture phrases
+    miscap_patterns = [
+        r"ibland stavat", r"även stavat", r"även kallad", r"även känt som",
+        r"alternativ stavning", r"also spelled", r"also known as",
+        r"sometimes spelled",
+    ]
+    miscap_hits = [p for p in miscap_patterns if _re_iq.search(p, plain, flags=_re_iq.IGNORECASE)]
+    checks.append({
+        "id": "no_misspelling_capture",
+        "label": "No misspelling-capture phrases",
+        "passed": not miscap_hits,
+        "actual": (", ".join(miscap_hits[:2]) if miscap_hits else "clean"),
+    })
+
+    # Em-dashes — intro is short, max 1
+    em_count = plain.count("—") + plain.count("–")
+    checks.append({
+        "id": "em_dash_count",
+        "label": "Em-dashes ≤ 1 (intro is short)",
+        "passed": em_count <= 1,
+        "actual": f"{em_count} em-dash(es)",
+    })
+
+    # Transition-word starts — intro is short, max 1
+    transition_patterns = [
+        r"(?:^|[\.\?!]\s+)\s*(?:However|Moreover|Furthermore|Additionally|In addition|Nevertheless|Therefore|Thus,)",
+        r"(?:^|[\.\?!]\s+)\s*(?:Dessutom|Dock|Emellertid|Vidare|Likaså|Således)\b",
+    ]
+    transition_hits = []
+    for p in transition_patterns:
+        transition_hits += _re_iq.findall(p, plain, flags=_re_iq.IGNORECASE)
+    checks.append({
+        "id": "transition_words",
+        "label": "Connector-word starts ≤ 1 (AI-tell)",
+        "passed": len(transition_hits) <= 1,
+        "actual": f"{len(transition_hits)} (However/Moreover/Dessutom-style)",
+    })
+
+    # Adverb-led openers
+    adverb_patterns = [
+        r"(?:^|[\.\?!]\s+)\s*(?:Importantly|Notably|Interestingly|Crucially|Essentially|Indeed),",
+        r"(?:^|[\.\?!]\s+)\s*(?:Viktigt|Notera|Faktum är),",
+    ]
+    adverb_hits = []
+    for p in adverb_patterns:
+        adverb_hits += _re_iq.findall(p, plain, flags=_re_iq.IGNORECASE)
+    checks.append({
+        "id": "adverb_openers",
+        "label": "Adverb-led openers = 0 (AI-tell)",
+        "passed": len(adverb_hits) == 0,
+        "actual": f"{len(adverb_hits)} (Importantly,/Notably,/Viktigt,-style)",
+    })
+
+    # Bold-tag overuse — intro should have 0-1 bold
+    strong_count = len(_re_iq.findall(r"<(?:strong|b)\b[^>]*>", text or "", flags=_re_iq.IGNORECASE))
+    checks.append({
+        "id": "bold_count",
+        "label": "Bold tags ≤ 1 (intro)",
+        "passed": strong_count <= 1,
+        "actual": f"{strong_count} <strong> tag(s)",
+    })
+
+    pass_count = sum(1 for c in checks if c["passed"])
+    return checks, pass_count, len(checks)
+
+
 def generate_intro_rewrite(
     client: anthropic.Anthropic,
     missing_keywords: list,
@@ -1019,8 +1245,14 @@ def generate_intro_rewrite(
     url: str = "",
     site_context: str = "",
     language: str = "Swedish",
+    _attempt: int = 1,
+    _max_attempts: int = 2,
+    _previous_failures: list | None = None,
 ) -> dict:
-    """Rewrite ONLY the intro/first paragraph to include missing keywords."""
+    """Rewrite ONLY the intro/first paragraph to include missing keywords.
+    Now applies the same anti-AI-tell quality gate as bottom text:
+    mechanical post-fixes (em-dash, Cyrillic, whitespace) THEN regex
+    validators. Auto-retries up to _max_attempts on failure."""
     type_guide = ""
     if page_type == "category":
         type_guide = "This is a CATEGORY page. The intro sits ABOVE the product grid and should explain the category in 80-150 words."
@@ -1029,10 +1261,19 @@ def generate_intro_rewrite(
     elif page_type == "blog":
         type_guide = "This is a BLOG/GUIDE page. The intro should state the problem and promise a solution."
 
+    retry_block = ""
+    if _previous_failures:
+        retry_block = (
+            "\n## RETRY — PREVIOUS ATTEMPT FAILED THESE QUALITY CHECKS\n"
+            + "\n".join(f"- {f}" for f in _previous_failures)
+            + "\n\nFix EACH of these in the rewrite. The text is validated again "
+              "after generation; if the same issue persists, the result is rejected.\n"
+        )
+
     prompt = f"""You are a senior SEO copywriter. Rewrite ONLY the intro paragraph of this page.
 
 {HUMAN_WRITING_STYLE}
-
+{retry_block}
 ## CONTEXT
 URL: {url}
 Page type: {page_type}
@@ -1055,6 +1296,16 @@ Current intro text:
 - Apply the WRITING STYLE rules above without exception. Critically:
   do NOT open with "Upptäck/Discover", "I dagens", "Välkommen",
   "Are you looking for", or any banned opener.
+- AI-DETECTOR RESISTANCE: Same hard rules as bottom text. Specifically:
+  * NEVER start with generic statements like "X är den mest populära/
+    vanligaste typen av Y". Open with a concrete buyer-relevant fact.
+  * NEVER use connector-word sentence starts (However, Moreover,
+    Furthermore, Dessutom, Dock). Max 1 in the entire intro.
+  * NEVER use adverb-led openers (Importantly, Notably, Viktigt, Notera).
+  * NEVER write misspelling-capture phrases ("ibland stavat...",
+    "även kallad..."). Use the correct spelling only.
+  * Em-dashes (— or –): max 1 in the entire intro.
+  * Bold tags: 0-1 max.
 
 ## OUTPUT FORMAT (JSON only, no markdown wrapping):
 {{
@@ -1070,7 +1321,47 @@ Current intro text:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    return _parse_ai_json(message)
+    result = _parse_ai_json(message) or {}
+
+    # Mechanical fixes — em-dash surplus → comma, Cyrillic→Latin,
+    # collapse whitespace. Operates on optimized_text via the same
+    # helpers used for bottom_html.
+    if isinstance(result, dict) and result.get("optimized_text"):
+        opt = result["optimized_text"]
+        opt, n_cyr = _fix_cyrillic_confusables(opt)
+        opt, n_em = _reduce_em_dash_overuse(opt, max_keep=1)  # intro is short
+        opt, n_ws = _collapse_extra_whitespace(opt)
+        result["optimized_text"] = opt
+        if (n_cyr + n_em + n_ws) > 0:
+            result["_auto_fixes"] = {"cyrillic": n_cyr, "em_dash": n_em, "whitespace": n_ws}
+
+    # Quality gate
+    if isinstance(result, dict) and result.get("optimized_text"):
+        checks, pass_count, total = _intro_quality_gate(result["optimized_text"])
+        result["_quality_checks"] = checks
+        result["_quality_pass_count"] = pass_count
+        result["_quality_total"] = total
+        result["_attempt"] = _attempt
+        result["_max_attempts"] = _max_attempts
+
+        # Auto-retry if any check failed AND attempts remain
+        failing = [c for c in checks if not c["passed"]]
+        if failing and _attempt < _max_attempts:
+            failure_msgs = [f"{c['label']} → {c['actual']}" for c in failing]
+            return generate_intro_rewrite(
+                client=client,
+                missing_keywords=missing_keywords,
+                existing_intro=existing_intro,
+                page_type=page_type,
+                url=url,
+                site_context=site_context,
+                language=language,
+                _attempt=_attempt + 1,
+                _max_attempts=_max_attempts,
+                _previous_failures=failure_msgs,
+            )
+
+    return result
 
 
 def generate_keyword_faq(
@@ -2399,6 +2690,12 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
         messages=[{"role": "user", "content": prompt}],
     )
     result = _parse_ai_json(message) or {}
+
+    # Apply purely mechanical post-fixes BEFORE validators run, so the
+    # quality gate doesn't trigger needless retries for cosmetic issues
+    # Python can solve directly (em-dash overuse, Cyrillic→Latin
+    # confusables, double-spaces).
+    result = _mechanical_post_process(result)
 
     # Tag the result so callers (validation UI, missed-items display)
     # can see exactly what was required regardless of whether the AI
