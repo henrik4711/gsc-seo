@@ -1053,12 +1053,71 @@ def render():
                         if _diag.get("error"):
                             st.error(f"Could not read push log: {_diag['error']}")
                         elif not _diag.get("page_info"):
+                            active_now = st.session_state.get("mshop_active_pages") or {}
+                            lookup_size = len(active_now.get("lookup", {})) if isinstance(active_now, dict) else 0
                             st.warning(
-                                "**No Mshop page-info for this URL.** Your Mshop active-pages "
-                                "cache hasn't been synced for this URL — sync via the "
-                                "🔌 Mshop Admin API panel in Quick Wins. Without that mapping "
-                                "we can't show what was pushed for this exact page."
+                                f"**No Mshop page-info for this URL.**\n\n"
+                                f"Current active-pages cache contains "
+                                f"**{lookup_size}** URL → page-id mappings, but `{q['url']}` "
+                                f"is NOT one of them.\n\n"
+                                "**This is critical.** If pocket-pussy was never in the cache, "
+                                "the Push buttons in Quick Wins would have been HIDDEN for this "
+                                "page — meaning your earlier 'pushes' for this URL never "
+                                "actually pushed anything (the buttons weren't there to click).\n\n"
+                                "Two possible causes:\n"
+                                "1. The cache was never synced — sync it now (button below)\n"
+                                "2. Mshop's admin API doesn't include this category in its list "
+                                "of active pages (e.g. it's disabled in Magento, or it's a sale/"
+                                "filter page the API doesn't return)"
                             )
+                            sync_cols = st.columns([2, 3])
+                            with sync_cols[0]:
+                                if st.button(
+                                    "🔌 Sync Mshop active pages now",
+                                    key=f"qq_sync_{url_hash}",
+                                    type="primary",
+                                    use_container_width=True,
+                                    help="Calls Mshop Admin API to fetch ALL "
+                                         "categories + CMS pages + filter pages, "
+                                         "rebuilds the URL → page-id lookup, and "
+                                         "saves to disk.",
+                                ):
+                                    from utils.mshop_admin_api import fetch_active_pages_all
+                                    with st.spinner("Fetching all active pages from Mshop…"):
+                                        try:
+                                            result = fetch_active_pages_all()
+                                            if isinstance(result, dict) and result.get("lookup"):
+                                                st.session_state["mshop_active_pages"] = result
+                                                from utils.persistence import save_key
+                                                save_key("mshop_active_pages")
+                                                # Refresh the diagnostic with new lookup
+                                                from utils.mshop_admin_api import lookup_url as _mlu_re
+                                                page_info = _mlu_re(result, q["url"])
+                                                if page_info:
+                                                    st.success(
+                                                        f"Sync done. Found "
+                                                        f"{len(result.get('lookup', {}))} pages. "
+                                                        f"This URL now resolves to "
+                                                        f"**{page_info.get('type')} id="
+                                                        f"{page_info.get('id')}**. Click "
+                                                        f"🔍 Re-scrape + re-check again to see "
+                                                        f"the push log."
+                                                    )
+                                                else:
+                                                    st.error(
+                                                        f"Sync done ({len(result.get('lookup', {}))} "
+                                                        f"pages fetched), but `{q['url']}` is STILL "
+                                                        f"not in the lookup. This means Magento's "
+                                                        f"Admin API doesn't return this category "
+                                                        f"as an active page. Likely the page is "
+                                                        f"disabled in Magento, or it's a special "
+                                                        f"page type (sale / dynamic filter) the "
+                                                        f"API doesn't expose."
+                                                    )
+                                            else:
+                                                st.error(f"Sync failed: {result.get('error', 'unknown')}")
+                                        except Exception as _se:
+                                            st.error(f"Sync error: {_se}")
                         elif not _diag.get("entries"):
                             pinfo = _diag["page_info"]
                             st.warning(
