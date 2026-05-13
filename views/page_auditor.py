@@ -850,6 +850,169 @@ def render():
         qc2.metric("IMPROVE", improve_count)
         qc3.metric("KEEP", keep_count)
 
+        # ── Re-check ALL flagged pages (cache-bypass scrape + fresh verdict) ──
+        # Many earlier REWRITE verdicts were false positives caused by the
+        # quality check measuring whole-page word count (incl. product grid)
+        # instead of editorial text. After fixing that bug we want a way to
+        # re-evaluate every flagged page in one shot — so the user sees
+        # which pages were actually bad vs. which were just mis-measured.
+        # Iteration is rerun-based: process 1 page per rerun so the spinner
+        # stays responsive and the user can stop mid-run.
+        _recheck_state_key = "_recheck_all_state"
+        _recheck_state = st.session_state.get(_recheck_state_key) or {}
+        _recheck_running = bool(_recheck_state.get("running"))
+
+        from utils.ui_helpers import normalize_url as _qr_nu_top
+        _audit_by_url_top = {_qr_nu_top(r["url"]): r for r in results if r.get("url")}
+
+        rc_col1, rc_col2, rc_col3 = st.columns([2, 2, 2])
+        if not _recheck_running:
+            with rc_col1:
+                _eligible_urls = [
+                    q["url"] for q in quality_results
+                    if q["verdict"] in ("REWRITE", "IMPROVE")
+                ]
+                _btn_label = (
+                    f"🔄 Re-check ALL flagged pages ({len(_eligible_urls)})"
+                    if _eligible_urls
+                    else "🔄 Re-check ALL flagged pages (none flagged)"
+                )
+                if st.button(
+                    _btn_label,
+                    key="recheck_all_btn",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=not _eligible_urls,
+                    help="Re-scrapes every REWRITE+IMPROVE page from mshop.se "
+                         "with cache-bypass headers, drops the cached verdict, "
+                         "and re-runs the AI quality check using the fixed "
+                         "editorial-only measurement. Many earlier verdicts "
+                         "were false positives caused by product-grid "
+                         "contamination — this gives the real picture.",
+                ):
+                    st.session_state[_recheck_state_key] = {
+                        "running": True,
+                        "pending_urls": list(_eligible_urls),
+                        "done_urls": [],
+                        "errors": [],
+                        "before": {q["url"]: q["verdict"] for q in quality_results if q["verdict"] in ("REWRITE", "IMPROVE")},
+                        "started_at": time.time(),
+                    }
+                    st.rerun()
+            with rc_col2:
+                # Show last-run summary if one finished recently
+                _last = st.session_state.get("_recheck_all_last_summary")
+                if _last:
+                    flipped = _last.get("flipped", 0)
+                    total = _last.get("total", 0)
+                    st.caption(
+                        f"Last re-check: {flipped}/{total} pages flipped to "
+                        f"better verdict ({_last.get('seconds', 0):.0f}s)"
+                    )
+        else:
+            # Live progress while running
+            pending = _recheck_state.get("pending_urls") or []
+            done = _recheck_state.get("done_urls") or []
+            errors = _recheck_state.get("errors") or []
+            total = len(pending) + len(done)
+            elapsed = time.time() - (_recheck_state.get("started_at") or time.time())
+            with rc_col1:
+                pct = (len(done) / max(total, 1)) * 100
+                st.markdown(
+                    f"<div style='background:#0d0d15; border:2px solid #5533ff; "
+                    f"border-radius:6px; padding:0.6rem;'>"
+                    f"<div style='font-size:0.85rem; color:#c8b4ff; font-weight:700;'>"
+                    f"Re-checking {len(done)}/{total} ({pct:.0f}%)</div>"
+                    f"<div style='font-size:0.7rem; color:#9b9bb8;'>"
+                    f"Elapsed: {elapsed:.0f}s · Errors: {len(errors)}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with rc_col2:
+                if st.button(
+                    "⏸ Stop re-check",
+                    key="recheck_stop_btn",
+                    use_container_width=True,
+                ):
+                    st.session_state[_recheck_state_key] = {**_recheck_state, "running": False}
+                    st.rerun()
+
+            # Process the next page in the queue and trigger another rerun
+            if pending:
+                next_url = pending[0]
+                with st.spinner(f"Re-checking {next_url[-50:]}…"):
+                    try:
+                        from utils.page_scraper import scrape_page
+                        from utils.category_analyzer import classify_page_type
+                        from utils.quality_check_runner import run_quality_batches, quality_key as _qk_loop
+                        from utils.persistence import save_key
+                        fresh = scrape_page(next_url, bypass_cache=True)
+                        cls = classify_page_type(next_url, fresh)
+                        fresh["page_type"] = cls.get("page_type", "unknown")
+                        # Replace in audit_results in place
+                        for i, rr in enumerate(results):
+                            if _qr_nu_top(rr.get("url", "")) == _qr_nu_top(next_url):
+                                fresh["url"] = rr.get("url", next_url)
+                                for carry in ("target_keywords", "cluster_keywords",
+                                              "impressions", "clicks", "lost_clicks_estimate"):
+                                    if carry in rr and carry not in fresh:
+                                        fresh[carry] = rr[carry]
+                                results[i] = fresh
+                                break
+                        st.session_state["audit_results"] = results
+                        # Drop cached verdict so it re-runs
+                        st.session_state.pop(_qk_loop(next_url), None)
+                        # Re-run quality check on JUST this URL
+                        _errs = run_quality_batches([fresh], cap=1)
+                        if _errs:
+                            for _bn, _err in _errs:
+                                _recheck_state["errors"].append(f"{next_url}: {_err}")
+                    except Exception as _e:
+                        _recheck_state["errors"].append(f"{next_url}: {type(_e).__name__}: {_e}")
+                _recheck_state["pending_urls"] = pending[1:]
+                _recheck_state["done_urls"] = done + [next_url]
+                st.session_state[_recheck_state_key] = _recheck_state
+                # Persist updated audit_results so a refresh doesn't lose progress
+                try:
+                    from utils.persistence import save_key as _sk
+                    _sk("audit_results")
+                except Exception:
+                    pass
+                st.rerun()
+            else:
+                # Queue empty — finalize
+                _before = _recheck_state.get("before") or {}
+                _flipped = 0
+                for u in done:
+                    _new_q = st.session_state.get(_qk_pa(u))
+                    if isinstance(_new_q, dict):
+                        _new_v = _new_q.get("verdict")
+                        _old_v = _before.get(u)
+                        if _new_v == "KEEP" and _old_v in ("REWRITE", "IMPROVE"):
+                            _flipped += 1
+                        elif _new_v == "IMPROVE" and _old_v == "REWRITE":
+                            _flipped += 1
+                st.session_state["_recheck_all_last_summary"] = {
+                    "total": len(done),
+                    "flipped": _flipped,
+                    "errors": len(errors),
+                    "seconds": elapsed,
+                }
+                st.session_state[_recheck_state_key] = {"running": False}
+                if errors:
+                    st.warning(
+                        f"Re-check done with {len(errors)} error(s). Flipped to "
+                        f"better verdict: {_flipped}/{len(done)} pages.\n\n"
+                        + "\n".join(f"- {e}" for e in errors[:5])
+                    )
+                else:
+                    st.success(
+                        f"Re-check done. {_flipped}/{len(done)} pages flipped "
+                        f"to a better verdict in {elapsed:.0f}s. Scroll the "
+                        f"list below to see new verdicts."
+                    )
+                st.rerun()
+
         # Pagination
         QR_PER_PAGE = 15
         qr_total = len(quality_results)
