@@ -888,7 +888,7 @@ def render():
             # Action: rewrite this exact page via the same flow as Quick Wins
             audit_row = _audit_by_url.get(_qr_nu(q["url"]))
             if audit_row is not None and verdict in ("REWRITE", "IMPROVE"):
-                btn_cols = st.columns([3, 3, 6])
+                btn_cols = st.columns([3, 3, 3, 3])
                 with btn_cols[0]:
                     if ai_plan_present:
                         if st.button(
@@ -920,9 +920,65 @@ def render():
                             open_in_quick_wins(q["url"])
                             st.rerun()
                 with btn_cols[2]:
+                    # DIAGNOSTIC: re-scrape the LIVE page, replace audit
+                    # data, and re-run quality check just for this URL.
+                    # Tells the user definitively whether their Mshop
+                    # push landed or not — if verdict flips from
+                    # REWRITE → KEEP, the push worked and audit was just
+                    # stale. If verdict stays REWRITE, the push didn't
+                    # replace the live text.
+                    if st.button(
+                        "🔍 Re-scrape + re-check",
+                        key=f"qq_recheck_{url_hash}",
+                        use_container_width=True,
+                        help="Fetches the LIVE page from mshop.se RIGHT NOW, "
+                             "replaces the audit data with the fresh scrape, "
+                             "and re-runs the AI quality check just on this "
+                             "page. Use to verify whether your earlier "
+                             "Mshop pushes actually replaced the text.",
+                    ):
+                        from utils.page_scraper import scrape_page
+                        from utils.category_analyzer import classify_page_type
+                        from utils.quality_check_runner import run_quality_batches, quality_key
+                        from utils.persistence import save_key
+                        with st.spinner(f"Re-scraping {q['url'][-50:]}…"):
+                            fresh = scrape_page(q["url"])
+                            cls = classify_page_type(q["url"], fresh)
+                            fresh["page_type"] = cls.get("page_type", "unknown")
+                            # Replace this URL's row in audit_results in place
+                            for i, rr in enumerate(results):
+                                if _qr_nu(rr.get("url", "")) == _qr_nu(q["url"]):
+                                    fresh["url"] = rr.get("url", q["url"])
+                                    # Carry over fields the scraper doesn't produce
+                                    for carry in ("target_keywords", "cluster_keywords", "impressions", "clicks", "lost_clicks_estimate"):
+                                        if carry in rr and carry not in fresh:
+                                            fresh[carry] = rr[carry]
+                                    results[i] = fresh
+                                    break
+                            st.session_state["audit_results"] = results
+                            save_key("audit_results")
+                        # Drop cached verdict so quality check re-runs
+                        st.session_state.pop(quality_key(q["url"]), None)
+                        with st.spinner("Re-running AI quality check on this page only…"):
+                            errors = run_quality_batches(
+                                [fresh],
+                                cap=1,
+                            )
+                        if errors:
+                            for bn, err in errors:
+                                st.error(f"Quality check failed: {err}")
+                        else:
+                            st.success(
+                                "Re-scrape + re-check done. Look for this page "
+                                "again above — its verdict should reflect the "
+                                "CURRENT live text on mshop.se. Reload the AI "
+                                "Content Quality section to see the new verdict."
+                            )
+                        st.rerun()
+                with btn_cols[3]:
                     status = "✓ AI fixes ready" if ai_plan_present else "○ No AI fixes generated yet"
                     st.markdown(
-                        f"<div style='padding-top:0.4rem; font-size:0.75rem; color:#9b9bb8;'>{status} · review + push to Mshop in Quick Wins</div>",
+                        f"<div style='padding-top:0.4rem; font-size:0.7rem; color:#9b9bb8;'>{status}</div>",
                         unsafe_allow_html=True,
                     )
 
