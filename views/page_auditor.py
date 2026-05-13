@@ -952,8 +952,14 @@ def render():
                         from utils.category_analyzer import classify_page_type
                         from utils.quality_check_runner import run_quality_batches, quality_key
                         from utils.persistence import save_key
-                        with st.spinner(f"Re-scraping {q['url'][-50:]}…"):
-                            fresh = scrape_page(q["url"])
+                        with st.spinner(f"Re-scraping {q['url'][-50:]} (cache-bypass)…"):
+                            # bypass_cache=True sends Cache-Control: no-cache
+                            # headers AND appends a cache-busting query param.
+                            # Without this, Magento's full-page cache can
+                            # serve a stale copy of the HTML and the verdict
+                            # reflects pre-push content even when the push
+                            # actually landed.
+                            fresh = scrape_page(q["url"], bypass_cache=True)
                             cls = classify_page_type(q["url"], fresh)
                             fresh["page_type"] = cls.get("page_type", "unknown")
                             # Replace this URL's row in audit_results in place

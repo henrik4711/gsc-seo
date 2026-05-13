@@ -24,11 +24,20 @@ def reset_playwright():
     pass
 
 
-def scrape_page(url: str, timeout: int = 30) -> dict:
+def scrape_page(url: str, timeout: int = 30, bypass_cache: bool = False) -> dict:
     """
     Scrape a URL via requests + BeautifulSoup. Returns dict with
     title, meta, h1/h2/h3, body, links, images, schema, structural
     signals, editorial_images, etc. (full _parse_html output).
+
+    When bypass_cache=True, the request asks intermediaries (Magento
+    full-page cache, CDNs) to skip cache:
+      - Cache-Control: no-cache, no-store, must-revalidate
+      - Pragma: no-cache
+      - cache-busting query parameter ?_cb=<timestamp> (most reliable)
+    Used by the "Re-scrape + re-check" flow in Page Auditor so the
+    user sees the actual current HTML, not a cached snapshot. Off by
+    default because normal scrapes benefit from CDN/edge caching.
     """
     result = {
         "url": url,
@@ -54,7 +63,7 @@ def scrape_page(url: str, timeout: int = 30) -> dict:
     if not BS4_AVAILABLE:
         result["error"] = "beautifulsoup4 not installed"
         return result
-    out = _scrape_with_requests(url, timeout, result)
+    out = _scrape_with_requests(url, timeout, result, bypass_cache=bypass_cache)
     # Lightweight log event — one line per scraped page (not a full run)
     try:
         from utils.diagnostics import log_event
@@ -489,8 +498,15 @@ def _parse_html(result: dict, soup, html: str, url: str) -> dict:
     return result
 
 
-def _scrape_with_requests(url: str, timeout: int = 30, result: dict = None) -> dict:
-    """Fetch HTML with requests and parse via shared _parse_html."""
+def _scrape_with_requests(url: str, timeout: int = 30, result: dict = None, bypass_cache: bool = False) -> dict:
+    """Fetch HTML with requests and parse via shared _parse_html.
+
+    bypass_cache=True asks Magento full-page cache / CDNs to skip the
+    cached copy. Done both via headers (no-cache, no-store) AND a
+    cache-busting query parameter (?_cb=<timestamp>) — the query param
+    is the most reliable defeater because most edge caches treat the
+    URL+querystring as the cache key.
+    """
     if result is None:
         result = {"url": url, "success": False, "error": None,
                   "title": None, "meta_description": None, "h1": None,
@@ -501,7 +517,19 @@ def _scrape_with_requests(url: str, timeout: int = 30, result: dict = None) -> d
                   "title_length": 0, "description_length": 0}
     try:
         import requests
-        resp = requests.get(url, headers={
+        # Build the request URL — append a cache-busting query param
+        # when bypass_cache is True. Done before sending so the param
+        # appears in the URL the cache keys on.
+        request_url = url
+        if bypass_cache:
+            import time as _t
+            sep = "&" if ("?" in url) else "?"
+            request_url = f"{url}{sep}_cb={int(_t.time())}"
+
+        # Build headers — add no-cache directives only when bypassing.
+        # Non-bypass scrapes leave headers minimal so CDNs serve cached
+        # responses (faster batch scraping).
+        _headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                           "AppleWebKit/537.36 (KHTML, like Gecko) "
                           "Chrome/120.0.0.0 Safari/537.36",
@@ -510,7 +538,14 @@ def _scrape_with_requests(url: str, timeout: int = 30, result: dict = None) -> d
             "Accept-Encoding": "gzip, deflate, br",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
-        }, timeout=max(timeout, 30), allow_redirects=True)
+        }
+        if bypass_cache:
+            _headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            _headers["Pragma"] = "no-cache"
+            _headers["Expires"] = "0"
+
+        resp = requests.get(request_url, headers=_headers,
+                            timeout=max(timeout, 30), allow_redirects=True)
         if resp.status_code == 403:
             result["error"] = f"HTTP 403 Forbidden (bot-blocked)"
             return result
