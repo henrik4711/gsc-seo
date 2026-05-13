@@ -690,79 +690,16 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # ── Persisted diagnostic banner from "🔍 Re-scrape + re-check" ──
-    _qq_diag = st.session_state.get("_qq_diag")
-    if _qq_diag:
-        with st.expander(
-            f"🔍 Push-log diagnostic for {_qq_diag.get('url', '?')}",
-            expanded=True,
-        ):
-            if _qq_diag.get("error"):
-                st.error(f"Could not read push log: {_qq_diag['error']}")
-            elif not _qq_diag.get("page_info"):
-                st.warning(
-                    "No Mshop page-info for this URL — your Mshop active-pages cache "
-                    "hasn't been synced for this URL. Sync via the 🔌 Mshop Admin API "
-                    "panel in Quick Wins."
-                )
-            elif not _qq_diag.get("entries"):
-                pinfo = _qq_diag["page_info"]
-                st.warning(
-                    f"**No push entries logged for this page** "
-                    f"({pinfo.get('type')} id={pinfo.get('id')}).\n\n"
-                    "Either nothing was ever pushed for this page, OR the push log on "
-                    "disk got reset.\n\n"
-                    "If you DID push earlier and the live text is still bad, the most "
-                    "likely cause is that you pushed a different page (different ID) "
-                    "or the Mshop active-pages cache mapped this URL to the wrong ID."
-                )
-            else:
-                st.caption(
-                    f"Last {len(_qq_diag['entries'])} push attempts for this exact "
-                    f"page ({_qq_diag['page_info'].get('type')} id="
-                    f"{_qq_diag['page_info'].get('id')}, newest first):"
-                )
-                for entry in _qq_diag["entries"]:
-                    status = entry.get("status", "?")
-                    http = entry.get("http_code", "?")
-                    color = "#33dd88" if status == "success" else "#ff4455"
-                    payload = entry.get("payload") or {}
-                    desc = payload.get("description") or ""
-                    mt = payload.get("metaTitle") or ""
-                    md = payload.get("metaDescription") or ""
-                    body_excerpt = (entry.get("response_body") or "")[:300]
-                    st.markdown(
-                        f"<div style='background:#0d0d15; border-left:3px solid {color}; "
-                        f"padding:0.6rem; margin:0.4rem 0; border-radius:4px; "
-                        f"font-size:0.75rem; font-family:\"IBM Plex Mono\",monospace;'>"
-                        f"<div style='color:{color}; font-weight:700;'>"
-                        f"{status.upper()} · HTTP {http} · {entry.get('timestamp', '')}</div>"
-                        f"<div style='color:#9b9bb8; margin-top:0.3rem;'>"
-                        f"endpoint: {entry.get('endpoint', '')}</div>"
-                        f"<div style='color:#e8e8f0; margin-top:0.3rem;'>"
-                        f"description sent: <strong>{len(desc)}</strong> chars · "
-                        f"meta_title sent: <strong>{len(mt)}</strong> chars · "
-                        f"meta_desc sent: <strong>{len(md)}</strong> chars</div>"
-                        f"<div style='color:#6b6b8a; margin-top:0.3rem; word-break:break-all;'>"
-                        f"response: {body_excerpt}</div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-                st.markdown(
-                    "**How to read this:**\n\n"
-                    "- ✅ `success` + HTTP 200 + `description sent: NNNN chars` = your "
-                    "push reached Magento. If live text is STILL the old text, Magento's "
-                    "full-page cache is serving stale HTML — flush it in Magento Admin "
-                    "(System → Cache Management → Flush Magento Cache).\n"
-                    "- ❌ Non-200 HTTP or `network_error` = the push never landed. "
-                    "Check the response body above for Magento's error message.\n"
-                    "- `description sent: 0 chars` = the push button sent an empty value. "
-                    "Could mean the AI output wasn't loaded into the textarea before you "
-                    "clicked Push, or the field-routing mapped intro to the wrong slot."
-                )
-            if st.button("Dismiss diagnostic", key="qq_dismiss_diag"):
-                st.session_state.pop("_qq_diag", None)
-                st.rerun()
+    # Diagnostic from "🔍 Re-scrape + re-check" is rendered INLINE under
+    # the button that triggered it (further down in this section), not at
+    # the top — otherwise users with a 50-deep card list never see the
+    # output. Just hint here that one is available if it's set:
+    if st.session_state.get("_qq_diag"):
+        _diag_url = st.session_state["_qq_diag"].get("url", "?")
+        st.info(
+            f"🔍 Diagnostic available for `{_diag_url}` — scroll down to that card to see "
+            "the new verdict + push log."
+        )
 
     # All quality-check logic lives in utils.quality_check_runner.
     # This view only renders UI + delegates to the shared module.
@@ -1090,6 +1027,93 @@ def render():
                         f"<div style='padding-top:0.4rem; font-size:0.7rem; color:#9b9bb8;'>{status}</div>",
                         unsafe_allow_html=True,
                     )
+
+                # ── INLINE diagnostic: shown right below the button that
+                # triggered it, not at the top of the section. Avoids the
+                # "where did the result go?" UX problem when the card is
+                # 50 entries deep in the page.
+                _diag = st.session_state.get("_qq_diag")
+                if _diag and _qr_nu(_diag.get("url", "")) == _qr_nu(q["url"]):
+                    with st.expander("🔍 Re-scrape + push-log diagnostic", expanded=True):
+                        # Fresh verdict from this run, if any
+                        from utils.quality_check_runner import quality_key as _qkk
+                        fresh_verdict = st.session_state.get(_qkk(q["url"]))
+                        if isinstance(fresh_verdict, dict):
+                            fv = fresh_verdict.get("verdict", "?")
+                            fs = fresh_verdict.get("score", "?")
+                            fc = {"REWRITE": "#ff4455", "IMPROVE": "#ffaa33", "KEEP": "#33dd88"}.get(fv, "#9b9bb8")
+                            st.markdown(
+                                f"<div style='padding:0.5rem; background:#0d0d15; border-radius:4px; margin-bottom:0.5rem;'>"
+                                f"<strong>New verdict on the freshly-scraped LIVE text:</strong> "
+                                f"<span style='color:{fc}; font-weight:700; font-size:1.1rem;'>{fv} {fs}/10</span>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.caption(f"Summary: {fresh_verdict.get('summary', '')}")
+                        if _diag.get("error"):
+                            st.error(f"Could not read push log: {_diag['error']}")
+                        elif not _diag.get("page_info"):
+                            st.warning(
+                                "**No Mshop page-info for this URL.** Your Mshop active-pages "
+                                "cache hasn't been synced for this URL — sync via the "
+                                "🔌 Mshop Admin API panel in Quick Wins. Without that mapping "
+                                "we can't show what was pushed for this exact page."
+                            )
+                        elif not _diag.get("entries"):
+                            pinfo = _diag["page_info"]
+                            st.warning(
+                                f"**No push entries logged for this page** "
+                                f"({pinfo.get('type')} id={pinfo.get('id')}).\n\n"
+                                "Either nothing was ever pushed for this page, OR the push log "
+                                "on disk got reset. If you DID push earlier, the most likely "
+                                "cause is that the Mshop URL→ID mapping pointed your push at a "
+                                "DIFFERENT page-id than this one."
+                            )
+                        else:
+                            st.caption(
+                                f"Last {len(_diag['entries'])} push attempts for this exact "
+                                f"page ({_diag['page_info'].get('type')} id="
+                                f"{_diag['page_info'].get('id')}, newest first):"
+                            )
+                            for entry in _diag["entries"]:
+                                status_e = entry.get("status", "?")
+                                http = entry.get("http_code", "?")
+                                color = "#33dd88" if status_e == "success" else "#ff4455"
+                                payload = entry.get("payload") or {}
+                                desc = payload.get("description") or ""
+                                mt = payload.get("metaTitle") or ""
+                                md = payload.get("metaDescription") or ""
+                                body_excerpt = (entry.get("response_body") or "")[:300]
+                                st.markdown(
+                                    f"<div style='background:#0d0d15; border-left:3px solid {color}; "
+                                    f"padding:0.6rem; margin:0.4rem 0; border-radius:4px; "
+                                    f"font-size:0.75rem; font-family:\"IBM Plex Mono\",monospace;'>"
+                                    f"<div style='color:{color}; font-weight:700;'>"
+                                    f"{status_e.upper()} · HTTP {http} · {entry.get('timestamp', '')}</div>"
+                                    f"<div style='color:#9b9bb8; margin-top:0.3rem;'>"
+                                    f"endpoint: {entry.get('endpoint', '')}</div>"
+                                    f"<div style='color:#e8e8f0; margin-top:0.3rem;'>"
+                                    f"description sent: <strong>{len(desc)}</strong> chars · "
+                                    f"meta_title sent: <strong>{len(mt)}</strong> chars · "
+                                    f"meta_desc sent: <strong>{len(md)}</strong> chars</div>"
+                                    f"<div style='color:#6b6b8a; margin-top:0.3rem; word-break:break-all;'>"
+                                    f"response: {body_excerpt}</div>"
+                                    f"</div>",
+                                    unsafe_allow_html=True,
+                                )
+                            st.markdown(
+                                "**How to read this:**\n\n"
+                                "- ✅ `success` + non-zero `description sent` + still-bad live text → "
+                                "Magento full-page cache is stale; flush it in Magento Admin → System → "
+                                "Cache Management → Flush Magento Cache.\n"
+                                "- ❌ Non-200 HTTP or `network_error` → push never landed; check response body.\n"
+                                "- `description sent: 0 chars` → push button sent empty; AI output wasn't "
+                                "in the field when you clicked.\n"
+                                "- No entries → nothing pushed for this page-id, OR URL→ID mapping is wrong."
+                            )
+                        if st.button("Dismiss diagnostic", key=f"qq_dismiss_{url_hash}"):
+                            st.session_state.pop("_qq_diag", None)
+                            st.rerun()
 
             st.markdown("</div>", unsafe_allow_html=True)
 
