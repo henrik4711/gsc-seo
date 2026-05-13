@@ -690,6 +690,80 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # ── Persisted diagnostic banner from "🔍 Re-scrape + re-check" ──
+    _qq_diag = st.session_state.get("_qq_diag")
+    if _qq_diag:
+        with st.expander(
+            f"🔍 Push-log diagnostic for {_qq_diag.get('url', '?')}",
+            expanded=True,
+        ):
+            if _qq_diag.get("error"):
+                st.error(f"Could not read push log: {_qq_diag['error']}")
+            elif not _qq_diag.get("page_info"):
+                st.warning(
+                    "No Mshop page-info for this URL — your Mshop active-pages cache "
+                    "hasn't been synced for this URL. Sync via the 🔌 Mshop Admin API "
+                    "panel in Quick Wins."
+                )
+            elif not _qq_diag.get("entries"):
+                pinfo = _qq_diag["page_info"]
+                st.warning(
+                    f"**No push entries logged for this page** "
+                    f"({pinfo.get('type')} id={pinfo.get('id')}).\n\n"
+                    "Either nothing was ever pushed for this page, OR the push log on "
+                    "disk got reset.\n\n"
+                    "If you DID push earlier and the live text is still bad, the most "
+                    "likely cause is that you pushed a different page (different ID) "
+                    "or the Mshop active-pages cache mapped this URL to the wrong ID."
+                )
+            else:
+                st.caption(
+                    f"Last {len(_qq_diag['entries'])} push attempts for this exact "
+                    f"page ({_qq_diag['page_info'].get('type')} id="
+                    f"{_qq_diag['page_info'].get('id')}, newest first):"
+                )
+                for entry in _qq_diag["entries"]:
+                    status = entry.get("status", "?")
+                    http = entry.get("http_code", "?")
+                    color = "#33dd88" if status == "success" else "#ff4455"
+                    payload = entry.get("payload") or {}
+                    desc = payload.get("description") or ""
+                    mt = payload.get("metaTitle") or ""
+                    md = payload.get("metaDescription") or ""
+                    body_excerpt = (entry.get("response_body") or "")[:300]
+                    st.markdown(
+                        f"<div style='background:#0d0d15; border-left:3px solid {color}; "
+                        f"padding:0.6rem; margin:0.4rem 0; border-radius:4px; "
+                        f"font-size:0.75rem; font-family:\"IBM Plex Mono\",monospace;'>"
+                        f"<div style='color:{color}; font-weight:700;'>"
+                        f"{status.upper()} · HTTP {http} · {entry.get('timestamp', '')}</div>"
+                        f"<div style='color:#9b9bb8; margin-top:0.3rem;'>"
+                        f"endpoint: {entry.get('endpoint', '')}</div>"
+                        f"<div style='color:#e8e8f0; margin-top:0.3rem;'>"
+                        f"description sent: <strong>{len(desc)}</strong> chars · "
+                        f"meta_title sent: <strong>{len(mt)}</strong> chars · "
+                        f"meta_desc sent: <strong>{len(md)}</strong> chars</div>"
+                        f"<div style='color:#6b6b8a; margin-top:0.3rem; word-break:break-all;'>"
+                        f"response: {body_excerpt}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                st.markdown(
+                    "**How to read this:**\n\n"
+                    "- ✅ `success` + HTTP 200 + `description sent: NNNN chars` = your "
+                    "push reached Magento. If live text is STILL the old text, Magento's "
+                    "full-page cache is serving stale HTML — flush it in Magento Admin "
+                    "(System → Cache Management → Flush Magento Cache).\n"
+                    "- ❌ Non-200 HTTP or `network_error` = the push never landed. "
+                    "Check the response body above for Magento's error message.\n"
+                    "- `description sent: 0 chars` = the push button sent an empty value. "
+                    "Could mean the AI output wasn't loaded into the textarea before you "
+                    "clicked Push, or the field-routing mapped intro to the wrong slot."
+                )
+            if st.button("Dismiss diagnostic", key="qq_dismiss_diag"):
+                st.session_state.pop("_qq_diag", None)
+                st.rerun()
+
     # All quality-check logic lives in utils.quality_check_runner.
     # This view only renders UI + delegates to the shared module.
     from utils.quality_check_runner import (
@@ -974,6 +1048,41 @@ def render():
                                 "CURRENT live text on mshop.se. Reload the AI "
                                 "Content Quality section to see the new verdict."
                             )
+
+                        # ── PUSH-LOG DIAGNOSTIC ──
+                        # Snapshot what we sent to Mshop and what Mshop
+                        # replied so the user can see whether pushes
+                        # actually landed. Persisted to session_state
+                        # so the upcoming st.rerun() doesn't discard it.
+                        try:
+                            from utils.mshop_admin_api import read_push_log, lookup_url as _mlu
+                            active = st.session_state.get("mshop_active_pages") or {}
+                            page_info = _mlu(active, q["url"])
+                            log = read_push_log(limit=200)
+                            relevant = []
+                            if page_info and isinstance(log, list):
+                                pid = page_info.get("id")
+                                ptype = page_info.get("type")
+                                pid_field = {
+                                    "category": "categoryId",
+                                    "cms": "cmsPageId",
+                                    "filterpage": "filterPageId",
+                                }.get(ptype, "")
+                                for entry in log:
+                                    payload = entry.get("payload") or {}
+                                    if pid_field and payload.get(pid_field) == pid:
+                                        relevant.append(entry)
+                            st.session_state["_qq_diag"] = {
+                                "url": q["url"],
+                                "page_info": page_info,
+                                "entries": relevant[:5],
+                            }
+                        except Exception as _push_log_err:
+                            st.session_state["_qq_diag"] = {
+                                "url": q["url"],
+                                "error": str(_push_log_err),
+                            }
+
                         st.rerun()
                 with btn_cols[3]:
                     status = "✓ AI fixes ready" if ai_plan_present else "○ No AI fixes generated yet"
