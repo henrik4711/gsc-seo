@@ -2612,10 +2612,11 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                         f"</div>",
                         unsafe_allow_html=True,
                     )
-                    with st.expander(
-                        f"Quality gate detail ({_qpass}/{_qtot} passed)",
-                        expanded=(_qpass < _qtot),
-                    ):
+                    # Streamlit forbids nested expanders, so this lives
+                    # in a popover. Show full check list inline only when
+                    # something failed (so the user sees failures without
+                    # having to click); behind a popover when all-passed.
+                    def _render_qg_checks():
                         for c in _qc:
                             _cicon = "✓" if c["passed"] else "✗"
                             _ccolor = "#33dd88" if c["passed"] else "#ff4455"
@@ -2625,6 +2626,12 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                                 f"<span style='color:#9b9bb8;'>· {c['actual']}</span></div>",
                                 unsafe_allow_html=True,
                             )
+                    if _qpass < _qtot:
+                        # Failures present — show inline so they're visible
+                        _render_qg_checks()
+                    else:
+                        with st.popover(f"View all {_qtot} checks (all passed)"):
+                            _render_qg_checks()
 
                 # ── Push to Magento (preview → confirm) ──
                 # If the user edited the text, push the EDITED version, not the original.
@@ -2977,10 +2984,9 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                         f"</div>",
                         unsafe_allow_html=True,
                     )
-                    with st.expander(
-                        f"Intro quality detail ({_ipass}/{_itot} passed)",
-                        expanded=(_ipass < _itot),
-                    ):
+                    # Streamlit forbids nested expanders — same pattern
+                    # as the bottom-text quality gate display.
+                    def _render_intro_qg_checks():
                         for c in _iqc:
                             _cicon = "✓" if c["passed"] else "✗"
                             _ccolor = "#33dd88" if c["passed"] else "#ff4455"
@@ -2990,6 +2996,11 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
                                 f"<span style='color:#9b9bb8;'>· {c['actual']}</span></div>",
                                 unsafe_allow_html=True,
                             )
+                    if _ipass < _itot:
+                        _render_intro_qg_checks()
+                    else:
+                        with st.popover(f"View all {_itot} intro checks (all passed)"):
+                            _render_intro_qg_checks()
 
                 # ── Auto-fix transparency (intro) ──
                 _iaf = intro_data.get("_auto_fixes") or {}
