@@ -2146,6 +2146,94 @@ def render_page_actions_card(page, idx=None, total_pages=None, on_skip=None):
     _intro_data_for_bar = st.session_state.get(f"_intro_text_{url_hash}", {})
     _render_status_bar(page, _plan_data_for_bar, _text_data_for_bar, _intro_data_for_bar)
 
+    # ── Auto-trigger: when arriving from Page Auditor via deep-link,
+    # generate everything missing in one shot. The auto-gen-done flag
+    # is per-URL so re-renders don't re-trigger; click "Generate ALL"
+    # below to force a re-run.
+    from utils.page_deeplink import current_focus_url as _cfu
+    _focus = _cfu()
+    _auto_done_key = f"_auto_gen_done_{url_hash}"
+    if _focus and _focus == url and not st.session_state.get(_auto_done_key):
+        plan_missing = not _plan_data_for_bar or _plan_data_for_bar.get("error")
+        text_missing = (
+            page.get("page_type") == "category"
+            and (not _text_data_for_bar or _text_data_for_bar.get("error"))
+        )
+        intro_too_thin = (page["audit"].get("intro_word_count", 0) or 0) < 50
+        intro_missing = (
+            page.get("page_type") == "category"
+            and intro_too_thin
+            and (not _intro_data_for_bar or _intro_data_for_bar.get("error"))
+        )
+        if plan_missing or text_missing or intro_missing:
+            st.info(
+                "🤖 Auto-generating all AI fixes for this page (plan + bottom text"
+                + (" + intro" if intro_missing else "")
+                + ") — this happens once when you arrive from Page Auditor."
+            )
+            with st.spinner("Generating ALL AI fixes (~60-90 sec total)…"):
+                from utils.page_fix_runner import generate_all_fixes_for_page
+                _status = generate_all_fixes_for_page(page)
+            st.session_state[_auto_done_key] = True
+            _summary = " · ".join(f"**{k}**: {v}" for k, v in _status.items())
+            if any("error" in str(v) for v in _status.values()):
+                st.warning(f"Auto-generation finished with errors — {_summary}")
+            else:
+                st.success(f"Auto-generation done — {_summary}")
+            st.rerun()
+        else:
+            # Mark as done so we don't re-check every rerun
+            st.session_state[_auto_done_key] = True
+
+    # ── Manual "Generate ALL fixes" button — visible when ANY of the
+    # 3 generations are missing. Click force-regenerates everything.
+    _plan_missing_now = not _plan_data_for_bar or _plan_data_for_bar.get("error")
+    _text_missing_now = (
+        page.get("page_type") == "category"
+        and (not _text_data_for_bar or _text_data_for_bar.get("error"))
+    )
+    _intro_thin_now = (page["audit"].get("intro_word_count", 0) or 0) < 50
+    _intro_missing_now = (
+        page.get("page_type") == "category"
+        and _intro_thin_now
+        and (not _intro_data_for_bar or _intro_data_for_bar.get("error"))
+    )
+    _any_missing = _plan_missing_now or _text_missing_now or _intro_missing_now
+    _all_btn_col1, _all_btn_col2 = st.columns([3, 2])
+    with _all_btn_col1:
+        _missing_labels = []
+        if _plan_missing_now:
+            _missing_labels.append("plan")
+        if _text_missing_now:
+            _missing_labels.append("bottom text")
+        if _intro_missing_now:
+            _missing_labels.append("intro")
+        if _missing_labels:
+            st.caption(f"Missing: {', '.join(_missing_labels)}")
+        else:
+            st.caption("All AI fixes generated. Click 🔄 to re-run.")
+    with _all_btn_col2:
+        _btn_label = (
+            f"🤖 Generate ALL fixes ({len(_missing_labels)} missing)"
+            if _any_missing
+            else "🔄 Re-generate ALL fixes (force)"
+        )
+        if st.button(
+            _btn_label,
+            key=f"gen_all_btn_{url_hash}",
+            type="primary" if _any_missing else "secondary",
+            use_container_width=True,
+        ):
+            from utils.page_fix_runner import generate_all_fixes_for_page
+            with st.spinner("Generating ALL AI fixes (~60-90 sec total)…"):
+                _status = generate_all_fixes_for_page(page, force=not _any_missing)
+            _summary = " · ".join(f"**{k}**: {v}" for k, v in _status.items())
+            if any("error" in str(v) for v in _status.values()):
+                st.warning(f"Done with errors — {_summary}")
+            else:
+                st.success(f"Done — {_summary}")
+            st.rerun()
+
     # ── Current SEO state — what Google sees right now + per-element verdict ──
     _render_current_seo_state(page)
 
