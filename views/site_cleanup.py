@@ -2042,6 +2042,94 @@ def render():
             border="#5bb4d4",
         )
         cluster_names = sorted(set(c.get("topic", "") for c in clusters_list if c.get("topic")))
+
+        # ── Diagnostic: are unclustered URLs really unclustered, or is
+        # this a URL-normalization mismatch (www vs non-www, query
+        # params, trailing slash)? Compare audit URL set vs cluster URL
+        # set after re-normalizing both, show overlap stats + examples.
+        with st.expander("🔬 Diagnose: is the count real or a normalization issue?", expanded=False):
+            from utils.ui_helpers import normalize_url as _nu_dx
+            _audit_results = st.session_state.get("audit_results", []) or []
+            _topic_clusters = st.session_state.get("topic_clusters", {}) or {}
+            _page_topics = _topic_clusters.get("page_topics", {}) or {}
+
+            _audit_norms = {_nu_dx(r.get("url", "")) for r in _audit_results if r.get("url")}
+            _cluster_norms = {_nu_dx(u) for u in _page_topics.keys() if u}
+            _overlap = _audit_norms & _cluster_norms
+            _audit_only = _audit_norms - _cluster_norms
+            _cluster_only = _cluster_norms - _audit_norms
+
+            d1, d2, d3 = st.columns(3)
+            d1.metric("Audit URLs (normalized)", len(_audit_norms))
+            d2.metric("Cluster URLs (normalized)", len(_cluster_norms))
+            d3.metric("Overlap", len(_overlap))
+
+            st.caption(
+                f"**Audit-only (= unclustered):** {len(_audit_only)}  ·  "
+                f"**Cluster-only (in clusters but not audited):** {len(_cluster_only)}"
+            )
+
+            # Hunt for near-matches: URLs that DIFFER only by trivial
+            # things (case, www, trailing slash, query). If many appear
+            # here, normalization IS the bug.
+            import re as _re_dx
+            def _strip_for_match(u: str) -> str:
+                # Strip protocol + www + query + fragment + trailing slash, lowercase
+                return _re_dx.sub(
+                    r"^https?://(www\.)?|[?#].*$|/+$", "", (u or "").lower()
+                )
+            _audit_loose = {_strip_for_match(u): u for u in _audit_norms}
+            _cluster_loose = {_strip_for_match(u): u for u in _cluster_norms}
+            _loose_overlap = set(_audit_loose) & set(_cluster_loose)
+            _strict_overlap_loose = {_strip_for_match(u) for u in _overlap}
+            _possible_normalization_misses = _loose_overlap - _strict_overlap_loose
+            if _possible_normalization_misses:
+                st.warning(
+                    f"⚠ Found **{len(_possible_normalization_misses)}** URL pairs that "
+                    f"loosely match but DIDN'T match strictly — these are likely "
+                    f"normalization issues (www, trailing slash, casing, query params)."
+                )
+                st.caption("First 10 mismatched pairs (audit URL ↔ cluster URL):")
+                for k in list(_possible_normalization_misses)[:10]:
+                    st.code(f"audit:   {_audit_loose[k]}\ncluster: {_cluster_loose[k]}", language="text")
+            else:
+                st.success("No loose-match misses — the unclustered count is REAL, not a normalization bug.")
+
+            # Show 10 sample audit-only URLs so user can spot-check
+            st.markdown("**Sample of 20 audit-only (unclustered) URLs — spot-check below:**")
+            _sample_audit_only = sorted(_audit_only)[:20]
+            for u in _sample_audit_only:
+                st.code(u, language="text")
+
+            # Show 10 sample cluster-only URLs (in clusters but not in audit)
+            if _cluster_only:
+                st.markdown(f"**Sample of 10 cluster-only URLs (in clusters but missing from audit):**")
+                for u in sorted(_cluster_only)[:10]:
+                    st.code(u, language="text")
+
+            # CSV download for the FULL audit-only list
+            import io as _io_dx
+            csv_buf = _io_dx.StringIO()
+            csv_buf.write("normalized_url,page_type,impressions,clicks,word_count,title\n")
+            _audit_by_norm = {_nu_dx(r.get("url", "")): r for r in _audit_results if r.get("url")}
+            for u in sorted(_audit_only):
+                r = _audit_by_norm.get(u, {})
+                _t = (r.get("title") or "").replace('"', "'").replace("\n", " ")
+                csv_buf.write(
+                    f'"{u}","{r.get("page_type", "")}",'
+                    f'{r.get("impressions", 0) or 0},'
+                    f'{r.get("clicks", 0) or 0},'
+                    f'{r.get("word_count", 0) or 0},'
+                    f'"{_t}"\n'
+                )
+            st.download_button(
+                f"⬇ Download full unclustered list ({len(_audit_only)} URLs) as CSV",
+                data=csv_buf.getvalue(),
+                file_name="unclustered_urls.csv",
+                mime="text/csv",
+                key="dx_dl_unclustered",
+            )
+
         _render_unclustered(unclustered_pages, cluster_names)
 
     # ── TAB 9: CLUSTER BALANCE ───────────────────────────────
