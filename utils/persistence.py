@@ -68,6 +68,12 @@ PERSIST_KEYS = {
     # forever. {url: count}. User can clear via the "🗑 Clear fix
     # history" button which also wipes failure counts.
     "_fix_failure_count": "json",
+    # User-managed permanent skip list — URLs the user explicitly
+    # never wants Fix ALL to touch (e.g. legacy pages they prefer to
+    # keep as-is, manually-curated content). Persisted as a list,
+    # used as a set in the UI for fast membership tests. Toggled per
+    # page via the 🚫 Skip button on each AI Content Quality row.
+    "_fix_skip_list": "json",
 }
 
 # Prefixes for dynamic AI cache keys — stored as individual files

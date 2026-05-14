@@ -1168,13 +1168,17 @@ def render():
                     q["url"] for q in quality_results
                     if q["verdict"] in ("REWRITE", "IMPROVE")
                 ]
-                # Exclude both already-fixed URLs AND pages that have
-                # failed too many times (likely too-large content or
-                # consistent API timeout — no point retrying every run).
+                # Exclude THREE categories:
+                #   1. fix_history — already done (success)
+                #   2. failure_count >= MAX — chronically broken
+                #   3. skip_list — user said "never touch"
                 _failed_too_often = {u for u, n in _fix_fail_counts.items() if n >= _MAX_FAILURES}
+                _user_skip_set = set(st.session_state.get("_fix_skip_list") or [])
                 _eligible_fix = [
                     u for u in _all_flagged_fix
-                    if u not in _fix_history and u not in _failed_too_often
+                    if u not in _fix_history
+                    and u not in _failed_too_often
+                    and u not in _user_skip_set
                 ]
                 _skipped_fix = len(_all_flagged_fix) - len(_eligible_fix)
                 # Cost estimate for transparency — Anthropic Sonnet 4.6
@@ -1455,13 +1459,80 @@ def render():
                     )
                 st.rerun()
 
+        # ── Skip-list manager + URL search filter ──
+        # The verdict list is paginated 15/page → user can't scroll through
+        # 400 pages to find the 3-4 they want to exclude. Two helpers:
+        #   1. URL search: type a substring → list filters in place
+        #   2. Skip-list manager: see all currently-skipped URLs in one
+        #      place + bulk-paste skip box for entering many at once
+        _current_skip_list = list(st.session_state.get("_fix_skip_list") or [])
+        st.markdown("---")
+        _slmcol1, _slmcol2 = st.columns([3, 2])
+        with _slmcol1:
+            _url_search = st.text_input(
+                "🔎 Search URL (filters list below)",
+                value="",
+                key="quality_url_search",
+                placeholder="type any part of a URL — e.g. 'romp' or '/alla/'",
+            ).strip().lower()
+        with _slmcol2:
+            with st.popover(
+                f"🚫 Skip-list ({len(_current_skip_list)} URLs)",
+                use_container_width=True,
+            ):
+                st.caption(
+                    "URLs in this list are PERMANENTLY excluded from Fix ALL. "
+                    "Persisted across Railway restarts. Edit below or use the "
+                    "🚫 Skip button on each page row."
+                )
+                _edited_skip = st.text_area(
+                    "One URL per line (paste-friendly)",
+                    value="\n".join(_current_skip_list),
+                    height=200,
+                    key="skip_list_textarea",
+                )
+                if st.button("💾 Save skip list", key="save_skip_list"):
+                    _new_list = [
+                        line.strip() for line in _edited_skip.splitlines()
+                        if line.strip()
+                    ]
+                    st.session_state["_fix_skip_list"] = _new_list
+                    try:
+                        from utils.persistence import save_key as _sk_sl
+                        _sk_sl("_fix_skip_list")
+                    except Exception:
+                        pass
+                    st.success(f"Saved {len(_new_list)} URLs to skip list.")
+                    st.rerun()
+                if _current_skip_list and st.button("🗑 Clear skip list", key="clear_skip_list"):
+                    st.session_state["_fix_skip_list"] = []
+                    try:
+                        from utils.persistence import save_key as _sk_sl2
+                        _sk_sl2("_fix_skip_list")
+                    except Exception:
+                        pass
+                    st.rerun()
+
+        # Apply URL search filter (case-insensitive substring match)
+        if _url_search:
+            quality_results_filtered = [
+                q for q in quality_results
+                if _url_search in q["url"].lower()
+            ]
+            st.caption(
+                f"Showing {len(quality_results_filtered)} of {len(quality_results)} "
+                f"verdicts matching '{_url_search}'"
+            )
+        else:
+            quality_results_filtered = quality_results
+
         # Pagination
         QR_PER_PAGE = 15
-        qr_total = len(quality_results)
+        qr_total = len(quality_results_filtered)
         qr_max_pg = max(1, (qr_total + QR_PER_PAGE - 1) // QR_PER_PAGE)
         qr_pg = st.number_input("Page", min_value=1, max_value=qr_max_pg, value=1, key="quality_page")
         qr_start = (qr_pg - 1) * QR_PER_PAGE
-        qr_visible = quality_results[qr_start:qr_start + QR_PER_PAGE]
+        qr_visible = quality_results_filtered[qr_start:qr_start + QR_PER_PAGE]
 
         # Look-up table: normalized URL -> raw audit row, so we can wire
         # the same AI fix runner Quick Wins uses without re-querying.
@@ -1470,6 +1541,11 @@ def render():
         from utils.page_deeplink import open_in_quick_wins
         _audit_by_url = {_qr_nu(r["url"]): r for r in results if r.get("url")}
 
+        # User skip-list for Fix ALL — URLs the user has explicitly
+        # marked "never auto-fix". Rendered as a toggle button per row.
+        _skip_list = list(st.session_state.get("_fix_skip_list") or [])
+        _skip_set = set(_skip_list)
+
         for q in qr_visible:
             verdict = q["verdict"]
             v_color = {"REWRITE": "#ff4455", "IMPROVE": "#ffaa33", "KEEP": "#33dd88"}.get(verdict, "#6b6b8a")
@@ -1477,6 +1553,7 @@ def render():
             ptype = q["page_type"].upper()
             url_hash = _qr_sh(q["url"])
             ai_plan_present = f"_ai_plan_{url_hash}" in st.session_state
+            _is_skipped_by_user = q["url"] in _skip_set
 
             st.markdown(
                 f"<div style='background:#12121f; border-left:4px solid {v_color}; "
@@ -1501,12 +1578,53 @@ def render():
                 fixes_html = " ".join(f"<span style='color:#c8b4ff; font-size:0.75rem;'>→ {fix}</span><br>" for fix in q["specific_fixes"][:3])
                 st.markdown(f"<div>{fixes_html}</div>", unsafe_allow_html=True)
 
+            # Skip-status badge: when user has marked this URL as
+            # never-fix, show it prominently so they don't wonder why
+            # Fix ALL skipped it. The toggle button is rendered in the
+            # action-button row below.
+            if _is_skipped_by_user:
+                st.markdown(
+                    "<div style='background:#2a1a00; border:1px solid #ffaa33; "
+                    "border-radius:4px; padding:0.3rem 0.6rem; margin:0.3rem 0; "
+                    "font-size:0.75rem; color:#ffaa33; font-family:IBM Plex Mono,monospace;'>"
+                    "🚫 EXCLUDED FROM FIX ALL — user-skipped (toggle below to re-include)"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
             # Action buttons — Re-scrape is ALWAYS available (diagnostic
             # works on any verdict, including KEEP, since the user might
             # want to verify a recent push didn't break anything).
             # Generation buttons are only meaningful for flagged pages.
             audit_row = _audit_by_url.get(_qr_nu(q["url"]))
             if audit_row is not None:
+                # Skip-toggle row above the action row — gives the user
+                # one-click control over Fix ALL exclusion per page.
+                _skip_label = (
+                    "🔁 Re-include in Fix ALL"
+                    if _is_skipped_by_user
+                    else "🚫 Skip this page from Fix ALL"
+                )
+                if st.button(
+                    _skip_label,
+                    key=f"qq_skip_{url_hash}",
+                    help="Permanent exclusion from Fix ALL batch runs. "
+                         "URL is saved to disk so it survives Railway "
+                         "restarts. Toggle to undo.",
+                ):
+                    _sl = list(st.session_state.get("_fix_skip_list") or [])
+                    if q["url"] in _sl:
+                        _sl.remove(q["url"])
+                    else:
+                        _sl.append(q["url"])
+                    st.session_state["_fix_skip_list"] = _sl
+                    try:
+                        from utils.persistence import save_key as _sk_skip
+                        _sk_skip("_fix_skip_list")
+                    except Exception:
+                        pass
+                    st.rerun()
+
                 btn_cols = st.columns([3, 3, 3, 3])
                 with btn_cols[0]:
                     # Open / Rewrite — only for REWRITE/IMPROVE pages
