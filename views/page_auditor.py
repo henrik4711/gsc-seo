@@ -902,6 +902,37 @@ def render():
         # to disk so we can skip them if user clicks Re-check ALL again.
         # Stored as list, used as set here for fast membership test.
         _recheck_history = set(st.session_state.get("_recheck_history") or [])
+        # Failure counter for Fix ALL — pages that fail twice get
+        # auto-excluded from future runs so they don't keep crashing
+        # the batch. {url: count}, persisted.
+        _fix_fail_counts = dict(st.session_state.get("_fix_failure_count") or {})
+        _MAX_FAILURES = 2
+
+        # Detect SILENT crashes: if /data/_fix_in_progress.json exists
+        # AND we're not currently running, that URL must have been
+        # processing when Streamlit dropped its session. Bump its
+        # failure counter and clear the marker — same effect as a real
+        # exception would have had.
+        import os as _os_ip, json as _json_ip
+        _IP_FILE = "/data/_fix_in_progress.json"
+        if not _recheck_running and _os_ip.path.exists(_IP_FILE):
+            try:
+                with open(_IP_FILE, "r", encoding="utf-8") as _ipf:
+                    _silent_url = (_json_ip.load(_ipf) or {}).get("url")
+                if _silent_url:
+                    _fix_fail_counts[_silent_url] = _fix_fail_counts.get(_silent_url, 0) + 1
+                    st.session_state["_fix_failure_count"] = _fix_fail_counts
+                    try:
+                        from utils.persistence import save_key as _sk_silent
+                        _sk_silent("_fix_failure_count")
+                    except Exception:
+                        pass
+                    try:
+                        _os_ip.remove(_IP_FILE)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         rc_col1, rc_col2, rc_col3 = st.columns([2, 2, 2])
         if not _recheck_running:
@@ -1137,7 +1168,14 @@ def render():
                     q["url"] for q in quality_results
                     if q["verdict"] in ("REWRITE", "IMPROVE")
                 ]
-                _eligible_fix = [u for u in _all_flagged_fix if u not in _fix_history]
+                # Exclude both already-fixed URLs AND pages that have
+                # failed too many times (likely too-large content or
+                # consistent API timeout — no point retrying every run).
+                _failed_too_often = {u for u, n in _fix_fail_counts.items() if n >= _MAX_FAILURES}
+                _eligible_fix = [
+                    u for u in _all_flagged_fix
+                    if u not in _fix_history and u not in _failed_too_often
+                ]
                 _skipped_fix = len(_all_flagged_fix) - len(_eligible_fix)
                 # Cost estimate for transparency — Anthropic Sonnet 4.6
                 # rough cost: ~$0.02 per page (plan + bottom + intro
@@ -1257,6 +1295,16 @@ def render():
                     except Exception:
                         pass
 
+                # Mark this URL as in-progress on disk. If Streamlit
+                # drops the session before we finish, the next page-load
+                # will see this file, count it as a failure, and remove it.
+                try:
+                    import json as _jip
+                    with open(_IP_FILE, "w", encoding="utf-8") as _ipw:
+                        _jip.dump({"url": next_fix_url}, _ipw)
+                except Exception:
+                    pass
+
                 with st.spinner(
                     f"Fixing {next_fix_url[-50:]} "
                     f"(generate plan + bottom + intro + push to Mshop)…"
@@ -1362,6 +1410,28 @@ def render():
                             _sk_fh("_fix_history")
                         except Exception:
                             pass
+                else:
+                    # Bump failure counter so this URL gets auto-excluded
+                    # from future Fix ALL runs after MAX_FAILURES attempts.
+                    # Prevents one chronically-broken page from blocking
+                    # the entire queue indefinitely.
+                    _fc = dict(st.session_state.get("_fix_failure_count") or {})
+                    _fc[next_fix_url] = _fc.get(next_fix_url, 0) + 1
+                    st.session_state["_fix_failure_count"] = _fc
+                    try:
+                        from utils.persistence import save_key as _sk_fc
+                        _sk_fc("_fix_failure_count")
+                    except Exception:
+                        pass
+                # Clear in-progress marker — page completed (success or
+                # explicit error). The marker is only kept for SILENT
+                # crashes that bypass this code path.
+                try:
+                    import os as _os_clr
+                    if _os_clr.path.exists(_IP_FILE):
+                        _os_clr.remove(_IP_FILE)
+                except Exception:
+                    pass
                 st.rerun()
             else:
                 # Queue empty — finalize

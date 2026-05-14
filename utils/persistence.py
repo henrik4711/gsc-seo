@@ -62,6 +62,12 @@ PERSIST_KEYS = {
     # which generates AND pushes for every flagged URL. Persisted so a
     # Railway restart mid-run doesn't replay 300 already-fixed pages.
     "_fix_history": "json",
+    # Per-URL failure counter for Fix ALL. Persisted so a page that
+    # repeatedly crashes the batch (e.g. content too big, AI timeout)
+    # gets auto-skipped after N failures instead of blocking the queue
+    # forever. {url: count}. User can clear via the "🗑 Clear fix
+    # history" button which also wipes failure counts.
+    "_fix_failure_count": "json",
 }
 
 # Prefixes for dynamic AI cache keys — stored as individual files
