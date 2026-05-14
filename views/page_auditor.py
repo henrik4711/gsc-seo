@@ -1273,8 +1273,12 @@ def render():
                         _page = page_audit_to_page_dict(_row)
 
                         # 1. Generate plan + bottom + intro
+                        # batch_mode=True: 1 attempt instead of 3 for bottom
+                        # text and 1 instead of 2 for intro. Worst-case
+                        # per-page time drops from ~5 min to ~90s, well
+                        # within Streamlit's WebSocket timeout window.
                         _log(f"  step=generate {next_fix_url}")
-                        _gen_status = generate_all_fixes_for_page(_page)
+                        _gen_status = generate_all_fixes_for_page(_page, batch_mode=True)
                         _log(f"  generate-done {next_fix_url} status={_gen_status}")
 
                         # 2. Push bottom text via footer API
