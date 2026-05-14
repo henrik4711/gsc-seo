@@ -19,11 +19,22 @@ def _audit_lookup():
 
 
 def _get_unclustered(audit_lookup, page_topics):
-    """Find pages not in any cluster, sorted by impressions."""
+    """Find pages not in any cluster AND not user-marked as "no cluster
+    needed", sorted by impressions."""
     clustered = {normalize_url(u) for u in page_topics.keys()}
+    # User-flagged "this page doesn't need a cluster" — typically
+    # blog/FAQ/help pages that don't fit any topical structure.
+    # Persisted via _no_cluster_needed in PERSIST_KEYS.
+    try:
+        import streamlit as _st_nc
+        _no_cluster = {normalize_url(u) for u in (_st_nc.session_state.get("_no_cluster_needed") or [])}
+    except Exception:
+        _no_cluster = set()
     unclustered = []
     for norm, r in audit_lookup.items():
-        if norm not in clustered and r.get("page_type") not in ("product",):
+        if (norm not in clustered
+                and r.get("page_type") not in ("product",)
+                and norm not in _no_cluster):
             unclustered.append({
                 "url": r["url"],
                 "norm": norm,
@@ -265,6 +276,77 @@ def _render_unclustered(unclustered, cluster_names):
     if show_assigned:
         filtered = [p for p in filtered if not picks.get(stable_hash(p["url"]))]
 
+    # ── Bulk "no cluster needed" actions ──
+    # When the user has worked through all assignable pages and the
+    # remainder is blogs/FAQs/help that don't fit any cluster, these
+    # buttons let them mark the rest as permanently skipped — removed
+    # from this list AND from the dashboard's "84.9% unclustered" stat.
+    from utils.persistence import save_key as _sk_nc
+    _no_cluster_now = list(st.session_state.get("_no_cluster_needed") or [])
+
+    bulk_col1, bulk_col2, bulk_col3 = st.columns([2, 2, 2])
+    with bulk_col1:
+        if filtered and st.button(
+            f"🚫 Mark ALL {len(filtered)} (current filter) as 'no cluster needed'",
+            key="sf_skip_filtered",
+            help="Permanently removes every page in the current filtered "
+                 "view from the unclustered list. Use after manually "
+                 "assigning the ones that fit, when the remainder are "
+                 "pages with no obvious cluster (blogs, FAQ, help).",
+        ):
+            _added = 0
+            for p in filtered:
+                if p["url"] not in _no_cluster_now:
+                    _no_cluster_now.append(p["url"])
+                    _added += 1
+            st.session_state["_no_cluster_needed"] = _no_cluster_now
+            try:
+                _sk_nc("_no_cluster_needed")
+            except Exception:
+                pass
+            st.success(f"Marked {_added} URLs as 'no cluster needed'.")
+            st.rerun()
+    with bulk_col2:
+        # Bulk skip by page-type (any type, not just current filter)
+        _types_in_list = sorted(set(p["page_type"] for p in unclustered))
+        _skip_type = st.selectbox(
+            "Skip ALL of type", ["—"] + _types_in_list,
+            key="sf_skip_by_type",
+            help="Bulk-mark every unclustered page of this type as "
+                 "'no cluster needed'. Useful for blog/faq/info bulk-skip.",
+        )
+        if _skip_type != "—" and st.button(
+            f"🚫 Apply: skip all {_skip_type}",
+            key="sf_skip_by_type_apply",
+        ):
+            _added_t = 0
+            for p in unclustered:
+                if p["page_type"] == _skip_type and p["url"] not in _no_cluster_now:
+                    _no_cluster_now.append(p["url"])
+                    _added_t += 1
+            st.session_state["_no_cluster_needed"] = _no_cluster_now
+            try:
+                _sk_nc("_no_cluster_needed")
+            except Exception:
+                pass
+            st.success(f"Marked {_added_t} {_skip_type} URLs as 'no cluster needed'.")
+            st.rerun()
+    with bulk_col3:
+        if _no_cluster_now:
+            st.caption(f"Currently skipped: {len(_no_cluster_now)} URLs")
+            if st.button(
+                "↶ Restore all skipped to unclustered list",
+                key="sf_restore_all_skipped",
+                help="Clears the no-cluster-needed list — every previously "
+                     "skipped page reappears in the unclustered list.",
+            ):
+                st.session_state["_no_cluster_needed"] = []
+                try:
+                    _sk_nc("_no_cluster_needed")
+                except Exception:
+                    pass
+                st.rerun()
+
     # Pagination
     per_page = 25
     total_filtered = len(filtered)
@@ -280,7 +362,7 @@ def _render_unclustered(unclustered, cluster_names):
     for p in visible:
         url = p["url"]
         url_hash = stable_hash(url)
-        col1, col2, col3, col4 = st.columns([4, 1, 1, 3])
+        col1, col2, col3, col4, col5 = st.columns([4, 1, 1, 3, 1])
         with col1:
             st.markdown(
                 f"<div style='font-size:0.8rem; color:#e8e8f0; padding-top:0.5rem;'>{_shorten(url)}</div>"
@@ -305,6 +387,23 @@ def _render_unclustered(unclustered, cluster_names):
                 args=(url_hash,),
                 label_visibility="collapsed",
             )
+        with col5:
+            # Per-row "this one doesn't need a cluster" toggle.
+            if st.button(
+                "🚫",
+                key=f"sf_nc_{url_hash}",
+                help="Mark this page as 'no cluster needed' — "
+                     "removes it from the unclustered list permanently.",
+            ):
+                _ncl = list(st.session_state.get("_no_cluster_needed") or [])
+                if url not in _ncl:
+                    _ncl.append(url)
+                    st.session_state["_no_cluster_needed"] = _ncl
+                    try:
+                        _sk_nc("_no_cluster_needed")
+                    except Exception:
+                        pass
+                st.rerun()
 
     st.markdown("---")
 

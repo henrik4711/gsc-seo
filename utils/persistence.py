@@ -74,6 +74,11 @@ PERSIST_KEYS = {
     # used as a set in the UI for fast membership tests. Toggled per
     # page via the 🚫 Skip button on each AI Content Quality row.
     "_fix_skip_list": "json",
+    # URLs the user explicitly says "don't need a cluster" — typically
+    # blog/FAQ/help pages that don't fit any topic cluster. Removes
+    # them from the Unclustered tab so the user only sees pages that
+    # ACTUALLY need a cluster decision. Persisted as a list.
+    "_no_cluster_needed": "json",
 }
 
 # Prefixes for dynamic AI cache keys — stored as individual files
