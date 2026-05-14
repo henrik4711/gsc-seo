@@ -1196,6 +1196,18 @@ def render():
                         except Exception:
                             pass
                         st.rerun()
+                # Show fix_all_log tail — survives Streamlit crashes so the
+                # user can see WHICH page+step the run actually died on,
+                # even when the spinner just disappears with no traceback.
+                import os as _os_show
+                if _os_show.path.exists("/data/fix_all_log.txt"):
+                    with st.popover("📜 View fix_all_log (last 50 lines)"):
+                        try:
+                            with open("/data/fix_all_log.txt", "r", encoding="utf-8") as _lf:
+                                _lines = _lf.readlines()[-50:]
+                            st.code("".join(_lines), language="text")
+                        except Exception as _le:
+                            st.error(f"Could not read log: {_le}")
         else:
             pending_fix = _fix_state.get("pending_urls") or []
             done_fix = _fix_state.get("done_urls") or []
@@ -1229,10 +1241,27 @@ def render():
             if pending_fix:
                 next_fix_url = pending_fix[0]
                 _row = _audit_by_url_top.get(_qr_nu_top(next_fix_url))
+
+                # Disk-based debug log so silent crashes leave a trail.
+                # Streamlit can drop WebSocket mid-process and the spinner
+                # just disappears — without this log we have NO clue
+                # which step hung. File at /data/fix_all_log.txt.
+                import os as _os_log, traceback as _tb_log
+                _LOG = "/data/fix_all_log.txt"
+                def _log(msg: str) -> None:
+                    try:
+                        from datetime import datetime as _dt
+                        line = f"[{_dt.utcnow().isoformat()}Z] {msg}\n"
+                        with open(_LOG, "a", encoding="utf-8") as f:
+                            f.write(line)
+                    except Exception:
+                        pass
+
                 with st.spinner(
                     f"Fixing {next_fix_url[-50:]} "
                     f"(generate plan + bottom + intro + push to Mshop)…"
                 ):
+                    _log(f"START {next_fix_url}")
                     try:
                         if _row is None:
                             raise ValueError("URL not in audit_results")
@@ -1242,19 +1271,32 @@ def render():
                         )
                         from utils.ui_helpers import stable_hash as _sh
                         _page = page_audit_to_page_dict(_row)
+
                         # 1. Generate plan + bottom + intro
+                        _log(f"  step=generate {next_fix_url}")
                         _gen_status = generate_all_fixes_for_page(_page)
+                        _log(f"  generate-done {next_fix_url} status={_gen_status}")
 
                         # 2. Push bottom text via footer API
                         _url_hash = _sh(next_fix_url)
                         _bottom = (st.session_state.get(f"_bottom_text_{_url_hash}") or {}).get("bottom_html") or ""
                         if _bottom:
-                            from utils.footer_text_api import push_footer_text
-                            _br = push_footer_text(next_fix_url, _bottom)
-                            if _br.get("status") != "success":
-                                _fix_state["errors"].append(
-                                    f"{next_fix_url}: bottom push failed — {_br.get('error', _br.get('status'))}"
-                                )
+                            _log(f"  step=push_bottom {next_fix_url} chars={len(_bottom)}")
+                            try:
+                                from utils.footer_text_api import push_footer_text
+                                _br = push_footer_text(next_fix_url, _bottom)
+                                if _br.get("status") != "success":
+                                    _err = f"bottom push failed — {_br.get('error', _br.get('status'))}"
+                                    _fix_state["errors"].append(f"{next_fix_url}: {_err}")
+                                    _log(f"  ERR {next_fix_url}: {_err}")
+                                else:
+                                    _log(f"  push_bottom-ok {next_fix_url}")
+                            except Exception as _push_e:
+                                _err = f"push_bottom exception: {type(_push_e).__name__}: {_push_e}"
+                                _fix_state["errors"].append(f"{next_fix_url}: {_err}")
+                                _log(f"  ERR {next_fix_url}: {_err}")
+                        else:
+                            _log(f"  skip=push_bottom {next_fix_url} (no bottom_html)")
 
                         # 3. Push intro + meta via admin API
                         _plan = st.session_state.get(f"_ai_plan_{_url_hash}") or {}
@@ -1263,29 +1305,41 @@ def render():
                         _meta_t = _plan.get("meta_title", "") if isinstance(_plan, dict) else ""
                         _meta_d = _plan.get("meta_description", "") if isinstance(_plan, dict) else ""
                         if _intro_html or _meta_t or _meta_d:
-                            from utils.mshop_admin_api import update_for_page, lookup_url as _mlu_fix
-                            _active = st.session_state.get("mshop_active_pages") or {}
-                            _pi = _mlu_fix(_active, next_fix_url)
-                            if _pi:
-                                _adm = update_for_page(
-                                    _pi,
-                                    description=_intro_html or None,
-                                    meta_title=_meta_t or None,
-                                    meta_description=_meta_d or None,
-                                )
-                                if _adm.get("status") != "success":
-                                    _fix_state["errors"].append(
-                                        f"{next_fix_url}: admin push failed — {_adm.get('error', _adm.get('status'))}"
+                            try:
+                                from utils.mshop_admin_api import update_for_page, lookup_url as _mlu_fix
+                                _active = st.session_state.get("mshop_active_pages") or {}
+                                _pi = _mlu_fix(_active, next_fix_url)
+                                if _pi:
+                                    _log(f"  step=push_admin {next_fix_url} intro={len(_intro_html)} mt={len(_meta_t)} md={len(_meta_d)}")
+                                    _adm = update_for_page(
+                                        _pi,
+                                        description=_intro_html or None,
+                                        meta_title=_meta_t or None,
+                                        meta_description=_meta_d or None,
                                     )
-                            else:
-                                _fix_state["errors"].append(
-                                    f"{next_fix_url}: no Mshop page-info "
-                                    f"(URL not in active-pages cache — sync first)"
-                                )
+                                    if _adm.get("status") != "success":
+                                        _err = f"admin push failed — {_adm.get('error', _adm.get('status'))}"
+                                        _fix_state["errors"].append(f"{next_fix_url}: {_err}")
+                                        _log(f"  ERR {next_fix_url}: {_err}")
+                                    else:
+                                        _log(f"  push_admin-ok {next_fix_url}")
+                                else:
+                                    _err = "no Mshop page-info (URL not in active-pages cache)"
+                                    _fix_state["errors"].append(f"{next_fix_url}: {_err}")
+                                    _log(f"  ERR {next_fix_url}: {_err}")
+                            except Exception as _adm_e:
+                                _err = f"push_admin exception: {type(_adm_e).__name__}: {_adm_e}"
+                                _fix_state["errors"].append(f"{next_fix_url}: {_err}")
+                                _log(f"  ERR {next_fix_url}: {_err}")
+                        else:
+                            _log(f"  skip=push_admin {next_fix_url} (nothing to push)")
+
+                        _log(f"END {next_fix_url} OK")
                     except Exception as _fix_e:
-                        _fix_state["errors"].append(
-                            f"{next_fix_url}: {type(_fix_e).__name__}: {_fix_e}"
-                        )
+                        _err = f"{type(_fix_e).__name__}: {_fix_e}"
+                        _fix_state["errors"].append(f"{next_fix_url}: {_err}")
+                        _log(f"  EXCEPTION {next_fix_url}: {_err}\n{_tb_log.format_exc()}")
+                        _log(f"END {next_fix_url} ERR")
                 _fix_state["pending_urls"] = pending_fix[1:]
                 _fix_state["done_urls"] = done_fix + [next_fix_url]
                 st.session_state[_fix_state_key] = _fix_state

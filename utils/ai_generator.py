@@ -738,7 +738,12 @@ def get_client(api_key: str = "") -> anthropic.Anthropic:
     key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
         raise ValueError("No Anthropic API key provided. Set ANTHROPIC_API_KEY env var or enter key in Setup.")
-    return anthropic.Anthropic(api_key=key)
+    # Explicit timeout: without this, Anthropic default is 600s and a
+    # hung connection can silently freeze the entire Streamlit session.
+    # 90s is generous for a single bottom-text generation (~30s typical,
+    # 60s for retries) but bounded — a hang gets cut, the exception is
+    # raised, and Fix ALL moves on to the next page instead of stalling.
+    return anthropic.Anthropic(api_key=key, timeout=90.0, max_retries=1)
 
 
 def generate_meta_suggestions(
