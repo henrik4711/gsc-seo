@@ -5,7 +5,12 @@ intro / description fields on categories, CMS pages, and filter pages.
 Required Railway env vars (same credentials as bottom-text push):
   FOOTER_TEXT_API_USER  — Basic auth username
   FOOTER_TEXT_API_PASS  — Basic auth password
-  FOOTER_TEXT_STORE_ID  — integer store ID (used for category texts updates)
+  FOOTER_TEXT_STORE_ID  — integer store ID (used for category texts updates).
+                         The Mshop Admin API is multi-tenant — set this to the
+                         numeric ID of the target shop:
+                           1 = mshop.se
+                           2 = mshop.dk
+                         (additional shops use higher IDs)
   MSHOP_ADMIN_API_BASE  — base URL, e.g. https://www.mshop.se/public-api
                          (optional — derived from FOOTER_TEXT_API if absent)
 
