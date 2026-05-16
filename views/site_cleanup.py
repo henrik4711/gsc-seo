@@ -878,10 +878,11 @@ def render():
         )
         test_url = st.text_input(
             "URL to test",
-            value="https://www.mshop.se/sexleksaker/sexleksaker-for-honom/pocket-pussy",
+            value=st.session_state.get("gsc_site", "").rstrip("/") + "/",
             key="_img_test_url",
+            help="Full URL of a page on your site to test image preservation on.",
         )
-        test_query = st.text_input("Target keyword", value="pocket pussy", key="_img_test_kw")
+        test_query = st.text_input("Target keyword", value="", key="_img_test_kw")
         if st.button("Run image-preservation test", type="primary", key="_img_test_btn"):
             from utils.page_scraper import scrape_page
             from utils.ai_generator import generate_page_content

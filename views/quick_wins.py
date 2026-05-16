@@ -1061,7 +1061,20 @@ def _validate_generated_content(page, text_data, plan_data):
 
     if html:
         urls_in_html = re.findall(r'href=["\']([^"\']+)["\']', html)
-        site_urls_used = [u for u in urls_in_html if "mshop.se" in u or u.startswith("/")]
+        # Derive site host from the configured GSC property so this works on
+        # any site (mshop.se, mshop.dk, …). Falls back to relative-only check
+        # if no GSC site is configured.
+        from urllib.parse import urlparse
+        _site_host = ""
+        try:
+            _gsc = st.session_state.get("gsc_site", "") or ""
+            _site_host = urlparse(_gsc).netloc.replace("www.", "").strip()
+        except Exception:
+            _site_host = ""
+        site_urls_used = [
+            u for u in urls_in_html
+            if u.startswith("/") or (_site_host and _site_host in u)
+        ]
 
         invented = []
         for u in site_urls_used:

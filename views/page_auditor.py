@@ -1682,7 +1682,7 @@ def render():
                         "🔍 Re-scrape + re-check",
                         key=f"qq_recheck_{url_hash}",
                         use_container_width=True,
-                        help="Fetches the LIVE page from mshop.se RIGHT NOW, "
+                        help="Fetches the LIVE page from the site RIGHT NOW, "
                              "replaces the audit data with the fresh scrape, "
                              "and re-runs the AI quality check just on this "
                              "page. Use to verify whether your earlier "
@@ -1728,7 +1728,7 @@ def render():
                             st.success(
                                 "Re-scrape + re-check done. Look for this page "
                                 "again above — its verdict should reflect the "
-                                "CURRENT live text on mshop.se. Reload the AI "
+                                "CURRENT live text on the site. Reload the AI "
                                 "Content Quality section to see the new verdict."
                             )
 

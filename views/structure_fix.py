@@ -182,7 +182,7 @@ def _render_structure_actions(ideal, audit_lookup):
             "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; padding:0.8rem; margin-bottom:1rem;'>"
             "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600;'>What does this mean?</div>"
             "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
-            "Google searches show demand for these topics, but mshop.se has no page targeting them. "
+            "Google searches show demand for these topics, but your site has no page targeting them. "
             "Creating these pages captures traffic that currently goes to competitors.</div>"
             "<div style='font-size:0.85rem; color:#e8e8f0; font-weight:600; margin-top:0.5rem;'>How to do it:</div>"
             "<div style='font-size:0.8rem; color:#9b9bb8; margin-top:0.3rem;'>"
