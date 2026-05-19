@@ -479,32 +479,24 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         # queries ("how to", "best of", "guide") should link to a
         # guide/blog page if one exists in the conflict, even if a
         # category page has the higher score.
+        # Intent signal vocabularies live in utils/lang_prompts.py so adding a
+        # new deployment language (Norwegian, German, …) is one file edit.
+        from utils.lang_prompts import INTENT_SIGNALS as _IS
+
         def _query_intent(q: str) -> str:
             ql = (q or "").lower()
-            # Informational signals (Swedish + English)
-            if any(t in ql for t in [
-                "hur ", "vad ", "varför", "när ", "hur man",
-                "guide", "guide till", "tips", "lär", "förklar",
-                "how to", "what is", "why ", "when ", "tutorial",
-                "skillnad mellan", "difference between",
-            ]):
+            if any(t in ql for t in _IS["informational"]):
                 return "informational"
-            # Listicle / commercial-investigation signals
-            if any(t in ql for t in [
-                "bäst", "bästa", "topplista", "top ", "top-",
-                "best ", "best-", "vs ", " vs", "jämför", "compare",
-                "review", "recension", "test", "rating",
-            ]):
+            if any(t in ql for t in _IS["listicle"]):
                 return "listicle"
-            # Transactional signals
-            if any(t in ql for t in [
-                "köp", "buy", "billig", "cheap", "rea", "sale",
-                "rabatt", "discount", "pris", "price",
-            ]):
+            if any(t in ql for t in _IS["transactional"]):
                 return "transactional"
-            # Navigational signals
+            # Navigational signals — kept inline; these rarely cluster across
+            # languages and are mostly English + Swedish today. Add Danish
+            # equivalents (log ind, konto, kundeservice) when needed.
             if any(t in ql for t in [
                 "logga in", "konto", "kontakt", "kundservice",
+                "log ind", "kundeservice",  # Danish
                 "login", "account", "contact",
             ]):
                 return "navigational"

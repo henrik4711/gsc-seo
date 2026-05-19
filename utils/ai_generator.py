@@ -21,7 +21,24 @@ def _www_urls(urls):
 
 # ── Anti-hallucination rules injected into all prompts that assess page state ──
 # These prevent AI from contradicting the data it is given.
-ANTI_HALLUCINATION_RULES = """
+# Language-specific GOOD/BAD examples come from utils/lang_prompts.py so the
+# same prompt works for Swedish, Danish, and future languages.
+from utils.lang_prompts import (
+    operational_fact_examples_block as _ops_examples,
+    banned_openers_block as _banned_openers,
+    ai_tell_words as _ai_tells,
+    transition_words as _transitions,
+    adverb_openers as _adverb_openers,
+    opinion_phrases as _opinion_phrases,
+    balanced_clause_example as _balanced_clause,
+    numbered_list_prose_example as _numbered_prose,
+    template_phrase as _tp,
+)
+
+
+def anti_hallucination_rules(language: str = "Swedish") -> str:
+    """Build the anti-hallucination rules block for a given target language."""
+    return f"""
 CRITICAL — ACCURACY RULES (never violate these):
 - Base ALL claims ONLY on the data provided below. Do NOT assume or invent page state.
 - If Title is not "" (empty), the page HAS a title. Do NOT say "missing title" or "no title".
@@ -44,14 +61,12 @@ OPERATIONAL FACTS — NEVER INVENT THESE (only use values from Site context):
 - Specific sourcing/manufacturing partners
 If a fact like the above is NOT provided in the Site context section,
 write generically. Examples:
-  GOOD: "diskret leverans i anonyma kartonger"
-  BAD:  "Avsändaren står som 'Mshop'" (only OK if explicitly given)
-  GOOD: "snabb leverans"
-  BAD:  "leverans inom 24 timmar" (only OK if explicitly given)
-  GOOD: "öppet köp enligt svensk konsumentlag"
-  BAD:  "30 dagars öppet köp" (only OK if explicitly given)"""
+{_ops_examples(language)}"""
 
-HUMAN_WRITING_STYLE = """
+
+def human_writing_style(language: str = "Swedish") -> str:
+    """Build the writing-style guard rules block for a given target language."""
+    return f"""
 WRITING STYLE — the text MUST read like a real person wrote it, NOT AI.
 This is a HARD requirement. Output that contains any banned pattern below
 fails the brief and must be rewritten.
@@ -66,20 +81,21 @@ GOAL — what "passes" looks like:
   brand-neutral content team.
 
 BANNED OPENERS / CLOSERS (never use):
-- "Sammanfattningsvis" / "Avslutningsvis" / "I slutändan" / "In conclusion" / "To sum up"
-- "Det är viktigt att notera/komma ihåg" / "It is important to note" / "Worth noting"
-- "Oavsett om du ... eller ..." / "Whether you ... or ..." / "No matter if you …"
-- "Denna guide" / "I denna artikel" / "In this guide" / "In this article"
-- "Utforska vår/vårt" / "Discover our" / "Upptäck" / "Discover" as opening word
-- "Perfekt för dig som..." / "Perfect for those who..." / "Ideal for anyone who…"
-- "I dagens..." / "I dagens snabba..." / "In today's fast-paced …"
-- "Indeed," / "Faktum är att" as a sentence opener
+- "In conclusion" / "To sum up" / "It is important to note" / "Worth noting"
+- "Whether you ... or ..." / "No matter if you …"
+- "In this guide" / "In this article"
+- "Discover our" / "Discover" as opening word
+- "Perfect for those who..." / "Ideal for anyone who…"
+- "In today's fast-paced …"
+- "Indeed," as a sentence opener
 - "Are you looking for …?" as opener — never open with a rhetorical question
-- "Welcome to" / "Välkommen till"
-- META-NARRATION openers: "Låt mig förklara", "Let me explain", "Here's
-  the thing", "Here's what you need to know", "Här är vad du behöver veta",
-  "So, what is X?" — never address the act of writing/explaining itself.
-- "Tänk dig att..." / "Imagine that..." / "Picture this..." as opener.
+- "Welcome to"
+- META-NARRATION openers: "Let me explain", "Here's the thing",
+  "Here's what you need to know", "So, what is X?" — never address the
+  act of writing/explaining itself.
+- "Imagine that..." / "Picture this..." as opener.
+- Target-language ({language}) equivalents — also banned:
+{_banned_openers(language)}
 
 BANNED VOCABULARY (AI tells — never use):
 - delve, leverage, utilize (use 'use'), navigate (in figurative sense),
@@ -89,22 +105,18 @@ BANNED VOCABULARY (AI tells — never use):
   state-of-the-art, world-class, world of, in the realm of,
   testament to, treasure trove, kaleidoscope, symphony, journey
   (in figurative sense), elevate, transform (in figurative sense)
-- Swedish equivalents to avoid: "skräddarsydd" (figurative), "genomsyrar",
-  "i sann anda", "i en värld där", "när det kommer till", "på riktigt",
-  "verkligen", "definitivt" used as filler intensifiers.
+- {language} equivalents to avoid: {_ai_tells(language)}
 - "It's not just X, it's Y" sentence pattern — banned in ALL forms
 - "Whether you're a beginner or an expert" and any "X or Y" hedge
 - Hedging phrases: "It's worth noting", "Keep in mind that",
   "It goes without saying", "Needless to say", "Suffice it to say"
 - TRANSITION-WORD OVERUSE — AI loves connecting every sentence with
   "However,", "Moreover,", "Furthermore,", "Additionally,", "In addition,",
-  "Nevertheless,", "On the other hand,". Swedish equivalents: "Dessutom,",
-  "Dock,", "Emellertid,", "Vidare,", "Likaså,", "Å andra sidan,". Use
+  "Nevertheless,", "On the other hand,". {language} equivalents: {_transitions(language)}. Use
   AT MOST 2 of these in the entire bottom text. Real writers connect
   ideas with periods and structure, not connector words.
 - ADVERB-LED sentence openers: "Importantly,", "Notably,", "Interestingly,",
-  "Crucially,", "Significantly,", "Essentially,". Swedish: "Viktigt,",
-  "Notera att", "Intressant nog,". Banned — start with the noun, verb,
+  "Crucially,", "Significantly,", "Essentially,". {language}: {_adverb_openers(language)}. Banned — start with the noun, verb,
   or subject instead.
 
 BANNED STRUCTURE (these scream AI):
@@ -114,9 +126,9 @@ BANNED STRUCTURE (these scream AI):
 - Three-item parallel lists in body prose ("X, Y, and Z") more than once
   per paragraph
 - "BOTH X AND Y" balanced-clause pattern repeated more than 2× total —
-  AI loves balanced contrast ("Det är både elegant och funktionellt",
+  AI loves balanced contrast ({_balanced_clause(language)},
   "Both compact and powerful"). Real writers commit to ONE side.
-- "FIRST, ... SECOND, ... THIRD, ..." or "Förstens, ..., Andra, ..."
+- "FIRST, ... SECOND, ... THIRD, ..." or {_numbered_prose(language)}
   numbered-list style sentence prose — banned. Use proper bullet/numbered
   HTML lists if you need order, never embed list markers in paragraphs.
 - "ON ONE HAND ... ON THE OTHER HAND ..." balanced-comparison structure —
@@ -138,10 +150,8 @@ REQUIRED:
   beats five generic claims.
 - Sentence-length variance: mix 4-word jabs with 25-word ones, sometimes
   even a fragment. Don't average everything to 12-15 words.
-- Use "du/dig" / "you" — talk TO the reader, not ABOUT them
-- Real opinions: "Vi gillar X för att …" / "Ärligt talat är Y bättre" /
-  "Honestly, Z is overrated" / "We don't recommend …" / "Hoppa över X om
-  du letar efter Y" / "Det här är inte värt pengarna om..."
+- Use "{_tp('informal_address', language)}" / "you" — talk TO the reader, not ABOUT them
+- Real opinions: {_opinion_phrases(language)}
 - Include at least one unexpected expert detail per ~300 words — a tip,
   caveat, or counter-intuitive fact a generalist wouldn't know
 - Vary paragraph length: some 1 sentence, some 4-5 sentences. Single-
@@ -152,8 +162,8 @@ REQUIRED:
   Bolding 8-10 keyword phrases reads as keyword-stuffing and Google treats
   it as a spam signal. Bold ONE primary phrase the first time it appears
   and at most 1-2 genuinely critical terms. NEVER bold the same phrase
-  twice. NEVER bold every variant ("sexleksaker för män", "sex toys",
-  "sexleksaker män", "billiga sexleksaker" all bolded = automatic reject).
+  twice. NEVER bold every variant (e.g. all of "primary keyword", its
+  English synonym, and "cheap [keyword]" bolded = automatic reject).
 - Don't start adjacent sentences with the same word ("The" after "The")
 - COMMIT to a position. AI hedges; humans pick a side. If TPE feels
   better than silicone for most users, say that. Don't write "TPE has
@@ -162,6 +172,12 @@ REQUIRED:
 - It's OK — preferred, even — to leave a sentence imperfect or slightly
   asymmetric. AI polishes everything to glassy uniformity; humans don't.
 - For FAQ: use FAQPage schema microdata (itemscope/itemprop attributes)"""
+
+
+# Back-compat aliases. New callers should use the functions above and pass
+# `language` explicitly. These fall back to Swedish (the legacy default).
+ANTI_HALLUCINATION_RULES = anti_hallucination_rules()
+HUMAN_WRITING_STYLE = human_writing_style()
 
 
 def _strip_nav_text(text: str) -> str:
@@ -786,9 +802,9 @@ IMPORTANT: Meta for category pages should focus on category intent (browse/explo
         cat_context = "\nPage type: BLOG/GUIDE\nIMPORTANT: Meta should focus on informational intent and value for the reader."
 
     prompt = f"""You are a senior SEO specialist and conversion optimization expert for an e-commerce webshop.
-{ANTI_HALLUCINATION_RULES}
-{HUMAN_WRITING_STYLE}
-{HUMAN_WRITING_STYLE}
+{anti_hallucination_rules(language)}
+{human_writing_style(language)}
+{human_writing_style(language)}
 
 ## CURRENT SITUATION
 URL: {url}{cat_context}
@@ -873,9 +889,9 @@ def generate_content_audit(
 
     body_word_count = len(body.split()) if body else 0
     prompt = f"""You are an SEO content analyst. Analyze this landing page and its keyword coverage.
-{ANTI_HALLUCINATION_RULES}
-{HUMAN_WRITING_STYLE}
-{HUMAN_WRITING_STYLE}
+{anti_hallucination_rules(language)}
+{human_writing_style(language)}
+{human_writing_style(language)}
 
 URL: {url}
 Page type: {page_type}
@@ -1082,9 +1098,9 @@ def assess_content_quality_batch(
         )
 
     prompt = f"""You are a Google Search Quality Rater evaluating page content quality.
-{ANTI_HALLUCINATION_RULES}
-{HUMAN_WRITING_STYLE}
-{HUMAN_WRITING_STYLE}
+{anti_hallucination_rules(language)}
+{human_writing_style(language)}
+{human_writing_style(language)}
 
 For EACH page below, assess the text quality using Google's Helpful Content guidelines.
 
@@ -1181,9 +1197,9 @@ def assess_content_quality(
     link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
 
     prompt = f"""You are a senior SEO content strategist and UX copywriter. Evaluate this page's EXISTING text quality — not just keyword presence, but whether the text is actually good.
-{ANTI_HALLUCINATION_RULES}
-{HUMAN_WRITING_STYLE}
-{HUMAN_WRITING_STYLE}
+{anti_hallucination_rules(language)}
+{human_writing_style(language)}
+{human_writing_style(language)}
 
 ## PAGE
 URL: {url}
@@ -1303,9 +1319,9 @@ Focus on informational value, E-E-A-T signals and depth.
 
     existing_word_count = len(existing.split()) if existing else 0
     prompt = f"""You are a senior SEO copywriter specialized in e-commerce.
-{ANTI_HALLUCINATION_RULES}
-{HUMAN_WRITING_STYLE}
-{HUMAN_WRITING_STYLE}
+{anti_hallucination_rules(language)}
+{human_writing_style(language)}
+{human_writing_style(language)}
 
 ## CONTEXT
 URL: {url}
@@ -1378,7 +1394,7 @@ def generate_link_text(
     """Generate a natural paragraph containing an internal link with proper anchor text."""
     prompt = f"""You are a senior SEO copywriter. Write a short, natural paragraph (2-3 sentences) that can be inserted into an existing page to create an internal link.
 
-{HUMAN_WRITING_STYLE}
+{human_writing_style(language)}
 
 ## CONTEXT
 Source page: {source_url}
@@ -1432,7 +1448,7 @@ def generate_keyword_text(
 
     prompt = f"""You are a senior SEO copywriter. Rewrite or extend the following text to naturally integrate missing keywords.
 
-{HUMAN_WRITING_STYLE}
+{human_writing_style(language)}
 
 ## CONTEXT
 Page type: {page_type}{type_guide}
@@ -1602,7 +1618,7 @@ def generate_intro_rewrite(
 
     prompt = f"""You are a senior SEO copywriter. Rewrite ONLY the intro paragraph of this page.
 
-{HUMAN_WRITING_STYLE}
+{human_writing_style(language)}
 {retry_block}
 ## CONTEXT
 URL: {url}
@@ -1706,7 +1722,7 @@ def generate_keyword_faq(
 
     prompt = f"""You are a senior SEO content specialist. Generate FAQ items targeting subtopics that are missing or poorly covered on the page.
 
-{HUMAN_WRITING_STYLE}
+{human_writing_style(language)}
 
 ## CONTEXT
 Site context: {site_context}
@@ -1754,7 +1770,7 @@ def generate_article_outline(
     """Generate a detailed article outline with H2/H3 structure and word targets."""
     prompt = f"""You are a senior SEO content strategist. Create a detailed article outline.
 
-{HUMAN_WRITING_STYLE}
+{human_writing_style(language)}
 
 ## ARTICLE DETAILS
 Title: {title}
@@ -1818,8 +1834,8 @@ def generate_article_full(
 
     prompt = f"""You are a senior SEO copywriter. Write a complete, high-quality article.
 
-{ANTI_HALLUCINATION_RULES}
-{HUMAN_WRITING_STYLE}
+{anti_hallucination_rules(language)}
+{human_writing_style(language)}
 
 ## ARTICLE DETAILS
 Title: {title}
@@ -1872,7 +1888,7 @@ def generate_article_meta(
     """Generate optimized meta title and description for a new article."""
     prompt = f"""You are a senior SEO specialist. Generate an optimized meta title and description for a new article.
 
-{HUMAN_WRITING_STYLE}
+{human_writing_style(language)}
 
 ## ARTICLE
 Title: {title}
@@ -2166,7 +2182,7 @@ def generate_full_article_html(
     cluster_context: str = "",
 ) -> dict:
     """Generate a complete article as CMS-ready HTML."""
-    from utils.templates import BLOG_TEMPLATE_INSTRUCTIONS
+    from utils.templates import blog_template_instructions
 
     products_section = ""
     if products:
@@ -2193,8 +2209,8 @@ Feature 3-5 of these products naturally in the article using the product card HT
     prompt = f"""You are a senior content writer for an e-commerce site.
 Write a complete, CMS-ready article following the EXACT HTML format specified below.
 
-{ANTI_HALLUCINATION_RULES}
-{HUMAN_WRITING_STYLE}
+{anti_hallucination_rules(language)}
+{human_writing_style(language)}
 
 ## ARTICLE DETAILS
 Title: {title}
@@ -2205,7 +2221,7 @@ This article supports/links from: {link_from_url}
 Site: {site_context}
 Language: {language}
 
-{BLOG_TEMPLATE_INSTRUCTIONS}
+{blog_template_instructions(language)}
 {products_section}{url_section}
 
 ## CONTENT REQUIREMENTS
@@ -2767,7 +2783,7 @@ Concretely, when you rewrite the text:
 """
 
     # ── Build the full prompt ──
-    prompt = f"""{ANTI_HALLUCINATION_RULES}
+    prompt = f"""{anti_hallucination_rules(language)}
 
 You are rewriting the BODY TEXT for an e-commerce category page.
 {topical_boundary_block}
@@ -2910,7 +2926,7 @@ A category page has TWO text areas separated by a product grid:
    - E-E-A-T: expert advice, material comparisons, specific brand knowledge
 
 ## WRITING STYLE — CRITICAL
-{HUMAN_WRITING_STYLE}
+{human_writing_style(language)}
 
 ## LINK ANCHOR RULES (critical)
 Every internal link MUST have a UNIQUE anchor text that matches the TARGET page:
@@ -3701,7 +3717,7 @@ def generate_category_bottom_text(
     impressions: int = 0,
 ) -> dict:
     """Generate optimized category bottom text with all keywords, links, and products."""
-    from utils.templates import CATEGORY_BOTTOM_TEXT_INSTRUCTIONS
+    from utils.templates import category_bottom_text_instructions
 
     products_section = ""
     if products:
@@ -3730,9 +3746,9 @@ def generate_category_bottom_text(
     intro_word_count = len(current_intro_text.split()) if current_intro_text else 0
     prompt = f"""You are a senior SEO copywriter.
 Rewrite the category page bottom text following the EXACT format below.
-{ANTI_HALLUCINATION_RULES}
-{HUMAN_WRITING_STYLE}
-{HUMAN_WRITING_STYLE}
+{anti_hallucination_rules(language)}
+{human_writing_style(language)}
+{human_writing_style(language)}
 
 ## CRITICAL REQUIREMENTS — YOU MUST FOLLOW THESE
 1. You MUST include AT LEAST 8-12 internal links in the text. Use ALL subcategory URLs and at least 3 sibling URLs from the lists below.
@@ -3758,7 +3774,7 @@ Site: {site_context}
 ## CURRENT BOTTOM TEXT ({bottom_word_count} words — rewrite this if quality is poor)
 {current_bottom_text[:2000]}
 
-{CATEGORY_BOTTOM_TEXT_INSTRUCTIONS}
+{category_bottom_text_instructions(language)}
 {subcats}{siblings}{products_section}{url_list}
 
 ## OUTPUT (JSON only):
@@ -4066,9 +4082,9 @@ def generate_page_implementation_plan(
         url_list_section = f"\n\n## ALL PAGES ON THIS SITE (use these exact URLs when recommending internal links)\n{chr(10).join(_www_urls(all_site_urls[:200]))}"
 
     prompt = f"""You are a senior SEO strategist reviewing a single page. Based on ALL the data below, create a precise implementation plan with ONLY actions that are correct and relevant for THIS specific page.
-{ANTI_HALLUCINATION_RULES}
-{HUMAN_WRITING_STYLE}
-{HUMAN_WRITING_STYLE}
+{anti_hallucination_rules(language)}
+{human_writing_style(language)}
+{human_writing_style(language)}
 
 IMPORTANT: When recommending internal links, use the EXACT URLs from the site URL list below. Do NOT invent or guess URLs.{url_list_section}{data_warning_section}
 

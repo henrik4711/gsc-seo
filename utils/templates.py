@@ -1,9 +1,19 @@
 """
 HTML templates for blog articles and category content.
 Used by AI generator to produce CMS-ready HTML.
+
+Language-specific phrases (FAQ headers, expert-recommendation patterns,
+example phrases, etc.) are resolved through utils/lang_prompts.py so the
+same templates can drive Swedish, Danish, and future language deployments.
 """
 
-BLOG_TEMPLATE_INSTRUCTIONS = """
+from utils.lang_prompts import template_phrase, DEFAULT_LANG
+
+
+def blog_template_instructions(language: str = DEFAULT_LANG) -> str:
+    """Build the blog-article HTML template instructions for the given language."""
+    p = lambda k: template_phrase(k, language)
+    return f"""
 ## ARTICLE HTML FORMAT — FOLLOW THIS EXACTLY
 
 ### Structure:
@@ -13,7 +23,7 @@ BLOG_TEMPLATE_INSTRUCTIONS = """
   <h3 style="font-size:25px"><a href="/CATEGORY-URL"><strong>Product Category Name</strong></a></h3>
 - After each subsection, add an expert recommendation:
   <p class="xmx--high-emphasis">– [Expert recommendation with specific, actionable advice].</p>
-- MUST end with FAQ section: <h2>Vanliga frågor</h2> with 3-5 <h3> questions + <p> answers
+- MUST end with FAQ section: <h2>{p('faq_header')}</h2> with 3-5 <h3> questions + <p> answers
 
 ### Content Quality (Google Helpful Content):
 - Every paragraph MAX 3-4 sentences — scannable, not walls of text
@@ -24,7 +34,7 @@ BLOG_TEMPLATE_INSTRUCTIONS = """
 - Include practical tips: how to use, how to choose, what to avoid
 
 ### E-E-A-T Signals (critical for Google):
-- **Experience**: Write from first-hand knowledge. "Vi har testat...", "Vår erfarenhet visar..."
+- **Experience**: Write from first-hand knowledge. "{p('first_hand_a')}", "{p('first_hand_b')}"
 - **Expertise**: Specific details only an expert knows — not generic claims
 - **Authority**: Reference store expertise, customer service, years of experience
 - **Trust**: Mention guarantees, return policy, secure payment, discreet shipping
@@ -61,7 +71,7 @@ BLOG_TEMPLATE_INSTRUCTIONS = """
 ### Tone of Voice:
 - Warm, knowledgeable — like a trusted friend with expert knowledge
 - Slightly playful but respectful, never clinical or crude
-- Use "du/dig" (informal Scandinavian addressing)
+- Use "{p('informal_address')}" (informal Scandinavian addressing)
 - Expert recommendations: specific, actionable, not vague
 - Be genuinely helpful — guide the reader to make the right choice
 - Normalize the topic — remove shame and stigma where applicable
@@ -76,7 +86,11 @@ BLOG_TEMPLATE_INSTRUCTIONS = """
 - Do NOT use generic anchor text like "click here" or "read more"
 """
 
-CATEGORY_BOTTOM_TEXT_INSTRUCTIONS = """
+
+def category_bottom_text_instructions(language: str = DEFAULT_LANG) -> str:
+    """Build the category-page bottom-text HTML template instructions for the given language."""
+    p = lambda k: template_phrase(k, language)
+    return f"""
 ## CATEGORY PAGE BOTTOM TEXT FORMAT
 
 This is the SEO content that appears BELOW the product grid on category pages.
@@ -84,13 +98,13 @@ It is the most important text for Google on category pages.
 
 ### Structure:
 - NO H1 (CMS has that above the product grid)
-- Start with a <h2> buying guide section: "Hur väljer man [category]?"
-  or "Guide till [category]" — help the customer choose
+- Start with a <h2> buying guide section: "{p('buying_guide_a')} [category]?"
+  or "{p('buying_guide_b')} [category]" — help the customer choose
 - Use <h3 style="font-size:25px"> with linked subcategory names:
   <h3 style="font-size:25px"><a href="/SUBCATEGORY-URL"><strong>Subcategory Name</strong></a></h3>
 - After each subcategory section, add expert recommendation:
-  <p class="xmx--high-emphasis">– Välj [product type] om du [benefit].</p>
-- Add a FAQ section with <h2>Vanliga frågor om [category]</h2>
+  <p class="xmx--high-emphasis">– {p('expert_rec_pattern')}.</p>
+- Add a FAQ section with <h2>{p('faq_about_header')} [category]</h2>
   and 3-5 H3 questions with <p> answers
 - Add product carousel cards for top recommended products
 - End with trust signals
@@ -107,9 +121,9 @@ It is the most important text for Google on category pages.
 
 ### E-E-A-T & GOOGLE HELPFUL CONTENT (critical):
 - **Experience**: Write as if from someone who has tested and used these products.
-  Use phrases like "vår erfarenhet visar", "vi har hjälpt tusentals kunder"
+  Use phrases like "{p('experience_phrase_a')}", "{p('experience_phrase_b')}"
 - **Expertise**: Include specific, detailed advice that only an expert would know.
-  Not "vibratorer är bra" but "en G-punktsvibrator med böjd topp ger mer riktad stimulering"
+  Not "{p('generic_claim_bad')}" but "{p('specific_claim_good')}"
 - **Authority**: Reference the store's experience, expert staff, customer reviews.
   Use real authority signals — years in business, customer satisfaction, expert support.
 - **Trust**: Mention discreet shipping, secure payment, return policy, quality guarantees.
@@ -125,8 +139,8 @@ It is the most important text for Google on category pages.
 
 ### NUDGING & CONVERSION:
 - Subtle nudging toward trying products — never pushy
-- Address fears/taboos directly: "det är helt normalt att...", "många män upplever att..."
-- Social proof: "vår mest populära", "tusentals nöjda kunder"
+- Address fears/taboos directly: "{p('fear_normalizer_a')}", "{p('fear_normalizer_b')}"
+- Social proof: "{p('social_proof_a')}", "{p('social_proof_b')}"
 - Reduce friction: mention easy returns, discreet packaging, expert support
 
 ### Content Requirements:
@@ -145,14 +159,14 @@ LIX = (words / sentences) + (long words × 100 / words), where long words have >
 To stay in range:
 - Short sentences (avg 12-18 words). Break up anything longer with a period.
 - Prefer common everyday words over compound/technical ones where possible
-  ("använda" instead of "implementera", "välja" instead of "selektera")
-- Split long compound words when natural — but keep proper Swedish/Danish compounds
+  ("{p('simple_word_a')}" instead of "{p('complex_word_a')}", "{p('simple_word_b')}" instead of "{p('complex_word_b')}")
+- Split long compound words when natural — but keep proper {p('compound_word_note')}
 - Mix sentence lengths — not all short (LIX <25 reads as childish), not all long (LIX >45 reads as academic)
 - FAQ answers can be slightly shorter/simpler than body text — that's fine
 
 ### Tone of Voice:
 - Warm, knowledgeable — like a trusted expert friend
-- "du/dig" addressing, slightly playful but respectful
+- "{p('informal_address')}" addressing, slightly playful but respectful
 - Genuinely helpful — guide the customer, don't just list keywords
 - Normalize exploring sexuality — remove shame and stigma
 - NEVER keyword-stuff or sound robotic or AI-generated
@@ -164,6 +178,15 @@ To stay in range:
 - Do NOT invent URLs — use only real URLs from the site URL list
 - Do NOT write generic filler text — every sentence must add value
 - Do NOT link to pages outside this topic cluster
-- Do NOT use generic anchor text like "klicka här" or "läs mer"
+- Do NOT use generic anchor text like "{p('bad_anchor_a')}" or "{p('bad_anchor_b')}"
 - Do NOT repeat the same information in different words (Google detects this)
 """
+
+
+# ── Back-compat module-level constants ──────────────────────────────
+# Kept so any caller that still imports the old names keeps working. They
+# resolve to Swedish (the default deployment language). New callers should
+# call the functions above and pass `language` explicitly.
+
+BLOG_TEMPLATE_INSTRUCTIONS = blog_template_instructions()
+CATEGORY_BOTTOM_TEXT_INSTRUCTIONS = category_bottom_text_instructions()
