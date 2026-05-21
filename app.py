@@ -11,8 +11,13 @@ st.set_page_config(
 )
 
 # ── Password protection ──────────────────────────────────────
-# Set APP_PASSWORD env var on Railway to enable.
-# Without it, the app is open (for local dev).
+# REQUIRED — APP_PASSWORD env var must be set. The app fails closed
+# (refuses to start) without it, so a missing or accidentally-deleted
+# env var can never silently expose customer data on a Railway
+# deployment. This matches the api.py pattern for WP_PUBLISHER_API_KEY.
+#
+# For local development: export APP_PASSWORD=dev (or any value) before
+# running `streamlit run app.py`.
 #
 # Auth flag is persisted to /data/_app_auth.json so a Streamlit
 # WebSocket drop / session restart doesn't kick the user back to the
@@ -20,42 +25,54 @@ st.set_page_config(
 # run overnight while the user is asleep. Persistence is keyed on a
 # hash of the current APP_PASSWORD, so if the password is rotated the
 # old persistence becomes invalid and a fresh login is required.
-_app_password = os.environ.get("APP_PASSWORD", "")
-if _app_password:
-    import hashlib as _hl
-    import json as _json
-    _AUTH_FILE = "/data/_app_auth.json"
-    _expected_hash = _hl.sha256(_app_password.encode("utf-8")).hexdigest()
+_app_password = os.environ.get("APP_PASSWORD", "").strip()
+if not _app_password:
+    st.markdown("## 🔒 Configuration error")
+    st.error(
+        "**APP_PASSWORD env var is not set.**\n\n"
+        "The app refuses to start without it to prevent accidental "
+        "public exposure of customer data.\n\n"
+        "**Fix:**\n"
+        "- Railway: Settings → Variables → add `APP_PASSWORD`\n"
+        "- Local dev: `export APP_PASSWORD=dev` (Linux/Mac) or "
+        "`$env:APP_PASSWORD='dev'` (PowerShell) before running streamlit."
+    )
+    st.stop()
 
-    # Hydrate session from disk if present and valid for current password
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
-        try:
-            if os.path.exists(_AUTH_FILE):
-                with open(_AUTH_FILE, "r", encoding="utf-8") as _af:
-                    _saved = _json.load(_af)
-                if _saved.get("password_hash") == _expected_hash:
-                    st.session_state["authenticated"] = True
-        except Exception:
-            pass
+import hashlib as _hl
+import json as _json
+_AUTH_FILE = "/data/_app_auth.json"
+_expected_hash = _hl.sha256(_app_password.encode("utf-8")).hexdigest()
 
-    if not st.session_state["authenticated"]:
-        st.markdown("## 🔒 SEO Intelligence Platform")
-        pw = st.text_input("Password", type="password", key="login_pw")
-        if st.button("Login", type="primary"):
-            if pw == _app_password:
+# Hydrate session from disk if present and valid for current password
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+    try:
+        if os.path.exists(_AUTH_FILE):
+            with open(_AUTH_FILE, "r", encoding="utf-8") as _af:
+                _saved = _json.load(_af)
+            if _saved.get("password_hash") == _expected_hash:
                 st.session_state["authenticated"] = True
-                # Persist so Streamlit session-drops don't force re-login
-                try:
-                    os.makedirs(os.path.dirname(_AUTH_FILE), exist_ok=True)
-                    with open(_AUTH_FILE, "w", encoding="utf-8") as _af:
-                        _json.dump({"password_hash": _expected_hash}, _af)
-                except Exception:
-                    pass
-                st.rerun()
-            else:
-                st.error("Wrong password")
-        st.stop()
+    except Exception:
+        pass
+
+if not st.session_state["authenticated"]:
+    st.markdown("## 🔒 SEO Intelligence Platform")
+    pw = st.text_input("Password", type="password", key="login_pw")
+    if st.button("Login", type="primary"):
+        if pw == _app_password:
+            st.session_state["authenticated"] = True
+            # Persist so Streamlit session-drops don't force re-login
+            try:
+                os.makedirs(os.path.dirname(_AUTH_FILE), exist_ok=True)
+                with open(_AUTH_FILE, "w", encoding="utf-8") as _af:
+                    _json.dump({"password_hash": _expected_hash}, _af)
+            except Exception:
+                pass
+            st.rerun()
+        else:
+            st.error("Wrong password")
+    st.stop()
 
 # Custom CSS - dark theme with high contrast text
 st.markdown("""
