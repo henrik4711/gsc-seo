@@ -2131,7 +2131,11 @@ def render():
                 key="dx_dl_unclustered",
             )
 
-        _render_unclustered(unclustered_pages, cluster_names)
+        # Pass the full clusters list so _render_unclustered can call
+        # suggest_cluster_for_page on each row and offer the bulk-accept
+        # button. Without it, the function falls back to legacy
+        # behavior (empty dropdowns, no suggestions shown).
+        _render_unclustered(unclustered_pages, cluster_names, clusters=clusters_list)
 
     # ── TAB 9: CLUSTER BALANCE ───────────────────────────────
     with tab9:
