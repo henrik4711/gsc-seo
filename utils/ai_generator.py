@@ -19,21 +19,11 @@ def _www_urls(urls):
     return [add_www_to_url(u) for u in urls if u]
 
 
-# ── Anti-hallucination rules injected into all prompts that assess page state ──
-# These prevent AI from contradicting the data it is given.
-# Language-specific GOOD/BAD examples come from utils/lang_prompts.py so the
-# same prompt works for Swedish, Danish, and future languages.
-from utils.lang_prompts import (
-    operational_fact_examples_block as _ops_examples,
-    banned_openers_block as _banned_openers,
-    ai_tell_words as _ai_tells,
-    transition_words as _transitions,
-    adverb_openers as _adverb_openers,
-    opinion_phrases as _opinion_phrases,
-    balanced_clause_example as _balanced_clause,
-    numbered_list_prose_example as _numbered_prose,
-    template_phrase as _tp,
-)
+# ── Anti-hallucination + writing-style rules injected into prompts ──────
+# Language-agnostic: the {language} parameter is interpolated into the
+# prompt text and Claude applies the universal principles in that target
+# language. No per-language vocabulary dicts to maintain — works for any
+# language Claude speaks natively (10+ tested via setup.py dropdown).
 
 
 def anti_hallucination_rules(language: str = "Swedish") -> str:
@@ -60,85 +50,105 @@ OPERATIONAL FACTS — NEVER INVENT THESE (only use values from Site context):
 - Founding year / employee count / number of customers (unless given)
 - Specific sourcing/manufacturing partners
 If a fact like the above is NOT provided in the Site context section,
-write generically. Examples:
-{_ops_examples(language)}"""
+write generically — use the natural {language} equivalent of vague-but-safe
+phrasing instead of inventing specifics. Examples of the right level of
+vagueness (write the {language} equivalent of each, never copy English literally):
+  GOOD (generic, always safe): "discreet shipping in unmarked packaging"
+  BAD (must be explicitly given): "sender shows as 'CompanyName' on the box"
+  GOOD: "fast delivery"
+  BAD: "delivery within 24 hours"
+  GOOD: "returns according to consumer protection law"
+  BAD: "30-day return window"
+"""
 
 
 def human_writing_style(language: str = "Swedish") -> str:
     """Build the writing-style guard rules block for a given target language."""
     return f"""
-WRITING STYLE — the text MUST read like a real person wrote it, NOT AI.
+WRITING STYLE — the text MUST read like a real person wrote it in {language}, NOT AI.
 This is a HARD requirement. Output that contains any banned pattern below
 fails the brief and must be rewritten.
 
+LANGUAGE & VOICE:
+- Write the ENTIRE output in {language}. Including HTML section headers,
+  FAQ titles, button text, anchor text, expert recommendations — everything.
+  Never mix languages (unless a brand/product name is genuinely English).
+- Native, idiomatic {language} — not translated English. Avoid calques,
+  Anglicisms, and word-for-word translations that betray AI work.
+- The AI-tell patterns listed below are universal. Apply each one to its
+  NATURAL {language} equivalent. If you would normally render an English
+  AI tell into {language} word-for-word, find a more idiomatic alternative.
+
 GOAL — what "passes" looks like:
 - A modern AI-detector (e.g. GPTZero, Originality.ai, Copyleaks) should
-  classify this text as HUMAN-written. If the text reads as polished,
+  classify this text as HUMAN-written {language}. If it reads as polished,
   balanced, neutral, or "comprehensive" — it has failed.
-- A reader who knows AI-writing tells should not be able to spot any
-  obvious tell in the first 200 words.
+- A native {language} reader who knows AI-writing tells should not be able
+  to spot any obvious tell in the first 200 words.
 - The voice should sound like ONE specific person with opinions, not a
   brand-neutral content team.
 
-BANNED OPENERS / CLOSERS (never use):
-- "In conclusion" / "To sum up" / "It is important to note" / "Worth noting"
-- "Whether you ... or ..." / "No matter if you …"
-- "In this guide" / "In this article"
-- "Discover our" / "Discover" as opening word
-- "Perfect for those who..." / "Ideal for anyone who…"
-- "In today's fast-paced …"
-- "Indeed," as a sentence opener
-- "Are you looking for …?" as opener — never open with a rhetorical question
-- "Welcome to"
+BANNED OPENERS / CLOSERS (and the {language} equivalent of each — also banned):
+- Formal summary openers: "In conclusion", "To sum up"
+- Self-importance markers: "It is important to note", "Worth noting"
+- Hedge framings: "Whether you ... or ...", "No matter if you …"
+- Self-referential openers: "In this guide", "In this article"
+- Marketing imperatives as opener: "Discover our X", "Explore our X"
+- Audience hedges: "Perfect for those who...", "Ideal for anyone who..."
+- Time-hook openers: "In today's fast-paced world", "Nowadays"
+- Faux-emphasis as opener: "Indeed,", "In fact,"
+- Rhetorical-question opener: "Are you looking for …?"
+- Greeting opener: "Welcome to"
 - META-NARRATION openers: "Let me explain", "Here's the thing",
-  "Here's what you need to know", "So, what is X?" — never address the
-  act of writing/explaining itself.
-- "Imagine that..." / "Picture this..." as opener.
-- Target-language ({language}) equivalents — also banned:
-{_banned_openers(language)}
+  "Here's what you need to know" — never address the act of writing.
+- Imagination openers: "Imagine that...", "Picture this..."
 
-BANNED VOCABULARY (AI tells — never use):
-- delve, leverage, utilize (use 'use'), navigate (in figurative sense),
-  embark, unleash, harness, foster, facilitate, synergy, tapestry, realm,
-  resonates with, paramount, plethora, myriad, robust (figurative),
-  seamless, holistic, game-changer, cutting-edge, revolutionary,
-  state-of-the-art, world-class, world of, in the realm of,
-  testament to, treasure trove, kaleidoscope, symphony, journey
-  (in figurative sense), elevate, transform (in figurative sense)
-- {language} equivalents to avoid: {_ai_tells(language)}
-- "It's not just X, it's Y" sentence pattern — banned in ALL forms
-- "Whether you're a beginner or an expert" and any "X or Y" hedge
+BANNED VOCABULARY (universal AI tells — and their {language} equivalents):
+- delve, leverage, utilize, navigate (figurative), embark, unleash,
+  harness, foster, facilitate, synergy, tapestry, realm, resonates with,
+  paramount, plethora, myriad, robust (figurative), seamless, holistic,
+  game-changer, cutting-edge, revolutionary, state-of-the-art, world-class,
+  world of, in the realm of, testament to, treasure trove, kaleidoscope,
+  symphony, journey (figurative), elevate, transform (figurative).
+- ALL of these have direct {language} equivalents that are equally banned.
+  If you would normally translate "leverage" or "delve" into {language},
+  find a simpler native verb instead.
+- "It's not just X, it's Y" pattern — banned in ALL forms, any language.
+- "Whether you're a beginner or an expert" and any "X or Y" hedge.
 - Hedging phrases: "It's worth noting", "Keep in mind that",
-  "It goes without saying", "Needless to say", "Suffice it to say"
-- TRANSITION-WORD OVERUSE — AI loves connecting every sentence with
-  "However,", "Moreover,", "Furthermore,", "Additionally,", "In addition,",
-  "Nevertheless,", "On the other hand,". {language} equivalents: {_transitions(language)}. Use
-  AT MOST 2 of these in the entire bottom text. Real writers connect
-  ideas with periods and structure, not connector words.
-- ADVERB-LED sentence openers: "Importantly,", "Notably,", "Interestingly,",
-  "Crucially,", "Significantly,", "Essentially,". {language}: {_adverb_openers(language)}. Banned — start with the noun, verb,
-  or subject instead.
+  "It goes without saying", "Needless to say", "Suffice it to say" —
+  and their {language} equivalents.
 
-BANNED STRUCTURE (these scream AI):
+TRANSITION-WORD OVERUSE — AI loves connecting every sentence with
+"However,", "Moreover,", "Furthermore,", "Additionally,", "In addition,",
+"Nevertheless,", "On the other hand,". The {language} equivalents are
+equally banned. Use AT MOST 2 such transitions in the entire bottom text.
+Real writers connect ideas with periods and structure, not connector words.
+
+ADVERB-LED SENTENCE OPENERS: "Importantly,", "Notably,", "Interestingly,",
+"Crucially,", "Significantly,", "Essentially," — and the {language}
+equivalents. Banned. Start with the noun, verb, or subject instead.
+
+BANNED STRUCTURE (these scream AI in any language):
 - Em-dashes (—) used more than ONCE per ~150 words. Prefer commas, periods,
   parentheses. AI famously over-uses em-dashes. HARD CAP: max 4 em-dashes
   in the entire bottom_html.
 - Three-item parallel lists in body prose ("X, Y, and Z") more than once
-  per paragraph
+  per paragraph.
 - "BOTH X AND Y" balanced-clause pattern repeated more than 2× total —
-  AI loves balanced contrast ({_balanced_clause(language)},
-  "Both compact and powerful"). Real writers commit to ONE side.
-- "FIRST, ... SECOND, ... THIRD, ..." or {_numbered_prose(language)}
-  numbered-list style sentence prose — banned. Use proper bullet/numbered
-  HTML lists if you need order, never embed list markers in paragraphs.
+  AI loves balanced contrast ("Both compact and powerful" and its
+  {language} equivalent). Real writers commit to ONE side.
+- Numbered-list-style sentence prose: "FIRST, ... SECOND, ... THIRD, ..."
+  or its {language} equivalent — banned. Use proper bullet/numbered HTML
+  lists if you need order, never embed list markers in paragraphs.
 - "ON ONE HAND ... ON THE OTHER HAND ..." balanced-comparison structure —
-  banned. Pick a side. Real expertise has opinions.
-- Every paragraph the same length (3-4 sentences each = AI tell)
-- Every bullet point the same length and grammatical structure
-- Every H2/H3 starting with the same part of speech (all gerunds, or all
-  imperatives, or all nouns)
-- Closing every section with a summary sentence
+  banned in any language. Pick a side. Real expertise has opinions.
+- Every paragraph the same length (3-4 sentences each = AI tell).
+- Every bullet point the same length and grammatical structure.
+- Every H2/H3 starting with the same part of speech.
+- Closing every section with a summary sentence.
 - Ending the whole article with "In conclusion / To sum up / Overall"
+  or its {language} equivalent.
 - "OVERLY POLISHED" tone — every sentence grammatically perfect, every
   paragraph cleanly closed, no rough edges, no asymmetric phrasing. This
   is THE biggest AI tell. Leave one sentence slightly clipped. End a
@@ -150,32 +160,37 @@ REQUIRED:
   beats five generic claims.
 - Sentence-length variance: mix 4-word jabs with 25-word ones, sometimes
   even a fragment. Don't average everything to 12-15 words.
-- Use "{_tp('informal_address', language)}" / "you" — talk TO the reader, not ABOUT them
-- Real opinions: {_opinion_phrases(language)}
+- Use the informal "you" form natural to {language} (e.g. "du" in
+  Scandinavian languages, "tú" in Spanish, "du" in German if appropriate
+  to the brand). Talk TO the reader, not ABOUT them.
+- Real opinions, in natural {language}: "We like X because …", "Honestly
+  Y is better", "Skip X if you're looking for Y", "Not worth the money
+  unless …", "We don't recommend …" — find the idiomatic {language}
+  phrasings and commit.
 - Include at least one unexpected expert detail per ~300 words — a tip,
-  caveat, or counter-intuitive fact a generalist wouldn't know
+  caveat, or counter-intuitive fact a generalist wouldn't know.
 - Vary paragraph length: some 1 sentence, some 4-5 sentences. Single-
   sentence paragraphs are fine when emphatic.
-- Occasional contractions are fine in casual contexts ("don't", "it's")
-- NEVER include specific prices (they change)
+- Occasional contractions are fine where natural in {language}.
+- NEVER include specific prices (they change).
 - Bold tags (<strong> / <b>) are RARE — max 2-3 per entire bottom text.
   Bolding 8-10 keyword phrases reads as keyword-stuffing and Google treats
   it as a spam signal. Bold ONE primary phrase the first time it appears
   and at most 1-2 genuinely critical terms. NEVER bold the same phrase
-  twice. NEVER bold every variant (e.g. all of "primary keyword", its
-  English synonym, and "cheap [keyword]" bolded = automatic reject).
-- Don't start adjacent sentences with the same word ("The" after "The")
+  twice. NEVER bold every variant.
+- Don't start adjacent sentences with the same word.
 - COMMIT to a position. AI hedges; humans pick a side. If TPE feels
   better than silicone for most users, say that. Don't write "TPE has
   its strengths and silicone has its strengths — it depends on your
   preferences." That sentence is the smoking gun of AI writing.
 - It's OK — preferred, even — to leave a sentence imperfect or slightly
   asymmetric. AI polishes everything to glassy uniformity; humans don't.
-- For FAQ: use FAQPage schema microdata (itemscope/itemprop attributes)"""
+- For FAQ: use FAQPage schema microdata (itemscope/itemprop attributes),
+  with the section header in natural {language}."""
 
 
 # Back-compat aliases. New callers should use the functions above and pass
-# `language` explicitly. These fall back to Swedish (the legacy default).
+# `language` explicitly. These default to Swedish to preserve legacy behavior.
 ANTI_HALLUCINATION_RULES = anti_hallucination_rules()
 HUMAN_WRITING_STYLE = human_writing_style()
 

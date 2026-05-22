@@ -244,7 +244,7 @@ def render():
             help="The AI uses this to tailor meta texts and content. Can be set via SITE_CONTEXT env var."
         )
 
-        lang_options = ["English", "Swedish", "Danish", "Norwegian", "German", "French", "Spanish"]
+        from utils.lang_prompts import SUPPORTED_LANGUAGES as lang_options
         current_lang = st.session_state.get("content_language", "English")
         lang_idx = lang_options.index(current_lang) if current_lang in lang_options else 0
 
