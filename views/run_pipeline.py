@@ -318,7 +318,10 @@ def _run_topic_clusters():
 def _run_bulk_audit():
     """
     Run bulk audit inline. Uses the same scrape function as Page Auditor.
-    Saves every 25 pages so crash recovery loses at most ~25 seconds.
+    Saves every 5 pages and CLEARS the in-memory batch after each save —
+    the previous version accumulated every scraped page in `new_results`
+    until the very end, which OOM-killed the Railway worker around the
+    700-page mark on sites with 1000+ pages (~1MB parsed HTML each).
     """
     from utils.page_scraper import scrape_page
     from utils.category_analyzer import classify_page_type, deep_scrape_category
@@ -330,14 +333,49 @@ def _run_bulk_audit():
     if gsc is None or not hasattr(gsc, "page"):
         raise ValueError("Run Step 1 (Fetch GSC) first")
 
+    # Read existing audit results from disk (source of truth across
+    # crashes / WebSocket drops / Railway restarts). session_state may
+    # be stale if a previous run was interrupted before next page load
+    # had a chance to rehydrate.
+    audit_path = _file_path("audit_results", "json") if _volume_available() else ""
+    existing = []
+    if audit_path and os.path.exists(audit_path):
+        try:
+            with open(audit_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = st.session_state.get("audit_results", []) or []
+    else:
+        existing = st.session_state.get("audit_results", []) or []
+
     all_pages = gsc["page"].unique().tolist()
-    existing = st.session_state.get("audit_results", []) or []
     existing_urls = set(_norm(r.get("url", "")) for r in existing)
     to_scrape = [p for p in all_pages if _norm(p) not in existing_urls]
     if not to_scrape:
         return
 
-    new_results = []
+    CHECKPOINT_INTERVAL = 5
+
+    def _flush_to_disk(pending):
+        """Merge `pending` into the audit_results file and return new total."""
+        if not pending or not audit_path:
+            return 0
+        try:
+            on_disk = []
+            if os.path.exists(audit_path):
+                with open(audit_path, "r", encoding="utf-8") as f:
+                    on_disk = json.load(f)
+            fresh_urls = set(_norm(r.get("url", "")) for r in pending)
+            kept = [r for r in on_disk if _norm(r.get("url", "")) not in fresh_urls]
+            merged_now = kept + pending
+            with open(audit_path, "w", encoding="utf-8") as f:
+                json.dump(merged_now, f, ensure_ascii=False, indent=1, default=str)
+            return len(merged_now)
+        except Exception as e:
+            print(f"[bulk_audit] checkpoint save failed: {e}")
+            return 0
+
+    pending = []
     for i, url in enumerate(to_scrape):
         try:
             quick = classify_page_type(url)
@@ -346,37 +384,33 @@ def _run_bulk_audit():
             else:
                 page_data = scrape_page(url, timeout=30)
             page_data["url"] = url
-            new_results.append(page_data)
+            pending.append(page_data)
         except Exception as e:
-            new_results.append({"url": url, "success": False, "error": str(e)})
+            pending.append({"url": url, "success": False, "error": str(e)})
 
-        # Save every 25 pages to disk
-        if (i + 1) % 25 == 0 and _volume_available():
-            try:
-                path = _file_path("audit_results", "json")
-                on_disk = []
-                if os.path.exists(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        on_disk = json.load(f)
-                # CRITICAL: fresh scrapes must OVERWRITE existing disk entries,
-                # not skip them. Previous logic appended-only and silently
-                # discarded fresh re-scrapes of already-audited URLs.
-                fresh_urls = set(_norm(r.get("url", "")) for r in new_results)
-                kept = [r for r in on_disk if _norm(r.get("url", "")) not in fresh_urls]
-                merged = kept + new_results
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(merged, f, ensure_ascii=False, indent=1, default=str)
-                print(f"[bulk_audit] checkpoint at {i+1}: {len(merged)} total ({len(kept)} kept + {len(new_results)} fresh)")
-            except Exception as e:
-                print(f"[bulk_audit] checkpoint save failed at {i+1}: {e}")
+        # Flush + CLEAR every CHECKPOINT_INTERVAL pages. The previous
+        # version saved without clearing, so memory kept growing.
+        if (i + 1) % CHECKPOINT_INTERVAL == 0:
+            total = _flush_to_disk(pending)
+            if total:
+                print(f"[bulk_audit] checkpoint {i+1}/{len(to_scrape)}: {total} total on disk")
+            pending = []  # CRITICAL: free memory between checkpoints
 
-    # Final merge into session_state + save
-    merged = list(existing) + new_results
-    st.session_state["audit_results"] = merged
-    try:
-        save_key("audit_results")
-    except Exception as e:
-        print(f"[bulk_audit] final save failed: {e}")
+    # Flush whatever's left in the final partial batch
+    if pending:
+        _flush_to_disk(pending)
+        pending = []
+
+    # Rehydrate session_state from disk — it is the source of truth now
+    # that we never held more than CHECKPOINT_INTERVAL pages in memory.
+    # Do NOT call save_key() here — that would overwrite the disk file
+    # with only the last batch we held in memory.
+    if audit_path and os.path.exists(audit_path):
+        try:
+            with open(audit_path, "r", encoding="utf-8") as f:
+                st.session_state["audit_results"] = json.load(f)
+        except Exception as e:
+            print(f"[bulk_audit] final rehydrate failed: {e}")
 
 
 # Quality-check hashing, batching and "until done" logic live in
