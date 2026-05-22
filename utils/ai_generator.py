@@ -1984,7 +1984,15 @@ Rules:
 ## OUTPUT (JSON — be CONCISE, no extra whitespace):
 {{"clusters":[{{"topic":"name","intent":"commercial","terms":["term1","term2"],"keywords":["kw1","kw2","kw3"],"hub":"suggested hub URL","impressions":0}}],"summary":"2 sentences"}}"""
 
-    message = client.messages.create(
+    # Per-request timeout scales with input size. The global client timeout
+    # (120s, set in get_client) is calibrated for bottom-text generation —
+    # clustering thousands of keywords takes much longer because the model
+    # has to reason over the full set. 30s base + 0.15s per keyword + 0.05s
+    # per output-token-budget gives ~5-6 minutes at 2000 keywords with a
+    # 30k output budget. Cap at 900s as a hard safety stop.
+    _per_call_timeout = min(900.0, 30.0 + 0.15 * n_keywords + 0.05 * (out_budget / 100))
+
+    message = client.with_options(timeout=_per_call_timeout).messages.create(
         model="claude-sonnet-4-6",
         max_tokens=out_budget,
         temperature=0,

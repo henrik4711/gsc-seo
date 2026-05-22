@@ -34,18 +34,20 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Keyword input cap for AI clustering — was 250 (way too low for sites with
+    # Keyword input cap for AI clustering — was 250 (too low for sites with
     # 1000+ pages; pages whose queries fell below the cap ended up unclustered
-    # even when topically obvious). Raised to 2500 default. User can tune via
-    # the slider below if their site has more queries or they want lower token cost.
+    # even when topically obvious). New default 1000 — a 4x improvement over
+    # the old 250 while staying within reasonable API-call time. User can
+    # raise up to 5000 if needed; per-request timeout in ai_generate_clusters
+    # scales accordingly (up to 15 min hard cap).
     kw_cap = st.slider(
         "AI clustering — max keywords to send (higher = fewer unclustered pages, but slower + higher AI cost)",
-        min_value=250, max_value=5000, value=2500, step=250,
-        help="The AI clusters the top N keywords by impressions. Old default "
-             "of 250 left thousands of long-tail queries — and the pages "
-             "ranking for them — out of any cluster. 2500 covers ~95%% of "
-             "real e-commerce sites; raise if your dashboard shows many "
-             "unclustered pages that obviously belong to a topic.",
+        min_value=250, max_value=5000, value=1000, step=250,
+        help="The AI clusters the top N keywords by impressions. 1000 (default) "
+             "covers most e-commerce sites and completes in ~1-2 min. Raise to "
+             "2000-3000 for very large sites with many long-tail queries — "
+             "expect 3-6 min wait. Max 5000 (8-15 min). If you get timeout "
+             "errors, lower this and try again.",
     )
 
     col1, col2 = st.columns([1, 1])
@@ -56,7 +58,11 @@ def render():
             if not has_anthropic_key():
                 st.warning("Add Anthropic API key in Setup")
             else:
-                with st.spinner("AI analyzing keywords and building clusters... (~60 sec)"):
+                # Estimate wait: ~30s base + ~1s per 10 keywords. Tells user
+                # what to expect so they don't think it's hung.
+                _est_secs = max(60, int(30 + kw_cap / 10))
+                _est_label = f"~{_est_secs // 60} min" if _est_secs >= 120 else f"~{_est_secs} sec"
+                with st.spinner(f"AI analyzing {int(kw_cap)} keywords and building clusters... ({_est_label})"):
                     try:
                         from utils.ai_generator import get_client, ai_generate_clusters
                         client = get_client(get_anthropic_key())

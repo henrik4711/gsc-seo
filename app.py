@@ -12,19 +12,24 @@ st.set_page_config(
 
 # ── Password protection ──────────────────────────────────────
 # REQUIRED — APP_PASSWORD env var must be set. The app fails closed
-# (refuses to start) without it, so a missing or accidentally-deleted
-# env var can never silently expose customer data on a Railway
-# deployment. This matches the api.py pattern for WP_PUBLISHER_API_KEY.
+# (refuses to start) without it, so a missing env var can never silently
+# expose customer data. Matches the api.py pattern for
+# WP_PUBLISHER_API_KEY.
 #
-# For local development: export APP_PASSWORD=dev (or any value) before
-# running `streamlit run app.py`.
+# For local development: export APP_PASSWORD=dev before running streamlit.
 #
-# Auth flag is persisted to /data/_app_auth.json so a Streamlit
-# WebSocket drop / session restart doesn't kick the user back to the
-# login screen — critical for long-running batches like Fix ALL that
-# run overnight while the user is asleep. Persistence is keyed on a
-# hash of the current APP_PASSWORD, so if the password is rotated the
-# old persistence becomes invalid and a fresh login is required.
+# Auth is per-browser-session: login is required once per browser tab,
+# and Streamlit's session_state survives WebSocket reconnects within
+# that tab so normal use (incl. multi-hour batches with the tab kept
+# open) is unaffected. Closing the browser or restarting the server
+# requires a fresh login — the correct, secure default.
+#
+# DO NOT add disk-based persistence here. The previous version of this
+# file wrote the password hash to /data/_app_auth.json and hydrated any
+# new session whose state lacked "authenticated" — which silently
+# authenticated every visitor after the first successful login,
+# because the disk file was shared across all sessions and the hash
+# was identical for everyone (it was just sha256 of APP_PASSWORD).
 _app_password = os.environ.get("APP_PASSWORD", "").strip()
 if not _app_password:
     st.markdown("## 🔒 Configuration error")
@@ -39,22 +44,19 @@ if not _app_password:
     )
     st.stop()
 
-import hashlib as _hl
-import json as _json
-_AUTH_FILE = "/data/_app_auth.json"
-_expected_hash = _hl.sha256(_app_password.encode("utf-8")).hexdigest()
+# One-time cleanup: remove the legacy /data/_app_auth.json file from
+# previous deploys. Even though we no longer read it, leaving the file
+# behind is a footgun — a future code change could accidentally start
+# trusting it again. Safe to remove unconditionally.
+_LEGACY_AUTH_FILE = "/data/_app_auth.json"
+try:
+    if os.path.exists(_LEGACY_AUTH_FILE):
+        os.remove(_LEGACY_AUTH_FILE)
+except Exception:
+    pass
 
-# Hydrate session from disk if present and valid for current password
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
-    try:
-        if os.path.exists(_AUTH_FILE):
-            with open(_AUTH_FILE, "r", encoding="utf-8") as _af:
-                _saved = _json.load(_af)
-            if _saved.get("password_hash") == _expected_hash:
-                st.session_state["authenticated"] = True
-    except Exception:
-        pass
 
 if not st.session_state["authenticated"]:
     st.markdown("## 🔒 SEO Intelligence Platform")
@@ -62,13 +64,6 @@ if not st.session_state["authenticated"]:
     if st.button("Login", type="primary"):
         if pw == _app_password:
             st.session_state["authenticated"] = True
-            # Persist so Streamlit session-drops don't force re-login
-            try:
-                os.makedirs(os.path.dirname(_AUTH_FILE), exist_ok=True)
-                with open(_AUTH_FILE, "w", encoding="utf-8") as _af:
-                    _json.dump({"password_hash": _expected_hash}, _af)
-            except Exception:
-                pass
             st.rerun()
         else:
             st.error("Wrong password")
