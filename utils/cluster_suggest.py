@@ -86,6 +86,51 @@ def is_site_brand_cluster(cluster_topic: str) -> bool:
     return False
 
 
+def _tokens_overlap_prefix(a: set, b: set, min_len: int = 4) -> set:
+    """Return the set of tokens from `a` that either exactly match a
+    token in `b` OR are a prefix of (or share a prefix with) a token
+    in `b` — provided the shorter token is at least `min_len` characters.
+
+    Catches cases like "vibrator" (core term) vs "vibratorer" (in URL)
+    where Scandinavian plural / definite-article suffixes make the two
+    tokens look different to an exact-equality match but they're
+    semantically the same word. The min_len floor avoids false matches
+    like "ana" matching "anal", "anatomi", etc.
+    """
+    if not a or not b:
+        return set()
+    matched = set()
+    for ta in a:
+        if ta in b:
+            matched.add(ta)
+            continue
+        # Prefix match — try ta as a prefix of any b-token (or vice versa)
+        for tb in b:
+            shorter, longer = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+            if len(shorter) >= min_len and longer.startswith(shorter):
+                matched.add(ta)
+                break
+    return matched
+
+
+def _url_segment_tokens(url: str) -> list:
+    """Return tokenized URL path segments in order. Used to compute the
+    'depth' at which a cluster matches — a topic that matches a deeper
+    segment is more specific than one that matches a top-level segment.
+
+    E.g. for /sexleksaker/vibratorer/vibratorer-med-varmefunktion this
+    returns [{'sexleksaker'}, {'vibratorer'}, {'vibratorer', 'varmefunktion'}]
+    so a "vibratorer" cluster gets depth=2 (most specific match) and a
+    "sexleksaker" cluster gets depth=0 (parent category)."""
+    try:
+        from urllib.parse import urlparse
+        path = urlparse(url).path or url
+    except Exception:
+        path = url
+    segments = [s for s in path.strip("/").split("/") if s]
+    return [tokenize_for_match(s) for s in segments]
+
+
 def suggest_cluster_for_page(
     url: str,
     title: str,
@@ -98,15 +143,28 @@ def suggest_cluster_for_page(
     Returns a list of dicts: [{"cluster": topic, "score": float, "match_terms": [...]}]
     Empty list if no cluster has any overlapping token.
 
-    Score formula: overlap_size × 100 / max(8, cluster_signature_size).
-    This favors specific clusters (smaller signatures) over broad ones,
-    so a page whose URL contains "vibrator" matches a "vibratorer"
-    cluster more strongly than a "sexleksaker" cluster that also
-    happens to mention vibrators.
+    Scoring (higher = stronger match):
+      • BASE (0-100): overlap_size × 100 / max(8, signature_size).
+        Favors specific clusters with concentrated signatures.
+      • TOPIC BONUS (+40): any topic token appears in page tokens, with
+        prefix matching so "vibrator" ↔ "vibratorer" matches.
+      • CORE-TERM BONUS (+15 each, max +30): tokens from cluster.core_terms
+        appear in page tokens (also with prefix matching).
+      • DEPTH BONUS (+10 × deepest URL-segment index where topic or
+        core-term token appears): prefers /sexleksaker/vibratorer/X
+        matching "vibratorer" cluster (depth 2) over "sexleksaker"
+        cluster (depth 0). Critical for hierarchical category URLs
+        where the parent category is itself a valid cluster.
+
+    Example: /sexleksaker/vibratorer/vibratorer-med-varmefunktion
+      vibratorer cluster: base ~12 + topic +40 + core +15 + depth(2) +20 = 87
+      sexleksaker cluster: base ~12 + topic +40 + core +15 + depth(0) +0  = 67
+      → vibratorer wins, which is the topically-correct answer.
     """
     page_tokens = tokenize_for_match(f"{url} {title}")
     if not page_tokens:
         return []
+    seg_tokens_list = _url_segment_tokens(url)
     scored = []
     for c in clusters:
         topic = c.get("topic", "") or ""
@@ -118,10 +176,37 @@ def suggest_cluster_for_page(
         sig = tokenize_for_match(sig_text)
         if not sig:
             continue
-        overlap = page_tokens & sig
+
+        # Use prefix-aware overlap. Exact match still counts; the prefix
+        # path catches plural/definite-article variants like vibrator↔vibratorer.
+        overlap = _tokens_overlap_prefix(page_tokens, sig)
         if not overlap:
             continue
+
+        # Base score — concentration-based, favors specific clusters
         score = len(overlap) * 100 / max(8, len(sig))
+
+        topic_tokens = tokenize_for_match(topic)
+        core_term_tokens = tokenize_for_match(" ".join(core_terms))
+
+        # Topic bonus (with prefix matching too)
+        if _tokens_overlap_prefix(topic_tokens, page_tokens):
+            score += 40
+
+        # Core-term bonus (with prefix matching), capped
+        core_matches = len(_tokens_overlap_prefix(core_term_tokens, page_tokens))
+        score += min(30, core_matches * 15)
+
+        # Depth bonus — encourage matches at deeper URL segments, which
+        # are more specific than top-level path matches.
+        topic_or_core = topic_tokens | core_term_tokens
+        deepest = -1
+        for i, seg_t in enumerate(seg_tokens_list):
+            if _tokens_overlap_prefix(topic_or_core, seg_t):
+                deepest = i
+        if deepest >= 0:
+            score += deepest * 10
+
         scored.append((score, len(overlap), topic, sorted(overlap)[:4]))
     scored.sort(key=lambda x: (-x[0], -x[1]))
     return [

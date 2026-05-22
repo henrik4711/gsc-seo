@@ -305,11 +305,18 @@ def _render_unclustered(unclustered, cluster_names, clusters=None):
     # filter/pagination changes don't re-tokenize on every rerun.
     if clusters:
         _sugg_cache = st.session_state.setdefault("_sf_sugg_cache", {})
-        # Cache key includes the clusters set so re-running clustering
-        # invalidates stale suggestions. Length+first-topic is cheap
-        # and good enough — there's no real risk of clusters being the
-        # same length with different topics on a single session.
-        _cache_key = (len(clusters), (clusters[0].get("topic", "") if clusters else ""))
+        # Cache key invalidates when (a) the clusters set changes
+        # (re-cluster run) or (b) the scoring algorithm changes.
+        # Bump SCORING_VERSION whenever suggest_cluster_for_page's
+        # scoring formula changes — otherwise stale cached scores from
+        # a previous deploy would survive across this code change and
+        # the user wouldn't see the improved suggestions.
+        SCORING_VERSION = 2  # +topic/core-term bonus added 2026-05-22
+        _cache_key = (
+            SCORING_VERSION,
+            len(clusters),
+            (clusters[0].get("topic", "") if clusters else ""),
+        )
         if _sugg_cache.get("_key") != _cache_key:
             _sugg_cache.clear()
             _sugg_cache["_key"] = _cache_key
