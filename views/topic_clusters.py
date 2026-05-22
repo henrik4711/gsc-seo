@@ -34,20 +34,20 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Keyword input cap for AI clustering — was 250 (too low for sites with
-    # 1000+ pages; pages whose queries fell below the cap ended up unclustered
-    # even when topically obvious). New default 1000 — a 4x improvement over
-    # the old 250 while staying within reasonable API-call time. User can
-    # raise up to 5000 if needed; per-request timeout in ai_generate_clusters
-    # scales accordingly (up to 15 min hard cap).
+    # Keyword input cap for AI clustering. Conservative default (500) so the
+    # first build always completes even on slow API days; user can raise the
+    # slider to pull in more long-tail keywords (= fewer unclustered pages)
+    # at the cost of a longer wait. ai_generate_clusters streams the
+    # response, so calls won't be killed by Railway's HTTP timeout no matter
+    # how long the model takes.
     kw_cap = st.slider(
         "AI clustering — max keywords to send (higher = fewer unclustered pages, but slower + higher AI cost)",
-        min_value=250, max_value=5000, value=1000, step=250,
-        help="The AI clusters the top N keywords by impressions. 1000 (default) "
-             "covers most e-commerce sites and completes in ~1-2 min. Raise to "
-             "2000-3000 for very large sites with many long-tail queries — "
-             "expect 3-6 min wait. Max 5000 (8-15 min). If you get timeout "
-             "errors, lower this and try again.",
+        min_value=250, max_value=5000, value=500, step=250,
+        help="The AI clusters the top N keywords by impressions. 500 (default) "
+             "is the safe baseline and finishes in ~1 min. Raise to 1000-3000 "
+             "for large sites with lots of long-tail queries — expect 2-8 min "
+             "wait. Max 5000 (~15 min). Response is streamed, so it won't "
+             "time out, but the AI cost scales with the number of keywords.",
     )
 
     col1, col2 = st.columns([1, 1])
