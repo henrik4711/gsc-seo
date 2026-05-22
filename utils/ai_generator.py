@@ -1946,31 +1946,47 @@ def ai_generate_clusters(
     Replaces word-overlap algorithm with semantic understanding.
     Returns format compatible with the rest of the system.
     """
+    # Scale the target cluster count with input size. Old prompt hardcoded
+    # "30-60 clusters" regardless of input — that capped niche topics on
+    # large sites. Rule of thumb: ~1 cluster per 10 keywords with a floor
+    # at 20 (small sites still need some clusters) and ceiling at 200
+    # (otherwise output JSON gets huge).
+    n_keywords = len(keywords_data)
+    target_min = max(20, n_keywords // 15)
+    target_max = max(target_min + 10, min(200, n_keywords // 6))
+
+    # Scale output budget with target cluster count. Each cluster takes
+    # ~60-120 output tokens. Cap at 32k for safety; Claude Sonnet 4.6
+    # supports it.
+    out_budget = min(32000, max(8000, target_max * 150))
+
     prompt = f"""You are a senior SEO architect. Group these search keywords into topic clusters for an e-commerce site.
 
 ## SITE CONTEXT
 {site_context}
 Language: {language}
 
-## KEYWORDS (sorted by impressions — keyword: impressions, clicks, position, pages)
-{chr(10).join(f"- {kw['keyword']}: {kw['impressions']} impr, {kw['clicks']} clicks, pos {kw['position']}, pages: {', '.join(str(p) for p in kw.get('pages', [])[:2])}" for kw in keywords_data[:150])}
+## KEYWORDS ({n_keywords} total, sorted by impressions — keyword: impressions, clicks, position, pages)
+{chr(10).join(f"- {kw['keyword']}: {kw['impressions']} impr, {kw['clicks']} clicks, pos {kw['position']}, pages: {', '.join(str(p) for p in kw.get('pages', [])[:2])}" for kw in keywords_data)}
 
 ## YOUR TASK
-Group ALL these keywords into 30-60 topic clusters.
+Group ALL {n_keywords} keywords above into {target_min}-{target_max} topic clusters.
+Every keyword must end up in exactly one cluster — no keyword left behind.
 
 Rules:
 1. Each cluster = one topic with clear commercial or informational intent
 2. Brand keywords → assign to relevant product cluster
 3. No overlapping clusters — each keyword in exactly ONE cluster
-4. At least 3 keywords per cluster
+4. At least 2 keywords per cluster (smaller niche clusters are OK — better than leaving the keywords unclustered)
 5. Cluster name = main product category (e.g. "vibratorer", "dildos")
+6. Long-tail queries that share a parent topic with bigger queries should join that parent cluster, not form their own tiny one
 
 ## OUTPUT (JSON — be CONCISE, no extra whitespace):
 {{"clusters":[{{"topic":"name","intent":"commercial","terms":["term1","term2"],"keywords":["kw1","kw2","kw3"],"hub":"suggested hub URL","impressions":0}}],"summary":"2 sentences"}}"""
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=8000,
+        max_tokens=out_budget,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )

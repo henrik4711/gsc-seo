@@ -7,93 +7,10 @@ import re
 import streamlit as st
 from config import get_anthropic_key, has_anthropic_key
 from utils.ui_helpers import stable_hash, normalize_url, shorten_url, extract_content_summary, show_ai_error, render_recommendation_diff
-
-
-# ── Site-action drilldown helpers ─────────────────────────────────────
-# Convert AI's high-level priority actions ("Audit and assign 329 unclustered
-# pages…") into concrete per-page todos so the user never has to figure out
-# "which 329 pages?" themselves.
-
-_MATCH_TOKEN_RE = re.compile(r"[a-zåäöæøéèà0-9]+")
-_MATCH_STOP_BASE = {
-    "and", "the", "for", "with", "this", "that", "from", "are", "was",
-    "och", "att", "att", "som", "med", "till", "kop", "kopa", "kob",
-    "sex", "sexleksaker",  # ubiquitous in this niche, drowns out signal
-    "html", "www", "com", "https", "http",
-}
-
-
-def _get_site_brand_tokens() -> set:
-    """Tokens derived from the site's own domain name (e.g. www.mshop.se → {"mshop"}).
-    These appear in nearly every page title because of the "| Mshop" suffix
-    and would otherwise dominate cluster matching, sending every page into
-    a noise cluster like "brand_mshop". Filtered both from page tokens and
-    from cluster signatures."""
-    site = (st.session_state.get("gsc_site") or "").lower()
-    if not site:
-        return set()
-    try:
-        from urllib.parse import urlparse
-        netloc = urlparse(site).netloc or site
-    except Exception:
-        netloc = site
-    netloc = netloc.replace("https://", "").replace("http://", "")
-    if netloc.startswith("www."):
-        netloc = netloc[4:]
-    stem = netloc.split(".")[0] if netloc else ""
-    if not stem or len(stem) < 3:
-        return set()
-    return {stem}
-
-
-def _tokenize_for_match(text: str) -> set:
-    if not text:
-        return set()
-    stop = _MATCH_STOP_BASE | _get_site_brand_tokens()
-    return {t for t in _MATCH_TOKEN_RE.findall(text.lower()) if len(t) >= 3 and t not in stop}
-
-
-def _is_site_brand_cluster(cluster_topic: str) -> bool:
-    """True if the cluster is just the site's own brand (e.g. 'brand_mshop').
-    These are noise — visitors searching the site name should land on the
-    homepage, not need their own topical cluster. Filtered from drilldowns."""
-    if not cluster_topic:
-        return False
-    t = cluster_topic.lower().strip()
-    brands = _get_site_brand_tokens()
-    if not brands:
-        return False
-    for b in brands:
-        if t == b or t == f"brand_{b}":
-            return True
-    return False
-
-
-def _suggest_cluster_for_page(url: str, title: str, clusters: list, top_n: int = 1) -> list:
-    """Score each cluster against URL/title tokens; return top matches with overlap terms."""
-    page_tokens = _tokenize_for_match(f"{url} {title}")
-    if not page_tokens:
-        return []
-    scored = []
-    for c in clusters:
-        topic = c.get("topic", "") or ""
-        # Site-brand cluster ('brand_mshop') is noise — never suggest it.
-        if _is_site_brand_cluster(topic):
-            continue
-        core_terms = c.get("core_terms", []) or []
-        queries = c.get("queries", []) or []
-        sig_text = topic + " " + " ".join(core_terms) + " " + " ".join(queries[:30])
-        sig = _tokenize_for_match(sig_text)
-        if not sig:
-            continue
-        overlap = page_tokens & sig
-        if not overlap:
-            continue
-        # Score = overlap size weighted by inverse cluster signature size (favor specific clusters)
-        score = len(overlap) * 100 / max(8, len(sig))
-        scored.append((score, len(overlap), topic, sorted(overlap)[:4]))
-    scored.sort(key=lambda x: (-x[0], -x[1]))
-    return [{"cluster": t[2], "score": round(t[0], 1), "match_terms": t[3]} for t in scored[:top_n]]
+from utils.cluster_suggest import (
+    suggest_cluster_for_page as _suggest_cluster_for_page,
+    is_site_brand_cluster as _is_site_brand_cluster,
+)
 
 
 def _classify_priority_action(action_text: str) -> str:

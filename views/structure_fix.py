@@ -213,8 +213,17 @@ def _render_structure_actions(ideal, audit_lookup):
         _aui_sf.bulk_done_button("create", [stable_hash(c.get("url", "")) for c in visible_creates], key_suffix="sf_c")
 
 
-def _render_unclustered(unclustered, cluster_names):
-    """Tab 2: Assign unclustered pages to clusters."""
+def _render_unclustered(unclustered, cluster_names, clusters=None):
+    """Tab 2: Assign unclustered pages to clusters.
+
+    `clusters` is the full enriched cluster list (with topic + core_terms +
+    queries). When provided, each unclustered page gets a pre-filled
+    AI suggestion in its dropdown, scored by URL/title token overlap
+    against each cluster's signature. The user can accept by clicking
+    Save, or override by picking a different cluster from the dropdown.
+    Without it, the dropdown is empty by default (legacy behavior).
+    """
+    from utils.cluster_suggest import suggest_cluster_for_page
     total = len(unclustered)
 
     if total == 0:
@@ -283,6 +292,82 @@ def _render_unclustered(unclustered, cluster_names):
     # from this list AND from the dashboard's "84.9% unclustered" stat.
     from utils.persistence import save_key as _sk_nc
     _no_cluster_now = list(st.session_state.get("_no_cluster_needed") or [])
+
+    # ── Bulk "accept AI suggestions" action (Fix #4) ──
+    # For pages with no GSC data (impressions=0), the cluster system used
+    # to leave them stranded as "unclustered" with no help. Now each row
+    # gets an AI suggestion based on URL/title token overlap. This bulk
+    # button accepts all the suggestions on the currently filtered rows
+    # at once, gated by a confidence threshold so low-confidence guesses
+    # don't get auto-applied.
+    #
+    # Suggestions are cached per URL+cluster-set in session_state so
+    # filter/pagination changes don't re-tokenize on every rerun.
+    if clusters:
+        _sugg_cache = st.session_state.setdefault("_sf_sugg_cache", {})
+        # Cache key includes the clusters set so re-running clustering
+        # invalidates stale suggestions. Length+first-topic is cheap
+        # and good enough — there's no real risk of clusters being the
+        # same length with different topics on a single session.
+        _cache_key = (len(clusters), (clusters[0].get("topic", "") if clusters else ""))
+        if _sugg_cache.get("_key") != _cache_key:
+            _sugg_cache.clear()
+            _sugg_cache["_key"] = _cache_key
+
+        def _suggest_cached(p):
+            k = p["url"]
+            if k in _sugg_cache:
+                return _sugg_cache[k]
+            sugg = suggest_cluster_for_page(p["url"], p.get("title", ""), clusters, top_n=1)
+            top = sugg[0] if sugg and sugg[0]["cluster"] in cluster_names else None
+            _sugg_cache[k] = top
+            return top
+
+        suggestions_for_filtered = []
+        for p in filtered:
+            top = _suggest_cached(p)
+            if top:
+                suggestions_for_filtered.append((p, top))
+
+        if suggestions_for_filtered:
+            ai_col1, ai_col2, ai_col3 = st.columns([2, 1, 1])
+            with ai_col2:
+                min_score = st.number_input(
+                    "Min confidence score",
+                    min_value=5, max_value=50, value=15, step=5,
+                    key="sf_min_sugg_score",
+                    help="AI suggestion score required for bulk-accept. Higher = "
+                         "more conservative (only obvious matches). Lower = more "
+                         "pages auto-assigned but more chance of wrong cluster.",
+                )
+            above_threshold = [(p, s) for p, s in suggestions_for_filtered if s["score"] >= min_score]
+            with ai_col1:
+                if above_threshold and st.button(
+                    f"🤖 Accept {len(above_threshold)} AI suggestions (score ≥ {min_score})",
+                    key="sf_accept_ai_filtered",
+                    help="Fills the dropdown for each filtered row whose AI "
+                         "suggestion score is at or above the threshold. "
+                         "You can still review and change any pick before "
+                         "clicking Save below — nothing is committed until Save.",
+                ):
+                    _accepted = 0
+                    for p, s in above_threshold:
+                        url_hash = stable_hash(p["url"])
+                        picks[url_hash] = s["cluster"]
+                        # Update widget state too so the dropdown displays
+                        # the accepted suggestion immediately on rerun.
+                        st.session_state[f"sf_assign_widget_{url_hash}"] = s["cluster"]
+                        _accepted += 1
+                    st.success(
+                        f"Pre-filled {_accepted} dropdowns with AI suggestions. "
+                        f"Review the picks below and click Save when ready."
+                    )
+                    st.rerun()
+            with ai_col3:
+                st.caption(
+                    f"{len(suggestions_for_filtered)} of {len(filtered)} filtered pages "
+                    f"have AI suggestions"
+                )
 
     bulk_col1, bulk_col2, bulk_col3 = st.columns([2, 2, 2])
     with bulk_col1:
@@ -363,10 +448,26 @@ def _render_unclustered(unclustered, cluster_names):
         url = p["url"]
         url_hash = stable_hash(url)
         col1, col2, col3, col4, col5 = st.columns([4, 1, 1, 3, 1])
+
+        # AI suggestion based on URL + title token overlap with each
+        # cluster's signature. Reads from the same per-URL cache that
+        # the bulk-accept button uses, so no double-computation.
+        suggestion_meta = None
+        if clusters:
+            suggestion_meta = _suggest_cached(p)
         with col1:
+            sugg_html = ""
+            if suggestion_meta:
+                _terms = ", ".join(suggestion_meta.get("match_terms", []))
+                sugg_html = (
+                    f"<div style='font-size:0.65rem; color:#5bb4d4; margin-top:0.15rem;'>"
+                    f"AI suggests: <strong>{suggestion_meta['cluster']}</strong> "
+                    f"(score {suggestion_meta['score']:.0f}, matched: {_terms})</div>"
+                )
             st.markdown(
                 f"<div style='font-size:0.8rem; color:#e8e8f0; padding-top:0.5rem;'>{_shorten(url)}</div>"
-                f"<div style='font-size:0.65rem; color:#6b6b8a;'>{p['page_type']} · {p['word_count']} words</div>",
+                f"<div style='font-size:0.65rem; color:#6b6b8a;'>{p['page_type']} · {p['word_count']} words</div>"
+                f"{sugg_html}",
                 unsafe_allow_html=True,
             )
         with col2:
@@ -374,8 +475,13 @@ def _render_unclustered(unclustered, cluster_names):
         with col3:
             st.markdown(f"<div style='font-size:0.8rem; color:#9b9bb8; padding-top:0.5rem;'>{p['clicks']:,} clicks</div>", unsafe_allow_html=True)
         with col4:
-            # Pre-fill widget from the persistent pick so the dropdown
-            # shows the user's earlier choice if they navigate back.
+            # Dropdown default = user's persisted pick if they've already
+            # chosen one, else empty. We intentionally do NOT pre-fill the
+            # widget with the AI suggestion here — that would let Save
+            # commit AI guesses the user never actually approved
+            # (destructive default). The suggestion text is shown as a
+            # hint above, and there's a bulk "Accept all AI suggestions"
+            # button below for explicit opt-in.
             existing = picks.get(url_hash, "")
             widget_key = f"sf_assign_widget_{url_hash}"
             if widget_key not in st.session_state:
@@ -650,7 +756,9 @@ def render():
         _render_structure_actions(ideal, audit_lookup)
     with tab2:
         cluster_names = sorted(set(c.get("topic", "") for c in clusters if c.get("topic")))
-        _render_unclustered(unclustered, cluster_names)
+        # Pass the full clusters list so the dropdown can pre-fill an AI
+        # suggestion for each unclustered page (esp. pages with 0 GSC data).
+        _render_unclustered(unclustered, cluster_names, clusters=clusters)
     with tab3:
         _render_cluster_balance(clusters, audit_lookup)
 

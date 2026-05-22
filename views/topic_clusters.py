@@ -34,6 +34,20 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # Keyword input cap for AI clustering — was 250 (way too low for sites with
+    # 1000+ pages; pages whose queries fell below the cap ended up unclustered
+    # even when topically obvious). Raised to 2500 default. User can tune via
+    # the slider below if their site has more queries or they want lower token cost.
+    kw_cap = st.slider(
+        "AI clustering — max keywords to send (higher = fewer unclustered pages, but slower + higher AI cost)",
+        min_value=250, max_value=5000, value=2500, step=250,
+        help="The AI clusters the top N keywords by impressions. Old default "
+             "of 250 left thousands of long-tail queries — and the pages "
+             "ranking for them — out of any cluster. 2500 covers ~95%% of "
+             "real e-commerce sites; raise if your dashboard shows many "
+             "unclustered pages that obviously belong to a topic.",
+    )
+
     col1, col2 = st.columns([1, 1])
 
     with col1:
@@ -55,7 +69,7 @@ def render():
                             clicks=("clicks", "sum"),
                             pages=("page", lambda x: list(x.unique()[:3])),
                             avg_position=("position", "mean"),
-                        ).sort_values("impressions", ascending=False).head(250)
+                        ).sort_values("impressions", ascending=False).head(int(kw_cap))
 
                         keywords_for_ai = []
                         for kw, row in kw_data.iterrows():
