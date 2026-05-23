@@ -1174,16 +1174,27 @@ quote it from the sample, do not cite it as an issue.
   ]
 }}"""
 
-    # 5 detailed Swedish assessments (verdict + score + 2-sentence
-    # summary + main_issues list + specific_fixes list) routinely run
-    # 4-5k tokens. Old 3000-token cap was hitting truncation mid-array,
+    # 5 detailed assessments (verdict + score + 2-sentence summary +
+    # main_issues list + specific_fixes list) routinely run 4-5k output
+    # tokens. Old 3000-token cap was hitting truncation mid-array,
     # causing batch failures even when most pages were already assessed.
-    message = client.messages.create(
+    #
+    # Stream the response. A non-streaming call for a 5-page batch
+    # legitimately takes 60-180s — long enough for Railway's ~5-min HTTP
+    # request timeout to kill the connection on slow API days. Streaming
+    # keeps bytes flowing back to the client throughout the generation
+    # so the proxy never treats the connection as idle. The Anthropic
+    # SDK assembles the chunks for us; get_final_message() returns the
+    # same Message object _parse_ai_json already understands.
+    with client.messages.stream(
         model="claude-sonnet-4-6",
         max_tokens=8192,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
-    )
+    ) as stream:
+        for _ in stream.text_stream:
+            pass
+        message = stream.get_final_message()
 
     result = _parse_ai_json(message)
     return result.get("assessments", [])
