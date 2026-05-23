@@ -616,7 +616,7 @@ def _run_ideal_structure():
     if not has_anthropic_key():
         raise ValueError("Anthropic API key missing")
     if "_site_validation" not in st.session_state:
-        raise ValueError("Run site validation first (step 9)")
+        raise ValueError("Run site validation first (step 10)")
     if "topic_clusters" not in st.session_state:
         raise ValueError("Run topic clusters first")
 
@@ -861,7 +861,7 @@ def _run_plan_validation():
     if not has_anthropic_key():
         raise ValueError("Anthropic API key missing")
     if "_site_validation" not in st.session_state:
-        raise ValueError("Run site validation first (step 9)")
+        raise ValueError("Run site validation first (step 10)")
 
     import json
     from utils.ai_generator import get_client, _parse_ai_json
@@ -958,7 +958,7 @@ def _run_gap_analysis():
     if not has_anthropic_key():
         raise ValueError("Anthropic API key missing")
     if "_ideal_structure" not in st.session_state:
-        raise ValueError("Run ideal structure first (step 10)")
+        raise ValueError("Run ideal structure first (step 11)")
     if "_site_validation" not in st.session_state:
         raise ValueError("Run site validation first")
 
