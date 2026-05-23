@@ -415,7 +415,58 @@ def _run_bulk_audit():
     if not to_scrape:
         return
 
+    # ── Live progress UI ──────────────────────────────────────────
+    # Placeholders update inside the loop so the user can see exactly
+    # which page is being scraped right now, total progress, recent
+    # results, and checkpoint saves. Without this the only feedback
+    # was a spinner that looked identical 18 minutes in vs 18 seconds
+    # in — Henrik asked for visibility.
+    n_total = len(to_scrape)
+    st.markdown(f"**Source:** {source_label}")
+    st.markdown(
+        f"**To scrape:** {n_total} page(s) "
+        f"({len(existing_urls)} already in audit_results, skipped)"
+    )
+    progress_bar = st.progress(0.0, text=f"Starting — 0 / {n_total}")
+    current_box = st.empty()
+    recent_box = st.empty()
+    counters_box = st.empty()
+    checkpoint_box = st.empty()
+
     CHECKPOINT_INTERVAL = 5
+    n_ok = 0
+    n_fail = 0
+    recent = []  # last 10 results (url, ok, error_short)
+
+    def _render_progress(i):
+        progress_bar.progress(
+            min(1.0, i / max(n_total, 1)),
+            text=f"Scraping {i} / {n_total} pages — {n_ok} ok, {n_fail} failed"
+        )
+        counters_box.markdown(
+            f"<div style='font-size:0.8rem; color:#9b9bb8;'>"
+            f"<span style='color:#33dd88;'>✓ {n_ok} ok</span> · "
+            f"<span style='color:#ff4455;'>✗ {n_fail} failed</span> · "
+            f"<span style='color:#5bb4d4;'>↓ {n_total - i} remaining</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    def _render_recent():
+        if not recent:
+            return
+        rows = []
+        for r in recent[-10:]:
+            icon = "✓" if r["ok"] else "✗"
+            color = "#33dd88" if r["ok"] else "#ff4455"
+            note = f" — <span style='color:#ff6677;'>{r['err']}</span>" if not r["ok"] and r.get("err") else ""
+            rows.append(
+                f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem;'>"
+                f"<span style='color:{color};'>{icon}</span> "
+                f"<span style='color:#c8b4ff;'>{r['url'][:100]}</span>"
+                f"{note}</div>"
+            )
+        recent_box.markdown("\n".join(rows), unsafe_allow_html=True)
 
     def _flush_to_disk(pending):
         """Merge `pending` into the audit_results file and return new total."""
@@ -438,6 +489,15 @@ def _run_bulk_audit():
 
     pending = []
     for i, url in enumerate(to_scrape):
+        current_box.markdown(
+            f"<div style='background:#0d0d15; border-left:3px solid #5533ff; "
+            f"padding:0.5rem 0.8rem; margin:0.3rem 0; font-family:\"IBM Plex Mono\",monospace; "
+            f"font-size:0.78rem; color:#c8b4ff;'>"
+            f"🔍 Now scraping page {i+1} / {n_total}<br>"
+            f"<span style='color:#e8e8f0;'>{url}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
         try:
             quick = classify_page_type(url)
             if quick.get("page_type") == "category":
@@ -446,21 +506,36 @@ def _run_bulk_audit():
                 page_data = scrape_page(url, timeout=30)
             page_data["url"] = url
             pending.append(page_data)
+            n_ok += 1
+            recent.append({"url": url, "ok": True})
         except Exception as e:
             pending.append({"url": url, "success": False, "error": str(e)})
+            n_fail += 1
+            recent.append({"url": url, "ok": False, "err": str(e)[:80]})
+
+        _render_progress(i + 1)
+        _render_recent()
 
         # Flush + CLEAR every CHECKPOINT_INTERVAL pages. The previous
         # version saved without clearing, so memory kept growing.
         if (i + 1) % CHECKPOINT_INTERVAL == 0:
             total = _flush_to_disk(pending)
             if total:
-                print(f"[bulk_audit] checkpoint {i+1}/{len(to_scrape)}: {total} total on disk")
+                print(f"[bulk_audit] checkpoint {i+1}/{n_total}: {total} total on disk")
+                checkpoint_box.markdown(
+                    f"<div style='font-size:0.72rem; color:#5bb4d4;'>"
+                    f"💾 Checkpoint at page {i+1} — {total} pages saved to disk</div>",
+                    unsafe_allow_html=True,
+                )
             pending = []  # CRITICAL: free memory between checkpoints
 
     # Flush whatever's left in the final partial batch
     if pending:
         _flush_to_disk(pending)
         pending = []
+
+    progress_bar.progress(1.0, text=f"Done — {n_ok} ok, {n_fail} failed, {n_total} total")
+    current_box.empty()
 
     # Rehydrate session_state from disk — it is the source of truth now
     # that we never held more than CHECKPOINT_INTERVAL pages in memory.
