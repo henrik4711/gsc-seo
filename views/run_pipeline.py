@@ -165,23 +165,44 @@ def _run_fetch_gsc():
 
 
 def _run_build_authority():
+    """Build page authority from Ahrefs Best-by-Links + Backlinks.
+
+    SKIPS GRACEFULLY when Ahrefs data is not loaded — Ahrefs is an
+    optional input (some sites don't have an Ahrefs export, e.g.
+    competitor sites Henrik has no admin access to). The pipeline
+    keeps running; downstream steps that need authority data check
+    for empty/None and degrade their suggestions accordingly.
+    """
+    import pandas as pd
     from utils.ahrefs_import import build_page_authority
     bbl = st.session_state.get("ahrefs_best_by_links")
     bl = st.session_state.get("ahrefs_backlinks")
     if bbl is None or bbl.empty:
-        raise ValueError("Ahrefs Best by Links not loaded — check 2. Upload Ahrefs")
+        # Mark as "done but empty" so _step_done returns True and the
+        # orchestrator doesn't endlessly retry this step on every run.
+        st.session_state["page_authority"] = pd.DataFrame()
+        print("[step 2] Skipped — no Ahrefs data uploaded (optional input)")
+        return
     authority = build_page_authority(best_by_links_df=bbl, backlinks_df=bl)
     st.session_state["page_authority"] = authority
     save_key("page_authority")
 
 
 def _run_crawl_analysis():
+    """Analyze Screaming Frog crawl data for broken links, redirects, etc.
+
+    SKIPS GRACEFULLY when no SF export is loaded — SF is optional and
+    most sites don't have a fresh export ready. Downstream views show
+    "no SF data available" instead of crashing.
+    """
     import pandas as pd
     from utils.screaming_frog_import import analyze_crawl_data
     sf_pages = st.session_state.get("sf_pages")
     sf_inlinks = st.session_state.get("sf_inlinks")
     if sf_pages is None or sf_pages.empty:
-        raise ValueError("Screaming Frog pages not loaded")
+        st.session_state["sf_crawl_issues"] = {}
+        print("[step 3] Skipped — no Screaming Frog data uploaded (optional input)")
+        return
     site_domain = ""
     if "gsc_site" in st.session_state:
         site_domain = st.session_state["gsc_site"].replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
