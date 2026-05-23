@@ -317,21 +317,23 @@ def _run_topic_clusters():
 
 def _run_bulk_audit():
     """
-    Run bulk audit inline. Uses the same scrape function as Page Auditor.
-    Saves every 5 pages and CLEARS the in-memory batch after each save —
-    the previous version accumulated every scraped page in `new_results`
-    until the very end, which OOM-killed the Railway worker around the
-    700-page mark on sites with 1000+ pages (~1MB parsed HTML each).
+    Run bulk audit. URL source priority:
+      1. Mshop Admin API active-pages list (categories + CMS + filterpages)
+         — AUTHORITATIVE list of pages that should be audited. Auto-syncs
+         if not already cached. Product pages and inactive/draft pages
+         are excluded automatically because the API only returns the
+         live editable pages.
+      2. GSC unique-pages list — legacy fallback for non-Mshop sites
+         (no Admin API access, only GSC connected).
+
+    Saves every 5 pages and CLEARS the in-memory batch after each save
+    so memory plateaus at <10 MB regardless of total page count.
     """
     from utils.page_scraper import scrape_page
     from utils.category_analyzer import classify_page_type, deep_scrape_category
     from utils.ui_helpers import normalize_url as _norm
     from utils.persistence import _volume_available, _file_path
     import os, json
-
-    gsc = st.session_state.get("gsc_data")
-    if gsc is None or not hasattr(gsc, "page"):
-        raise ValueError("Run Step 1 (Fetch GSC) first")
 
     # Read existing audit results from disk (source of truth across
     # crashes / WebSocket drops / Railway restarts). session_state may
@@ -348,9 +350,68 @@ def _run_bulk_audit():
     else:
         existing = st.session_state.get("audit_results", []) or []
 
-    all_pages = gsc["page"].unique().tolist()
+    # ── Determine the URL set to audit ─────────────────────────────
+    # PRIMARY: Mshop Admin API active pages (authoritative). Auto-sync
+    # if not yet cached so first-time users don't have to remember a
+    # separate sync step.
+    target_urls = []
+    source_label = ""
+    mshop_active = st.session_state.get("mshop_active_pages") or {}
+    mshop_lookup = (mshop_active or {}).get("lookup") or {}
+    if not mshop_lookup:
+        try:
+            from utils.mshop_admin_api import fetch_active_pages_all
+            print("[bulk_audit] Mshop active-pages not cached — auto-syncing now")
+            mshop_active = fetch_active_pages_all()
+            if mshop_active.get("status") in ("success", "partial"):
+                st.session_state["mshop_active_pages"] = mshop_active
+                try:
+                    save_key("mshop_active_pages")
+                except Exception:
+                    pass
+                mshop_lookup = mshop_active.get("lookup") or {}
+                print(f"[bulk_audit] Mshop sync done: {mshop_active.get('counts', {})}")
+            else:
+                print(f"[bulk_audit] Mshop sync failed: {mshop_active.get('errors')}")
+        except Exception as e:
+            print(f"[bulk_audit] Mshop API auto-sync exception: {e}")
+
+    if mshop_lookup:
+        # Preferred: use Mshop's list of active categories + CMS + filterpages.
+        # This excludes product pages (not in any of these three lists),
+        # excludes deleted/draft pages (Mshop only returns live ones), and
+        # includes pages that GSC hasn't yet seen.
+        seen = set()
+        for meta in mshop_lookup.values():
+            u = meta.get("url", "")
+            if u and u not in seen:
+                seen.add(u)
+                target_urls.append(u)
+        counts = mshop_active.get("counts", {}) or {}
+        source_label = (
+            f"Mshop Admin API ({len(target_urls)} pages: "
+            f"{counts.get('category', 0)} category + "
+            f"{counts.get('cms', 0)} CMS + "
+            f"{counts.get('filterpage', 0)} filterpage)"
+        )
+    else:
+        # Fallback: GSC pages (legacy behavior for non-Mshop sites or
+        # when the Mshop API is unavailable).
+        gsc = st.session_state.get("gsc_data")
+        if gsc is None or not hasattr(gsc, "page"):
+            raise ValueError(
+                "No URL source available. Either:\n"
+                "  • Sync the Mshop Admin API (Setup → 🔌 Mshop Admin API), or\n"
+                "  • Connect GSC (Setup → Google Search Console)\n"
+                "Bulk audit needs ONE of these to know which pages to scrape."
+            )
+        target_urls = list(gsc["page"].unique())
+        source_label = f"GSC pages (legacy fallback, {len(target_urls)} URLs)"
+
+    print(f"[bulk_audit] URL source: {source_label}")
+
     existing_urls = set(_norm(r.get("url", "")) for r in existing)
-    to_scrape = [p for p in all_pages if _norm(p) not in existing_urls]
+    to_scrape = [p for p in target_urls if _norm(p) not in existing_urls]
     if not to_scrape:
         return
 
@@ -986,7 +1047,7 @@ PIPELINE_STEPS = [
     {"num": 3,  "title": "Analyze Crawl Issues",   "key": "sf_crawl_issues",  "fn": _run_crawl_analysis,    "long": False, "estimate": "~1 min"},
     {"num": 4,  "title": "CTR Gap Analysis",       "key": "ctr_gaps",         "fn": _run_ctr_analysis,      "long": False, "estimate": "~30 sec"},
     {"num": 5,  "title": "Build Topic Clusters",   "key": "topic_clusters",   "fn": _run_topic_clusters,    "long": False, "estimate": "~1 min (AI)"},
-    {"num": 6,  "title": "Bulk Audit Pages",       "key": "audit_results",    "fn": _run_bulk_audit,        "long": True,  "estimate": "~18 min for 1000+ pages"},
+    {"num": 6,  "title": "Bulk Audit Pages (Mshop API list)",       "key": "audit_results",    "fn": _run_bulk_audit,        "long": True,  "estimate": "~18 min for 1000+ pages"},
     {"num": 7,  "title": "AI Content Quality",     "key": None,               "fn": _run_quality_until_done,"long": True,  "estimate": "~15 min (AI)"},
     {"num": 8,  "title": "Cannibalization",        "key": "cannibalization",  "fn": _run_cannibalization,   "long": False, "estimate": "~5 min"},
     {"num": 9,  "title": "Cluster Linking",        "key": "cluster_link_recommendations", "fn": _run_cluster_linking, "long": False, "estimate": "~10 sec"},
