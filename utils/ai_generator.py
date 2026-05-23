@@ -2050,7 +2050,68 @@ Rules:
             pass
         message = stream.get_final_message()
 
+    # ── Diagnostic: dump raw AI response so we can debug the "silent 0
+    # clusters" failure mode. Saves to /data/_last_clustering_response.txt
+    # on every run — overwrites previous. Tells us EXACTLY what came back
+    # when we hit an empty-clusters result, instead of silently swallowing.
+    _raw_response_text = ""
+    _stop_reason = getattr(message, "stop_reason", None)
+    try:
+        if message.content and len(message.content) > 0:
+            _raw_response_text = message.content[0].text
+    except Exception:
+        pass
+    try:
+        import os as _os_dbg
+        _os_dbg.makedirs("/data", exist_ok=True)
+        with open("/data/_last_clustering_response.txt", "w", encoding="utf-8") as _f_dbg:
+            _f_dbg.write(
+                f"# stop_reason={_stop_reason}\n"
+                f"# response_length={len(_raw_response_text)} chars\n"
+                f"# n_keywords_sent={n_keywords}\n"
+                f"# target_clusters={target_min}-{target_max}\n"
+                f"# max_tokens_budget={out_budget}\n"
+                f"# ────────────────────────────────────────────────\n"
+            )
+            _f_dbg.write(_raw_response_text)
+        print(
+            f"[ai_generate_clusters] response saved: stop_reason={_stop_reason}, "
+            f"len={len(_raw_response_text)} chars, budget={out_budget} tokens"
+        )
+    except Exception as _e_dbg:
+        print(f"[ai_generate_clusters] could not save debug response: {_e_dbg}")
+
     ai_result = _parse_ai_json(message)
+
+    # If parse returned NO clusters, raise loudly instead of silently
+    # storing an empty topic_clusters object — Henrik should see WHY
+    # it failed, not stare at "No clusters found" with no explanation.
+    _parsed_clusters = ai_result.get("clusters") if isinstance(ai_result, dict) else None
+    if not _parsed_clusters:
+        # Determine root cause for the error message
+        if _stop_reason == "max_tokens":
+            _why = (
+                f"AI hit max_tokens cap ({out_budget}) before completing any cluster. "
+                f"Lower the keyword slider (try 500-1000) and rebuild — fewer keywords "
+                f"means less verbose output."
+            )
+        elif not _raw_response_text:
+            _why = "AI returned empty content."
+        elif not isinstance(ai_result, dict) or "clusters" not in ai_result:
+            _why = (
+                f"AI response was valid JSON but missing a 'clusters' key. "
+                f"Got top-level keys: {list(ai_result.keys()) if isinstance(ai_result, dict) else type(ai_result).__name__}"
+            )
+        else:
+            _why = (
+                "AI returned a 'clusters' array but it was empty. "
+                "The model decided not to cluster anything — try again, "
+                "or lower the keyword count so the model has a clearer task."
+            )
+        raise ValueError(
+            f"AI clustering produced 0 clusters. {_why} "
+            f"Raw response saved to /data/_last_clustering_response.txt for inspection."
+        )
 
     # Convert AI format to system format (compatible with rest of pipeline)
     # Also enrich with actual GSC data
@@ -2062,7 +2123,7 @@ Rules:
     for kw in keywords_data:
         kw_pages[kw["keyword"]] = kw.get("pages", [])
 
-    for c in ai_result.get("clusters", []):
+    for c in _parsed_clusters:
         cluster_keywords = c.get("keywords", c.get("queries", []))
         cluster_terms = c.get("terms", c.get("core_terms", []))
 
