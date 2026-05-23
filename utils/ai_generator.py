@@ -745,24 +745,52 @@ def _salvage_truncated_json(raw: str) -> dict | None:
     """Best-effort: when the model hit max_tokens mid-list, drop the
     half-written trailing item and close the array + object so the
     completed items are returned. Returns None if salvage isn't possible.
+
+    Two strategies, tried in order:
+      1. Find the last "}," (one cluster boundary) — drop everything
+         after, close with "]}". Works when at least one cluster
+         finished.
+      2. Find the last "]," (end of a complete keywords/terms array
+         followed by a comma in the parent object) — the AI truncated
+         mid-field. Even harder to recover — abandon that cluster.
     """
     start = raw.find("{")
     if start < 0:
         return None
     text = raw[start:]
-    # Find the last fully-closed top-level item — i.e. the last "},"
-    # that sits immediately before another item OR is the final item.
+
+    # Strategy 1: last fully-closed cluster
     last_complete = text.rfind("},")
-    if last_complete < 0:
-        return None
-    # Truncate at that point and add closing tokens for the array + object
-    # we walked into. We don't know the wrapping key, but every JSON
-    # response in this codebase wraps a single list, so "]}" closes it.
-    candidate = text[:last_complete + 1] + "]}"
-    try:
-        return json.loads(candidate)
-    except json.JSONDecodeError:
-        return None
+    if last_complete >= 0:
+        candidate = text[:last_complete + 1] + "]}"
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: truncation mid-cluster — search for the last "]"
+    # (end of a completed nested array like "terms" or "keywords")
+    # and try to close the surrounding cluster object + clusters array.
+    # We need at least one fully completed nested array followed by
+    # something that looks like the start of another field.
+    last_array_close = text.rfind("],")
+    if last_array_close >= 0:
+        # Walk back from last_array_close to find the matching opening
+        # of the cluster object that contains this array, then close
+        # everything from there.
+        # Simpler heuristic: find the last "},{" before this point —
+        # that's where the previous fully-closed cluster ended and
+        # the in-progress one began. Truncate everything inside the
+        # broken cluster.
+        prev_cluster_end = text.rfind("},{", 0, last_array_close)
+        if prev_cluster_end >= 0:
+            candidate = text[:prev_cluster_end + 1] + "]}"
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+    return None
 
 
 def get_client(api_key: str = "") -> anthropic.Anthropic:
@@ -1966,10 +1994,12 @@ def ai_generate_clusters(
     target_min = max(20, n_keywords // 15)
     target_max = max(target_min + 10, min(200, n_keywords // 6))
 
-    # Scale output budget with target cluster count. Each cluster takes
-    # ~60-120 output tokens. Cap at 32k for safety; Claude Sonnet 4.6
-    # supports it.
-    out_budget = min(32000, max(8000, target_max * 150))
+    # Scale output budget with target cluster count. With the tightened
+    # prompt (terms capped at 5 items, no variant-dumping), each cluster
+    # takes ~40-80 output tokens. Cap at 48k tokens to give breathing
+    # room for sites with many clusters or noisy keyword sets without
+    # exceeding what Claude Sonnet 4.6 supports.
+    out_budget = min(48000, max(16000, target_max * 250))
 
     prompt = f"""You are a senior SEO architect. Group these search keywords into topic clusters for an e-commerce site.
 
@@ -1991,8 +2021,14 @@ Rules:
 4. At least 2 keywords per cluster (smaller niche clusters are OK — better than leaving the keywords unclustered)
 5. Cluster name = main product category (e.g. "vibratorer", "dildos")
 6. Long-tail queries that share a parent topic with bigger queries should join that parent cluster, not form their own tiny one
+7. **"terms" must be AT MOST 5 short representative tokens that characterize
+   the cluster** — NOT every variant/misspelling of every keyword. For a
+   brand cluster terms=["mshop"] is correct, NOT ["mshop","mshoo","mshopen",
+   "msshop","mshoppen","m shop","m-shop",...]. Misspellings and variants
+   belong only in the keywords list. This keeps the output JSON from
+   exploding past max_tokens on noisy brand/navigational clusters.
 
-## OUTPUT (JSON — be CONCISE, no extra whitespace):
+## OUTPUT (JSON — be CONCISE, no extra whitespace, terms ≤ 5 items):
 {{"clusters":[{{"topic":"name","intent":"commercial","terms":["term1","term2"],"keywords":["kw1","kw2","kw3"],"hub":"suggested hub URL","impressions":0}}],"summary":"2 sentences"}}"""
 
     # Use streaming. A non-streaming call for 1000+ keywords legitimately
