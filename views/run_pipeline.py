@@ -1291,6 +1291,49 @@ def render():
         st.warning("**First time?** Go to **1. Setup & Connect** in the menu and connect GSC. Then come back here.")
         return
 
+    # ── Skip-list editor (pages excluded from BOTH Step 7 AI Content
+    # Quality AND from Fix ALL push). Single source of truth across the
+    # whole AI pipeline — a URL in this list is "do not touch with AI".
+    # Edit BEFORE running Step 7 so the assessment skips those pages
+    # entirely (saving AI cost) instead of assessing then ignoring.
+    _skip_list_now = list(st.session_state.get("_fix_skip_list") or [])
+    with st.expander(
+        f"🚫 AI skip-list — {len(_skip_list_now)} URL(s) excluded from AI assess + Fix ALL",
+        expanded=False,
+    ):
+        st.caption(
+            "Pages listed here are excluded from BOTH Step 7 (AI Content "
+            "Quality) AND Fix ALL (Mshop push). Useful for help / info / "
+            "legal / brand pages you never want AI to touch. Persisted to "
+            "disk — survives Railway restarts."
+        )
+        _skip_edit = st.text_area(
+            "One URL per line (paste full URL, no normalization)",
+            value="\n".join(_skip_list_now),
+            height=140,
+            key="rp_skip_textarea",
+            placeholder="https://www.mshop.se/hjalp/returer\nhttps://www.mshop.se/om-mshop\n...",
+        )
+        _btn_col1, _btn_col2 = st.columns([1, 1])
+        with _btn_col1:
+            if st.button("💾 Save skip-list", key="rp_skip_save", type="primary", use_container_width=True):
+                _new_skip = [line.strip() for line in _skip_edit.splitlines() if line.strip()]
+                st.session_state["_fix_skip_list"] = _new_skip
+                try:
+                    save_key("_fix_skip_list")
+                except Exception:
+                    pass
+                st.success(f"Saved {len(_new_skip)} URL(s) to skip-list. Step 7 will skip them.")
+                st.rerun()
+        with _btn_col2:
+            if _skip_list_now and st.button("🗑 Clear skip-list", key="rp_skip_clear", use_container_width=True):
+                st.session_state["_fix_skip_list"] = []
+                try:
+                    save_key("_fix_skip_list")
+                except Exception:
+                    pass
+                st.rerun()
+
     # ── MEGA BUTTON: Run all remaining ──────────────────────
     remaining_steps = [s for s in PIPELINE_STEPS if not _step_done(s)]
     n_done = len(PIPELINE_STEPS) - len(remaining_steps)

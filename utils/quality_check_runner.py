@@ -47,11 +47,23 @@ def quality_key_from_hash(url_hash: str) -> str:
 
 
 def eligible_pages(audit_results: list) -> list:
-    """Pages that qualify for the quality check."""
+    """Pages that qualify for the quality check.
+
+    Skips:
+      - pages whose page_type isn't in ELIGIBLE_PAGE_TYPES
+      - pages with word_count <= MIN_WORD_COUNT
+      - pages in the user's _fix_skip_list (also used by Fix ALL).
+        Single source of truth: a URL in that list is "do not touch
+        with AI" — neither assess nor rewrite. This matches the
+        intuition that if you don't want AI to rewrite a page, you
+        probably don't want to pay for assessing it either.
+    """
+    skip_set = set(st.session_state.get("_fix_skip_list") or [])
     return [
         r for r in (audit_results or [])
         if r.get("page_type") in ELIGIBLE_PAGE_TYPES
         and (r.get("word_count") or 0) > MIN_WORD_COUNT
+        and r.get("url", "") not in skip_set
     ]
 
 
