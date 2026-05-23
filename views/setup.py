@@ -452,10 +452,14 @@ def render():
         if st.button("RESET ALL DATA", type="secondary", key="btn_reset_all"):
             import shutil
             from utils.persistence import DATA_DIR, AI_CACHE_DIR, PERSIST_KEYS
-            # Clear session state (keep only credentials + settings)
+            # Clear session state (keep only credentials + settings + auth).
+            # "authenticated" must stay so the user is not kicked back to
+            # the login screen after pressing Reset — auth is per-browser-
+            # session now (no disk persistence), so clearing it would force
+            # a re-login mid-workflow.
             keep_keys = {"gsc_credentials", "gsc_service", "gsc_properties", "gsc_site_url",
                          "gsc_site", "anthropic_key", "site_context", "content_language",
-                         "demo_mode", "_persistence_loaded"}
+                         "demo_mode", "_persistence_loaded", "authenticated"}
             for key in list(st.session_state.keys()):
                 if key not in keep_keys:
                     del st.session_state[key]
