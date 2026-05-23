@@ -371,6 +371,34 @@ def _run_bulk_audit():
     else:
         existing = st.session_state.get("audit_results", []) or []
 
+    # ── BACKFILL page_type on existing entries that don't have one ──
+    # The previous bulk_audit loop forgot to copy the URL-classifier's
+    # `page_type` into the scraped page_data, so pages saved before this
+    # fix have page_type missing/empty/"unknown" — which made Step 7
+    # (AI Content Quality) return "0/N eligible — needs category with
+    # >50 words. Got: missing:N" and quietly do nothing.
+    # This block fixes already-scraped data without re-scraping (pure
+    # URL pattern matching, no network calls).
+    if existing:
+        backfilled = 0
+        for r in existing:
+            current = r.get("page_type") or ""
+            if current in ("", "unknown", "missing"):
+                pt = classify_page_type(r.get("url", "")).get("page_type", "unknown")
+                if pt and pt != current:
+                    r["page_type"] = pt
+                    backfilled += 1
+        if backfilled > 0:
+            print(f"[bulk_audit] backfilled page_type for {backfilled} of {len(existing)} existing entries")
+            if audit_path:
+                try:
+                    with open(audit_path, "w", encoding="utf-8") as f:
+                        json.dump(existing, f, ensure_ascii=False, indent=1, default=str)
+                except Exception as _e:
+                    print(f"[bulk_audit] backfill save failed: {_e}")
+            # Also refresh session_state with the backfilled list
+            st.session_state["audit_results"] = existing
+
     # ── Determine the URL set to audit ─────────────────────────────
     # PRIMARY: Mshop Admin API active pages (authoritative). Auto-sync
     # if not yet cached so first-time users don't have to remember a
@@ -521,16 +549,24 @@ def _run_bulk_audit():
         )
         try:
             quick = classify_page_type(url)
-            if quick.get("page_type") == "category":
+            classified_type = quick.get("page_type", "unknown")
+            if classified_type == "category":
                 page_data = deep_scrape_category(url, timeout=30)
             else:
                 page_data = scrape_page(url, timeout=30)
             page_data["url"] = url
+            # CRITICAL: persist the URL-classifier's verdict into the saved
+            # page_data so Step 7 (AI Content Quality) can filter eligible
+            # pages by page_type later. Previously this assignment was
+            # missing and every audited page ended up with no page_type,
+            # which silently failed Step 7's "needs category with >50 words"
+            # check ("Got: missing:N").
+            page_data["page_type"] = classified_type
             pending.append(page_data)
             n_ok += 1
             recent.append({"url": url, "ok": True})
         except Exception as e:
-            pending.append({"url": url, "success": False, "error": str(e)})
+            pending.append({"url": url, "success": False, "error": str(e), "page_type": "unknown"})
             n_fail += 1
             recent.append({"url": url, "ok": False, "err": str(e)[:80]})
 
