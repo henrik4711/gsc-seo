@@ -1994,12 +1994,12 @@ def ai_generate_clusters(
     target_min = max(20, n_keywords // 15)
     target_max = max(target_min + 10, min(200, n_keywords // 6))
 
-    # Scale output budget with target cluster count. With the tightened
-    # prompt (terms capped at 5 items, no variant-dumping), each cluster
-    # takes ~40-80 output tokens. Cap at 48k tokens to give breathing
-    # room for sites with many clusters or noisy keyword sets without
-    # exceeding what Claude Sonnet 4.6 supports.
-    out_budget = min(48000, max(16000, target_max * 250))
+    # Scale output budget with target cluster count. Claude Sonnet 4.6
+    # supports up to 64k output tokens — we cap at that. With the tightened
+    # prompt (terms ≤ 5, keywords ≤ 50 per cluster, no variant-dumping),
+    # each cluster takes ~80-150 output tokens, so 64k easily covers 200
+    # clusters.
+    out_budget = min(64000, max(16000, target_max * 300))
 
     prompt = f"""You are a senior SEO architect. Group these search keywords into topic clusters for an e-commerce site.
 
@@ -2024,11 +2024,20 @@ Rules:
 7. **"terms" must be AT MOST 5 short representative tokens that characterize
    the cluster** — NOT every variant/misspelling of every keyword. For a
    brand cluster terms=["mshop"] is correct, NOT ["mshop","mshoo","mshopen",
-   "msshop","mshoppen","m shop","m-shop",...]. Misspellings and variants
-   belong only in the keywords list. This keeps the output JSON from
-   exploding past max_tokens on noisy brand/navigational clusters.
+   "msshop","mshoppen","m shop","m-shop",...].
+8. **"keywords" must be AT MOST 50 representative queries per cluster.**
+   If a cluster legitimately has more than 50 queries (e.g. a brand
+   cluster with hundreds of misspellings of "mshop"), list only the 50
+   most representative — skip near-duplicate spelling variants
+   ("mshoo","mshopen","mshoppen" are all the same query — pick one).
+   Misspellings inflate output JSON past max_tokens; the system will
+   cross-reference the full keyword list separately.
+9. **Prefer fewer larger clusters over many tiny ones.** If two niche
+   topics share a parent (e.g. "rabbit vibratorer" and "bullet vibratorer"),
+   put them in the parent cluster "vibratorer" with the niche queries
+   listed, not in separate 2-keyword clusters.
 
-## OUTPUT (JSON — be CONCISE, no extra whitespace, terms ≤ 5 items):
+## OUTPUT (JSON — be CONCISE, no extra whitespace, terms ≤ 5, keywords ≤ 50):
 {{"clusters":[{{"topic":"name","intent":"commercial","terms":["term1","term2"],"keywords":["kw1","kw2","kw3"],"hub":"suggested hub URL","impressions":0}}],"summary":"2 sentences"}}"""
 
     # Use streaming. A non-streaming call for 1000+ keywords legitimately
