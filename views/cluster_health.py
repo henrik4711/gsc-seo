@@ -351,7 +351,24 @@ def render():
                                 save(health_key)
                                 st.rerun()
                         except Exception as e:
-                            st.error(f"Error: {e}")
+                            # Persist the error with traceback so the
+                            # "Stack trace (for debugging)" expander
+                            # appears on the next render — same pattern
+                            # as the batch-eval path above. Without this
+                            # the per-cluster button just showed a bare
+                            # one-line error and the trace was lost.
+                            import traceback as _tb_pc
+                            tb_text = _tb_pc.format_exc()
+                            st.session_state[health_key] = {
+                                "error": str(e),
+                                "error_type": type(e).__name__,
+                                "traceback": tb_text[-2000:],
+                                "health_score": 0,
+                            }
+                            from utils.persistence import save as _save_pc
+                            _save_pc(health_key)
+                            st.error(f"Evaluation failed — {type(e).__name__}: {e}")
+                            st.rerun()
             else:
                 health = st.session_state[health_key]
 
