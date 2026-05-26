@@ -8,12 +8,16 @@
 #   1. git checkout <branch>
 #   2. git pull (sync with remote)
 #   3. git merge main (fast-forward or merge commit)
-#   4. git push origin <branch>
-#   5. Return to wherever you were before running
+#   4. On non-SE branches: remove bundled_data/ (mshop.se-specific
+#      data that would contaminate the DK/EU services if loaded).
+#      persistence.py also respects SKIP_BUNDLED_DATA=1 as belt-and-
+#      braces — set that env var on the DK/EU Railway services too.
+#   5. git push origin <branch>
+#   6. Return to whatever branch the user started on.
 #
 # If any branch has a conflict, the script stops and you finish that
 # branch manually — the remaining branches are not touched until you
-# fix and re-run. Safer than blindly continuing.
+# fix and re-run.
 
 $ErrorActionPreference = "Stop"  # any git error halts the script
 
@@ -22,24 +26,23 @@ $branches = @("mshop-se", "mshop-dk", "mshop-eu")
 # Remember where the user was so we restore at the end
 $startBranch = (git rev-parse --abbrev-ref HEAD).Trim()
 Write-Host ""
-Write-Host "Starting from branch: $startBranch" -ForegroundColor Cyan
+Write-Host "Starting from branch: ${startBranch}" -ForegroundColor Cyan
 Write-Host ""
 
 # Make sure main is up to date locally
 Write-Host "Updating main from remote..." -ForegroundColor Cyan
 git checkout main
 git pull origin main
-Write-Host "  main is at $(git rev-parse --short HEAD)" -ForegroundColor Gray
 Write-Host ""
 
 foreach ($b in $branches) {
-    Write-Host "=== $b ===" -ForegroundColor Yellow
+    Write-Host "=== ${b} ===" -ForegroundColor Yellow
 
     # Check the branch exists locally (or on remote)
     $localExists = (git branch --list $b) -ne ""
     if (-not $localExists) {
-        Write-Host "  Branch '$b' does not exist locally — skipping." -ForegroundColor DarkYellow
-        Write-Host "  (Create it first: git checkout -b $b; git push -u origin $b)" -ForegroundColor DarkGray
+        Write-Host "  Branch '${b}' does not exist locally - skipping." -ForegroundColor DarkYellow
+        Write-Host "  (Create it: git checkout -b ${b} ; git push -u origin ${b})" -ForegroundColor DarkGray
         continue
     }
 
@@ -48,29 +51,28 @@ foreach ($b in $branches) {
     git merge main --no-edit
 
     # bundled_data/ contains mshop.se-specific SF crawl + Ahrefs exports.
-    # On DK / EU / other site branches it gets re-introduced every time
-    # we merge main, then auto-unpacks on Railway startup and pollutes
-    # the service's page_authority/sf_pages state with SE data. Remove
-    # after every merge on non-SE branches to keep them clean.
-    #
-    # Belt-and-braces: persistence.py also respects SKIP_BUNDLED_DATA=1
-    # env var, so even if this cleanup is skipped the files won't load.
-    if ($b -ne "mshop-se" -and (Test-Path "bundled_data")) {
-        Write-Host "  Removing bundled_data/ (SE-specific, contaminates $b)..." -ForegroundColor DarkYellow
-        Remove-Item -Recurse -Force "bundled_data"
-        git add -A
-        # --allow-empty handles the case where main hadn't re-introduced
-        # anything new on this merge (idempotent).
-        git commit -m "auto: remove SE-specific bundled_data on $b" --allow-empty
+    # On DK / EU / other site branches it gets re-introduced every merge
+    # from main, then auto-unpacks on Railway startup and pollutes the
+    # service's page_authority/sf_pages state with SE data. Remove after
+    # every merge on non-SE branches to keep them clean.
+    if ($b -ne "mshop-se") {
+        if (Test-Path "bundled_data") {
+            Write-Host "  Removing bundled_data/ (SE-specific, would contaminate ${b})..." -ForegroundColor DarkYellow
+            Remove-Item -Recurse -Force "bundled_data"
+            git add -A
+            # --allow-empty handles the case where nothing changed since
+            # the previous cleanup (idempotent).
+            git commit -m "auto: remove SE-specific bundled_data on ${b}" --allow-empty
+        }
     }
 
     git push origin $b
-    Write-Host "  $b updated and pushed." -ForegroundColor Green
+    Write-Host "  ${b} updated and pushed." -ForegroundColor Green
     Write-Host ""
 }
 
 # Restore the user's original branch
-Write-Host "Returning to $startBranch..." -ForegroundColor Cyan
+Write-Host "Returning to ${startBranch}..." -ForegroundColor Cyan
 git checkout $startBranch
 Write-Host ""
 Write-Host "Done. Railway will redeploy each service automatically." -ForegroundColor Green
