@@ -3856,7 +3856,7 @@ def render():
             "You should validate the OVERALL site structure before working on individual pages — "
             "otherwise link recommendations and cleanup may be based on flawed assumptions."
         )
-        if st.button("Go to Run Pipeline → Step 9: Site Validation", type="primary"):
+        if st.button("Go to Run Pipeline → Step 10: Site Validation", type="primary"):
             st.session_state["selected_page"] = "⚡ Run Pipeline"
             st.rerun()
         st.warning("You can still continue below, but recommendations will be less accurate.")

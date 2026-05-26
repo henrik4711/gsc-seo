@@ -212,7 +212,7 @@ def content_gaps(x_api_key: Optional[str] = Header(None)):
 
     roadmap = _load_json("content_roadmap.json")
     if not roadmap:
-        raise HTTPException(404, "content_roadmap not available — run Step 10 in pipeline")
+        raise HTTPException(404, "content_roadmap not available — run Step 5 (Topic Clusters) in pipeline")
 
     return {
         "total_articles_needed": roadmap.get("total_articles", 0),

@@ -61,7 +61,7 @@ def _render_structure_actions(ideal, audit_lookup):
     creates = ideal.get("create", []) or []
 
     if not merges and not deletes and not creates:
-        st.info("No structural actions found. Run Step 10 (Generate Ideal Structure) first.")
+        st.info("No structural actions found. Run Step 11 (Generate Ideal Structure) first.")
         return
 
     # Summary metrics — based on persistent action_status, not widget state

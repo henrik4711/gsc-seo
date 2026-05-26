@@ -54,8 +54,8 @@ TRACKED_DATASETS = [
 
 # Single AI-cache keys (not prefixes — one file each).
 TRACKED_AI_SINGLES = [
-    ("_site_validation", "Site validation", "Run Pipeline → Step 9", 7),
-    ("_ideal_structure", "Ideal structure", "Run Pipeline → Step 10", 30),
+    ("_site_validation", "Site validation", "Run Pipeline → Step 10", 7),
+    ("_ideal_structure", "Ideal structure", "Run Pipeline → Step 11", 30),
 ]
 
 # AI-cache prefixes (each is many files; we report count + oldest).

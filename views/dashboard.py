@@ -49,7 +49,7 @@ def _get_phase_status():
         ("Bulk audit pages", has_audit, "Run Pipeline → Step 6"),
         ("AI quality check", has_quality, "Run Pipeline → Step 7"),
         ("Cannibalization detection", has_cannibal, "Run Pipeline → Step 8"),
-        ("Site validation", has_validation, "Run Pipeline → Step 9"),
+        ("Site validation", has_validation, "Run Pipeline → Step 10"),
     ]
     phase0_done = sum(1 for _, done, _ in phase0_tasks if done)
     phases.append({
@@ -454,7 +454,7 @@ def render():
             "<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.4rem;'>"
             "Products are excluded — they're not expected to belong to a topic cluster. "
             "If the 'critical issues' text above shows a different number, it's cached "
-            "from the last Site Validation run (Run Pipeline → Step 9) which used the old "
+            "from the last Site Validation run (Run Pipeline → Step 10) which used the old "
             "product-inclusive count.</div>"
             "</div>",
             unsafe_allow_html=True,
