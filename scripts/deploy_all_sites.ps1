@@ -21,7 +21,11 @@
 
 $ErrorActionPreference = "Stop"  # any git error halts the script
 
-$branches = @("mshop-se", "mshop-dk", "mshop-eu")
+# NOTE: mshop-se is intentionally NOT here. The SE Railway service
+# watches `main` directly, so pushing to main is enough — no separate
+# branch needed. If you later create an mshop-se branch (for full
+# parity with the other shops), add it here.
+$branches = @("mshop-dk", "mshop-eu")
 
 # Remember where the user was so we restore at the end
 $startBranch = (git rev-parse --abbrev-ref HEAD).Trim()
