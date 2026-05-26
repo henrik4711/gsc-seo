@@ -590,7 +590,23 @@ def _parse_ai_json(message) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Strategy 3: find the LAST balanced {...} block by walking backward
+    # Strategy 3a (when truncated): try the salvage path FIRST. The
+    # "last balanced block" fallback below would happily return the most
+    # recent inner object (e.g. one keyword recommendation from inside
+    # keyword_issues.misplaced_keywords), which is shaped like a small
+    # 3-4 key dict and parses fine — but it's the WRONG dict. Caller
+    # asked for an outer cluster-evaluation object and got a single inner
+    # item, so health_score is missing → UI renders 0/100 with no
+    # content. Salvage handles the outer truncation correctly by closing
+    # off the partially-emitted top-level structure.
+    if stop_reason == "max_tokens":
+        salvaged = _salvage_truncated_json(raw)
+        if salvaged is not None:
+            if isinstance(salvaged, dict):
+                salvaged["_truncated"] = True
+            return salvaged
+
+    # Strategy 3b: find the LAST balanced {...} block by walking backward
     # from the last `}`, counting brace depth. This skips past any
     # preamble {example} blocks the AI included while planning. Only
     # looks at braces OUTSIDE strings so '"a":"x{y}z"' doesn't confuse it.
@@ -600,13 +616,6 @@ def _parse_ai_json(message) -> dict:
             return json.loads(block)
         except json.JSONDecodeError:
             pass
-
-    # Strategy 4: truncation salvage (max_tokens hit mid-list — close the
-    # last complete item and return what we got)
-    if stop_reason == "max_tokens":
-        salvaged = _salvage_truncated_json(raw)
-        if salvaged is not None:
-            return salvaged
 
     # Strategy 5: field-by-field regex extraction. Last resort for when
     # the AI emits well-structured response BUT mid-string has an
@@ -2320,7 +2329,12 @@ Check ALL of these and report issues + fixes:
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=4096,
+        max_tokens=8192,  # was 4096 — clusters with 30+ spokes filled
+                          # all six sections (hub/vertical/horizontal/
+                          # keywords/gaps/actions) easily hit the cap,
+                          # triggering the truncation-salvage path which
+                          # used to silently return the last inner object
+                          # as the result and render score=0 in the UI.
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )

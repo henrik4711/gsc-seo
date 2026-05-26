@@ -477,6 +477,16 @@ def render():
                             _dbg_json.dumps(health, ensure_ascii=False, indent=2),
                             language="json",
                         )
+                elif health.get("_truncated"):
+                    # AI ran out of tokens mid-response. We salvaged what
+                    # we could but some sections may be incomplete. Tell
+                    # the user so they don't act on partial data.
+                    st.info(
+                        "⚠ This evaluation was salvaged from a truncated AI "
+                        "response (the model hit its max_tokens cap before "
+                        "finishing). Sections shown are valid but some may be "
+                        "missing or partial. Regenerate to try for a full result."
+                    )
 
                 # Summary
                 st.markdown(
