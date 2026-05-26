@@ -20,8 +20,17 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     if not pages:
         return None
 
-    # Determine hub page (most impressions, or shallowest URL)
-    page_urls = [p["page"] for p in pages]
+    # Determine hub page (most impressions, or shallowest URL).
+    # DEFENSIVE: skip any cluster entry where 'page' is not a string —
+    # legacy / corrupted topic_clusters.json could carry dict-shaped
+    # 'page' values that crash `set(page_urls)` below with
+    # "unhashable type: 'dict'" and kill the whole cluster evaluation.
+    page_urls = [
+        p["page"] for p in pages
+        if isinstance(p, dict) and isinstance(p.get("page"), str) and p["page"]
+    ]
+    if not page_urls:
+        return None
     hub_url = ""
     hub_depth = 999
     for pu in page_urls:
@@ -32,18 +41,33 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
 
     hub_profile = build_page_profile(hub_url)
     hub_content = (hub_profile["body_text"] or hub_profile["intro_text"] or "")[:500]
-    hub_outlink_targets = {_nu(l["url"]) for l in hub_profile["internal_links_out"]}
+    # DEFENSIVE: same isinstance guard on link entries — page_profile
+    # *should* always produce {"url": str, "anchor": str}, but persisted
+    # legacy data may not, and a single bad row would crash the entire
+    # cluster eval. Skip malformed entries instead.
+    hub_outlink_targets = {
+        _nu(l["url"]) for l in hub_profile["internal_links_out"]
+        if isinstance(l, dict) and isinstance(l.get("url"), str)
+    }
 
-    # Build spoke data
+    # Build spoke data. Iterate over the pre-filtered page_urls list
+    # (built above with the isinstance guard) so we never feed a
+    # malformed `page` value into build_page_profile or set ops below.
     spokes = []
     spoke_keywords = {}
     spoke_profiles = {}  # cache profiles for link checks
-    for p in pages:
-        purl = p["page"]
-        if _nu(purl) == _nu(hub_url):
+    hub_norm = _nu(hub_url)
+    for purl in page_urls:
+        if _nu(purl) == hub_norm:
             continue
         profile = build_page_profile(purl)
         spoke_profiles[purl] = profile
+        # Carry forward the matching p-dict (for impressions/clicks)
+        p = next(
+            (x for x in pages
+             if isinstance(x, dict) and x.get("page") == purl),
+            {}
+        )
         spokes.append({
             "url": purl,
             "title": profile["title"][:80],
@@ -66,11 +90,14 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
         if _nu(s["url"]) in hub_outlink_targets:
             hub_to_spoke.append(s["url"])
 
-    # Spoke → Hub links
+    # Spoke → Hub links (same defensive guard — bad rows skipped)
     spoke_to_hub = []
     for s in spokes:
         sp = spoke_profiles[s["url"]]
-        spoke_outlink_targets = {_nu(l["url"]) for l in sp["internal_links_out"]}
+        spoke_outlink_targets = {
+            _nu(l["url"]) for l in sp["internal_links_out"]
+            if isinstance(l, dict) and isinstance(l.get("url"), str)
+        }
         if _nu(hub_url) in spoke_outlink_targets:
             spoke_to_hub.append(s["url"])
 
@@ -79,7 +106,10 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     spoke_urls = [s["url"] for s in spokes]
     for s in spokes:
         sp = spoke_profiles[s["url"]]
-        s_targets = {_nu(l["url"]) for l in sp["internal_links_out"]}
+        s_targets = {
+            _nu(l["url"]) for l in sp["internal_links_out"]
+            if isinstance(l, dict) and isinstance(l.get("url"), str)
+        }
         for other in spoke_urls:
             if other != s["url"] and _nu(other) in s_targets:
                 horizontal.append({"from": s["url"], "to": other})
@@ -249,7 +279,18 @@ def render():
                         st.session_state[health_key] = result
                         save(health_key)  # Persist immediately per-iteration
                 except Exception as e:
-                    st.session_state[health_key] = {"error": str(e), "health_score": 0}
+                    # Capture the traceback so a future failure has more
+                    # than just the unhelpful error message string. Stored
+                    # in the cached health dict so the user can see it
+                    # without trawling Railway logs.
+                    import traceback as _tb_h
+                    tb_text = _tb_h.format_exc()
+                    st.session_state[health_key] = {
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "traceback": tb_text[-2000:],
+                        "health_score": 0,
+                    }
                     save(health_key)
                 progress.progress((i + 1) / 5)
 
@@ -315,7 +356,14 @@ def render():
                 health = st.session_state[health_key]
 
                 if health.get("error"):
-                    st.error(f"Evaluation failed: {health['error']}")
+                    err_type = health.get("error_type", "")
+                    err_text = health.get("error", "")
+                    label = f"{err_type}: {err_text}" if err_type else err_text
+                    st.error(f"Evaluation failed — {label}")
+                    tb = health.get("traceback", "")
+                    if tb:
+                        with st.expander("Stack trace (for debugging)", expanded=False):
+                            st.code(tb, language="python")
                     if st.button("Retry", key=f"btn_retry_cl_{stable_hash(topic)}"):
                         del st.session_state[health_key]
                         st.rerun()

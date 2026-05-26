@@ -150,7 +150,14 @@ def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
 
         hub_norm = _norm_url(hub_url)
         hub_profile = build_page_profile(hub_url)
-        hub_outlink_targets = {_norm_url(l["url"]) for l in hub_profile["internal_links_out"]}
+        # DEFENSIVE: skip link entries whose 'url' is non-string. Mirrors
+        # the guard in cluster_health.py — one malformed link entry would
+        # otherwise crash `set(...)` with unhashable type: 'dict' and
+        # poison the whole Excel export.
+        hub_outlink_targets = {
+            _norm_url(l["url"]) for l in hub_profile["internal_links_out"]
+            if isinstance(l, dict) and isinstance(l.get("url"), str)
+        }
 
         for p in pages:
             purl = p["page"]
@@ -162,8 +169,11 @@ def _build_cluster_detail(topic_clusters, audit_results, gsc_data):
             covered = kw_cov.get("covered", 0)
             missing = kw_cov.get("missing", [])
 
-            # Check hub-spoke links
-            page_outlink_targets = {_norm_url(l["url"]) for l in profile["internal_links_out"]}
+            # Check hub-spoke links (same isinstance guard)
+            page_outlink_targets = {
+                _norm_url(l["url"]) for l in profile["internal_links_out"]
+                if isinstance(l, dict) and isinstance(l.get("url"), str)
+            }
             links_to_hub = hub_norm in page_outlink_targets
             links_from_hub = _norm_url(purl) in hub_outlink_targets
 
