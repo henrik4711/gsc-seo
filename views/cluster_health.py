@@ -298,19 +298,43 @@ def render():
     st.markdown("---")
 
     # ── Bulk evaluate / Clear buttons ────────────────────────────
-    col_gen, col_clear, col_info = st.columns([1, 1, 2])
+    total_clusters = len(clusters_sorted)
+    col_n, col_gen, col_clear, col_info = st.columns([1, 1.4, 1, 2])
+    with col_n:
+        # User-configurable how many top clusters to evaluate. Default 5
+        # is a sane starting point (~$1.50 + ~2.5 min) but the user is
+        # not stuck with it — they can run all 71 in one go if they want.
+        n_to_eval = st.number_input(
+            "How many",
+            min_value=1,
+            max_value=max(1, total_clusters),
+            value=min(5, total_clusters),
+            step=1,
+            key="cluster_health_n",
+            help=(
+                "How many top-impressions clusters to evaluate in this batch. "
+                "Skips clusters that already have a cached evaluation. "
+                "Cost: ~$0.30 + ~30 sec per cluster."
+            ),
+        )
     with col_gen:
-        gen_top = st.button("Evaluate top 5 clusters", type="primary")
+        gen_top = st.button(
+            f"Evaluate {n_to_eval} cluster{'s' if n_to_eval != 1 else ''}",
+            type="primary",
+        )
     with col_clear:
-        if st.button("Clear all cached evaluations"):
+        if st.button("Clear all cached"):
             keys_to_del = [k for k in st.session_state if k.startswith("_cluster_health_")]
             for k in keys_to_del:
                 del st.session_state[k]
             st.rerun()
     with col_info:
+        est_cost = n_to_eval * 0.30
+        est_min = n_to_eval * 0.5
         st.markdown(
-            "<span style='font-size:0.75rem; color:#6b6b8a;'>"
-            "~30 seconds per cluster. Results cached.</span>",
+            f"<span style='font-size:0.75rem; color:#6b6b8a;'>"
+            f"~${est_cost:.2f} · ~{est_min:.0f} min · skips cached "
+            f"({total_clusters} clusters total)</span>",
             unsafe_allow_html=True,
         )
 
@@ -319,23 +343,24 @@ def render():
             progress = st.progress(0)
             log = st.empty()
 
-            for i, cluster in enumerate(clusters_sorted[:5]):
+            n = int(n_to_eval)
+            for i, cluster in enumerate(clusters_sorted[:n]):
                 topic = cluster.get("topic", f"Cluster {i}")
                 health_key = f"_cluster_health_{stable_hash(topic)}"
 
                 if health_key in st.session_state:
-                    log.write(f"[{i+1}/5] {topic} — cached")
-                    progress.progress((i + 1) / 5)
+                    log.write(f"[{i+1}/{n}] {topic} — cached")
+                    progress.progress((i + 1) / n)
                     continue
 
-                log.write(f"[{i+1}/5] Evaluating: {topic}...")
+                log.write(f"[{i+1}/{n}] Evaluating: {topic}...")
                 payload = _run_cluster_eval(
                     cluster, audit_results, tc, gsc_data, sf_link_map,
                     site_context, language, all_site_urls, health_key,
                 )
                 if payload.get("error"):
-                    log.write(f"[{i+1}/5] {topic} — failed: {payload.get('error_type')}: {payload.get('error')}")
-                progress.progress((i + 1) / 5)
+                    log.write(f"[{i+1}/{n}] {topic} — failed: {payload.get('error_type')}: {payload.get('error')}")
+                progress.progress((i + 1) / n)
 
             status.update(label="Evaluation complete", state="complete", expanded=False)
         st.rerun()
@@ -425,6 +450,33 @@ def render():
 
                 score = health.get("health_score", 0)
                 score_color = "#33dd88" if score >= 70 else "#ffaa33" if score >= 40 else "#ff4455"
+
+                # Detect the "AI succeeded but returned an empty placeholder"
+                # case: score 0 AND no health_summary AND no section data.
+                # This used to render as a confusing empty card with just a
+                # "Regenerate" button and no indication something was wrong.
+                has_real_content = bool(
+                    health.get("health_summary")
+                    or health.get("hub_assessment")
+                    or health.get("vertical_linking")
+                    or health.get("horizontal_linking")
+                    or health.get("priority_actions")
+                )
+                if score == 0 and not has_real_content:
+                    st.warning(
+                        "AI returned an empty/placeholder response (score=0 with "
+                        "no summary or sections). Most likely the model copied "
+                        "the JSON template literally instead of filling it in. "
+                        "Use Regenerate below to retry — usually succeeds on the "
+                        "second attempt. The raw response is shown below for "
+                        "inspection."
+                    )
+                    with st.popover("Raw AI response (for debugging)"):
+                        import json as _dbg_json
+                        st.code(
+                            _dbg_json.dumps(health, ensure_ascii=False, indent=2),
+                            language="json",
+                        )
 
                 # Summary
                 st.markdown(
