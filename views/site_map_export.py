@@ -50,6 +50,7 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
 
     rows = []
     audit_by_url = {_norm_url(r["url"]): r for r in audit_results}
+    audited_set = set(audit_by_url.keys())
 
     # URLs the user has explicitly marked "no cluster needed" via Site
     # Cleanup → Unclustered tab. We set Cluster(s) to a sentinel for these
@@ -83,14 +84,21 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
         profile = build_page_profile(url)
 
         cluster_names = [c.get("topic", "") for c in profile["clusters"][:3]]
-        # Products are intentionally NOT clustered (see structure_fix.py:36
-        # — the unclustered UI excludes page_type == 'product'). Without
-        # this sentinel, every product page would show up in the dashboard's
-        # "unclustered" count, inflating the number by 500+ on typical
-        # e-commerce sites. Treat the same way as 🚫 no-cluster-needed.
-        if not cluster_names and profile.get("page_type") == "product":
+        url_norm = _norm_url(url)
+        # Sentinel ordering matters — first match wins:
+        # 1. Not audited yet → we can't judge clustering for URLs we
+        #    haven't scraped (default page_type='unknown', no signals).
+        #    Counting them as 'unclustered' inflated the dashboard's
+        #    metric by 200-400 every site validation, because GSC-only
+        #    URLs are common (long-tail keywords surface URLs the user
+        #    hasn't bothered to audit yet).
+        # 2. Product → not expected to belong to a topic cluster.
+        # 3. 🚫 no-cluster-needed → user explicit signal.
+        if not cluster_names and url_norm not in audited_set:
+            cluster_names = ["(not audited yet)"]
+        elif not cluster_names and profile.get("page_type") == "product":
             cluster_names = ["(product — n/a)"]
-        elif not cluster_names and _norm_url(url) in _no_cluster_set:
+        elif not cluster_names and url_norm in _no_cluster_set:
             cluster_names = ["(no cluster needed)"]
 
         # Avg position from GSC queries

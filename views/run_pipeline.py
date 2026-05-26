@@ -1049,19 +1049,24 @@ def _run_site_validation():
         # Fallback to df_structure calculation only if SF data unavailable
         orphans = len(df_structure[df_structure["Links In"] == 0]) if "Links In" in df_structure.columns else 0
     no_cluster = len(df_structure[df_structure["Cluster(s)"] == ""]) if "Cluster(s)" in df_structure.columns else 0
-    # Exclude product pages from the thin-pages count: product detail pages
-    # naturally have <300 words (short descriptions + spec table) and
-    # are NOT expected to be content-rich. Including them inflated thin
-    # count by 500+ on a typical e-commerce site and led to "769 thin
-    # pages = single largest drag" critical-issue text that was mostly
-    # noise. Match the convention in structure_fix.py and page_profile.py
-    # which also treat products as a separate, no-thin-check category.
+    # Thin-pages count must exclude:
+    #   1. Word Count == 0 — not measured, we can't say it's thin
+    #      (these are GSC-only URLs never scraped). Previously inflated
+    #      the count by 200-400.
+    #   2. Products — naturally short (description + spec table), not
+    #      expected to be content-rich.
+    # Without both filters, the AI saw "769 thin pages (55%)" and wrote
+    # 'single largest drag' critical-issue text that was mostly noise.
     if "Word Count" in df_structure.columns and "Page Type" in df_structure.columns:
         thin = len(df_structure[
-            (df_structure["Word Count"] < 300) & (df_structure["Page Type"] != "product")
+            (df_structure["Word Count"] > 0)
+            & (df_structure["Word Count"] < 300)
+            & (df_structure["Page Type"] != "product")
         ])
     elif "Word Count" in df_structure.columns:
-        thin = len(df_structure[df_structure["Word Count"] < 300])
+        thin = len(df_structure[
+            (df_structure["Word Count"] > 0) & (df_structure["Word Count"] < 300)
+        ])
     else:
         thin = 0
 
