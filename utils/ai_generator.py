@@ -2252,7 +2252,7 @@ Horizontal links between spokes: {json.dumps(cluster_data.get('horizontal_links'
 ## KEYWORD DISTRIBUTION
 Hub page keywords: {', '.join(cluster_data.get('hub_keywords', [])[:10])}
 Per-spoke keywords:
-{json.dumps(cluster_data.get('spoke_keywords', {{}}), ensure_ascii=False, indent=1)}
+{json.dumps(cluster_data.get('spoke_keywords') or {}, ensure_ascii=False, indent=1)}
 
 ## CANNIBALIZATION WITHIN CLUSTER
 Keywords appearing on multiple pages in this cluster:
