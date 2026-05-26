@@ -189,6 +189,67 @@ def _build_cluster_data(cluster, audit_results, topic_clusters, gsc_data, sf_lin
     }
 
 
+def _run_cluster_eval(
+    cluster: dict,
+    audit_results,
+    tc: dict,
+    gsc_data,
+    sf_link_map,
+    site_context: str,
+    language: str,
+    all_site_urls,
+    health_key: str,
+) -> dict:
+    """Single source of truth for evaluating one cluster + persisting.
+
+    Wraps the whole flow (_build_cluster_data → AI call → save) in one
+    except handler that ALWAYS persists a structured result so the UI
+    never lands in the inconsistent 'NOT EVALUATED + Error: ...' state
+    we kept hitting before — every callsite (batch, per-cluster button,
+    retry) now goes through this so they all behave the same way on
+    failure. Returns the persisted dict so the caller can act on it
+    (e.g. log progress) without having to re-read session_state.
+    """
+    from utils.ai_generator import get_client, evaluate_cluster_health
+    from utils.persistence import save as _persist_save
+    from config import get_anthropic_key
+
+    try:
+        client = get_client(get_anthropic_key())
+        cd = _build_cluster_data(cluster, audit_results, tc, gsc_data, sf_link_map)
+        if not cd:
+            payload = {
+                "error": "Cluster had no usable pages after defensive filtering",
+                "error_type": "NoUsablePages",
+                "traceback": "",
+                "health_score": 0,
+            }
+        else:
+            payload = evaluate_cluster_health(
+                client, cd, site_context, language, all_site_urls,
+            )
+    except Exception as e:
+        import traceback as _tb_run
+        tb_text = _tb_run.format_exc()
+        # Print to Railway logs too so the trace is recoverable even if
+        # the UI render path itself has a bug — belt and braces.
+        print(f"[cluster_health] eval failed for {cluster.get('topic', '?')}: {e}")
+        print(tb_text)
+        payload = {
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "traceback": tb_text[-2000:],
+            "health_score": 0,
+        }
+
+    st.session_state[health_key] = payload
+    try:
+        _persist_save(health_key)
+    except Exception as save_e:
+        print(f"[cluster_health] persist failed for {health_key}: {save_e}")
+    return payload
+
+
 def render():
     st.markdown("## Cluster Health Check")
     st.markdown(
@@ -254,14 +315,10 @@ def render():
         )
 
     if gen_top:
-        from utils.ai_generator import get_client, evaluate_cluster_health
-        client = get_client(get_anthropic_key())
-
         with st.status("Evaluating clusters...", expanded=True) as status:
             progress = st.progress(0)
             log = st.empty()
 
-            from utils.persistence import save
             for i, cluster in enumerate(clusters_sorted[:5]):
                 topic = cluster.get("topic", f"Cluster {i}")
                 health_key = f"_cluster_health_{stable_hash(topic)}"
@@ -272,26 +329,12 @@ def render():
                     continue
 
                 log.write(f"[{i+1}/5] Evaluating: {topic}...")
-                try:
-                    cd = _build_cluster_data(cluster, audit_results, tc, gsc_data, sf_link_map)
-                    if cd:
-                        result = evaluate_cluster_health(client, cd, site_context, language, all_site_urls)
-                        st.session_state[health_key] = result
-                        save(health_key)  # Persist immediately per-iteration
-                except Exception as e:
-                    # Capture the traceback so a future failure has more
-                    # than just the unhelpful error message string. Stored
-                    # in the cached health dict so the user can see it
-                    # without trawling Railway logs.
-                    import traceback as _tb_h
-                    tb_text = _tb_h.format_exc()
-                    st.session_state[health_key] = {
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                        "traceback": tb_text[-2000:],
-                        "health_score": 0,
-                    }
-                    save(health_key)
+                payload = _run_cluster_eval(
+                    cluster, audit_results, tc, gsc_data, sf_link_map,
+                    site_context, language, all_site_urls, health_key,
+                )
+                if payload.get("error"):
+                    log.write(f"[{i+1}/5] {topic} — failed: {payload.get('error_type')}: {payload.get('error')}")
                 progress.progress((i + 1) / 5)
 
             status.update(label="Evaluation complete", state="complete", expanded=False)
@@ -340,35 +383,11 @@ def render():
             if not has_eval:
                 if st.button(f"Evaluate this cluster", key=f"btn_eval_{stable_hash(topic)}", type="primary"):
                     with st.spinner(f"AI evaluating {topic}..."):
-                        try:
-                            from utils.ai_generator import get_client, evaluate_cluster_health
-                            client = get_client(get_anthropic_key())
-                            cd = _build_cluster_data(cluster, audit_results, tc, gsc_data, sf_link_map)
-                            if cd:
-                                result = evaluate_cluster_health(client, cd, site_context, language, all_site_urls)
-                                st.session_state[health_key] = result
-                                from utils.persistence import save
-                                save(health_key)
-                                st.rerun()
-                        except Exception as e:
-                            # Persist the error with traceback so the
-                            # "Stack trace (for debugging)" expander
-                            # appears on the next render — same pattern
-                            # as the batch-eval path above. Without this
-                            # the per-cluster button just showed a bare
-                            # one-line error and the trace was lost.
-                            import traceback as _tb_pc
-                            tb_text = _tb_pc.format_exc()
-                            st.session_state[health_key] = {
-                                "error": str(e),
-                                "error_type": type(e).__name__,
-                                "traceback": tb_text[-2000:],
-                                "health_score": 0,
-                            }
-                            from utils.persistence import save as _save_pc
-                            _save_pc(health_key)
-                            st.error(f"Evaluation failed — {type(e).__name__}: {e}")
-                            st.rerun()
+                        _run_cluster_eval(
+                            cluster, audit_results, tc, gsc_data, sf_link_map,
+                            site_context, language, all_site_urls, health_key,
+                        )
+                        st.rerun()
             else:
                 health = st.session_state[health_key]
 
@@ -379,10 +398,21 @@ def render():
                     st.error(f"Evaluation failed — {label}")
                     tb = health.get("traceback", "")
                     if tb:
-                        with st.expander("Stack trace (for debugging)", expanded=False):
+                        with st.expander("Stack trace (for debugging)", expanded=True):
                             st.code(tb, language="python")
+                    else:
+                        st.caption(
+                            "No stack trace was captured for this cached failure "
+                            "(it was stored before the trace-capture fix shipped). "
+                            "Click Retry to re-run with the new error handler — the "
+                            "trace will appear if it fails again."
+                        )
                     if st.button("Retry", key=f"btn_retry_cl_{stable_hash(topic)}"):
-                        del st.session_state[health_key]
+                        with st.spinner(f"Re-running evaluation for {topic}..."):
+                            _run_cluster_eval(
+                                cluster, audit_results, tc, gsc_data, sf_link_map,
+                                site_context, language, all_site_urls, health_key,
+                            )
                         st.rerun()
                     continue
 
