@@ -46,6 +46,24 @@ foreach ($b in $branches) {
     git checkout $b
     git pull origin $b
     git merge main --no-edit
+
+    # bundled_data/ contains mshop.se-specific SF crawl + Ahrefs exports.
+    # On DK / EU / other site branches it gets re-introduced every time
+    # we merge main, then auto-unpacks on Railway startup and pollutes
+    # the service's page_authority/sf_pages state with SE data. Remove
+    # after every merge on non-SE branches to keep them clean.
+    #
+    # Belt-and-braces: persistence.py also respects SKIP_BUNDLED_DATA=1
+    # env var, so even if this cleanup is skipped the files won't load.
+    if ($b -ne "mshop-se" -and (Test-Path "bundled_data")) {
+        Write-Host "  Removing bundled_data/ (SE-specific, contaminates $b)..." -ForegroundColor DarkYellow
+        Remove-Item -Recurse -Force "bundled_data"
+        git add -A
+        # --allow-empty handles the case where main hadn't re-introduced
+        # anything new on this merge (idempotent).
+        git commit -m "auto: remove SE-specific bundled_data on $b" --allow-empty
+    }
+
     git push origin $b
     Write-Host "  $b updated and pushed." -ForegroundColor Green
     Write-Host ""

@@ -160,7 +160,20 @@ BUNDLED_FILES = {
 
 
 def _unpack_bundled_data():
-    """Decompress bundled .gz files to /data volume on first run."""
+    """Decompress bundled .gz files to /data volume on first run.
+
+    Set env var SKIP_BUNDLED_DATA=1 to suppress unpack — used on
+    multi-site deployments (mshop-dk, mshop-eu) where bundled_data/
+    contains mshop.se-specific SF crawl + Ahrefs exports that would
+    otherwise auto-load into the DK/EU service and contaminate its
+    page_authority / sf_pages / sf_inlinks state with SE data.
+    Safer than deleting the files from disk because future `git merge
+    main` would re-introduce them — env var keeps the suppression
+    branch-independent and per-service.
+    """
+    if os.environ.get("SKIP_BUNDLED_DATA", "").strip() in ("1", "true", "yes"):
+        print("[bundled] SKIP_BUNDLED_DATA env var set — skipping auto-unpack")
+        return
     if not _volume_available() or not os.path.isdir(BUNDLED_DIR):
         return
 
