@@ -590,17 +590,20 @@ def _parse_ai_json(message) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Strategy 3a (when truncated): try the salvage path FIRST. The
-    # "last balanced block" fallback below would happily return the most
-    # recent inner object (e.g. one keyword recommendation from inside
-    # keyword_issues.misplaced_keywords), which is shaped like a small
-    # 3-4 key dict and parses fine — but it's the WRONG dict. Caller
-    # asked for an outer cluster-evaluation object and got a single inner
-    # item, so health_score is missing → UI renders 0/100 with no
-    # content. Salvage handles the outer truncation correctly by closing
-    # off the partially-emitted top-level structure.
+    # Strategy 3a (when truncated): try generic structural close FIRST.
+    # Walks the raw text tracking brace/bracket/string state, then auto-
+    # closes all unclosed structures so the result parses. Handles ANY
+    # nested JSON shape — the older _salvage_truncated_json only knew
+    # how to close the {"clusters": [...]} pattern (it appends literal
+    # "]}"), which silently returned None for cluster_health responses
+    # like {"health_score":..., "keyword_issues": {...}, ...}. Generic
+    # salvage handles both.
     if stop_reason == "max_tokens":
-        salvaged = _salvage_truncated_json(raw)
+        salvaged = _salvage_truncated_generic(raw)
+        if salvaged is None:
+            # Fallback to the legacy clusters-specific path so we don't
+            # regress any topic-clustering callers that were happy with it
+            salvaged = _salvage_truncated_json(raw)
         if salvaged is not None:
             if isinstance(salvaged, dict):
                 salvaged["_truncated"] = True
@@ -748,6 +751,138 @@ def _extract_last_balanced_json_block(raw: str) -> str | None:
     if start_pos < 0:
         return None
     return raw[start_pos:end_pos]
+
+
+def _salvage_truncated_generic(raw: str) -> dict | None:
+    """Generic truncation salvage that works for ANY JSON shape — not
+    just {"clusters": [...]}.
+
+    Walks raw character-by-character tracking brace/bracket depth and
+    string state. At end-of-input, rewinds to the most recent "clean
+    boundary" (a position where all opens were balanced or a top-level
+    item just ended with `,`), then appends the closing brackets/braces
+    needed to make a parseable JSON object.
+
+    Strategy:
+    1. Find the first { (that's where the actual JSON starts; anything
+       before is prose preamble).
+    2. From there, walk forward. For each char:
+       - track quote state (with escape handling) so braces inside string
+         values don't confuse us
+       - push `{` and `[` onto a stack
+       - pop on matching `}` and `]`
+       - remember the position right after every `,` or every closing
+         brace/bracket — those are "clean boundaries" we can safely
+         truncate to.
+    3. After scanning: if string state is unclosed OR stack is non-empty,
+       we hit truncation. Rewind to last clean boundary, strip trailing
+       comma, then append closing tokens (} for stacked {, ] for stacked
+       [, in reverse stack order).
+    4. Parse the reconstructed JSON. Return dict if it parses, None
+       otherwise.
+
+    This catches truncation at ANY depth — mid-string, mid-value,
+    mid-array-item, mid-object-field — without needing per-shape
+    hardcoding.
+    """
+    start = raw.find("{")
+    if start < 0:
+        return None
+    text = raw[start:]
+
+    stack: list[str] = []
+    in_str = False
+    escape = False
+    last_clean_boundary = -1  # position immediately AFTER a comma or close
+
+    for i, c in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if in_str:
+            if c == "\\":
+                escape = True
+                continue
+            if c == '"':
+                in_str = False
+                continue
+            continue
+        # Outside string state
+        if c == '"':
+            in_str = True
+            continue
+        if c == "{" or c == "[":
+            stack.append(c)
+            continue
+        if c == "}" or c == "]":
+            if stack:
+                stack.pop()
+            # The position immediately after a closing brace/bracket is a
+            # safe boundary (we just completed a value).
+            last_clean_boundary = i + 1
+            continue
+        if c == ",":
+            # Position after a top-level comma is the cleanest boundary
+            # for an array item or object field. Only mark if we're not
+            # currently inside a string.
+            last_clean_boundary = i + 1
+            continue
+
+    # If everything balanced and the input parses, we're done — no
+    # truncation occurred. Skip the salvage path.
+    if not stack and not in_str:
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+    if last_clean_boundary < 0:
+        return None
+
+    # Truncate to the last clean boundary, strip trailing whitespace +
+    # comma (a comma right at the boundary would leave a dangling
+    # "field: value," which isn't valid before the closer).
+    truncated = text[:last_clean_boundary].rstrip().rstrip(",")
+
+    # Re-walk the truncated prefix to determine which brackets/braces
+    # are still open at the new endpoint (last_clean_boundary may have
+    # closed some). Stack state at truncation point tells us what to
+    # append.
+    new_stack: list[str] = []
+    in_str2 = False
+    escape2 = False
+    for c in truncated:
+        if escape2:
+            escape2 = False
+            continue
+        if in_str2:
+            if c == "\\":
+                escape2 = True
+                continue
+            if c == '"':
+                in_str2 = False
+                continue
+            continue
+        if c == '"':
+            in_str2 = True
+            continue
+        if c == "{" or c == "[":
+            new_stack.append(c)
+        elif c == "}" or c == "]":
+            if new_stack:
+                new_stack.pop()
+
+    # Should not normally still be inside a string after rstrip — bail
+    # if so rather than emit garbage.
+    if in_str2:
+        return None
+
+    closer = "".join("}" if o == "{" else "]" for o in reversed(new_stack))
+    candidate = truncated + closer
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
 
 
 def _salvage_truncated_json(raw: str) -> dict | None:
@@ -2329,12 +2464,12 @@ Check ALL of these and report issues + fixes:
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=8192,  # was 4096 — clusters with 30+ spokes filled
-                          # all six sections (hub/vertical/horizontal/
-                          # keywords/gaps/actions) easily hit the cap,
-                          # triggering the truncation-salvage path which
-                          # used to silently return the last inner object
-                          # as the result and render score=0 in the UI.
+        max_tokens=16000,  # bumped: 8192 still truncated on the vibratorer
+                           # cluster (34 spokes, 7 cannibalization
+                           # conflicts, 5 misplaced keywords). 16k gives
+                           # headroom while staying well under sonnet's
+                           # 64k output limit. The generic truncation
+                           # salvage handles overflow if it still happens.
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
