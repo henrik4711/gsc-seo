@@ -2462,17 +2462,21 @@ Check ALL of these and report issues + fixes:
   ]
 }}"""
 
-    message = client.messages.create(
+    # Streaming, not create(): 16k-token cluster-health responses on a
+    # ~120s default httpx timeout regularly hit ReadTimeout, killing the
+    # whole evaluation. Streaming keeps bytes flowing back to the client
+    # throughout generation so the proxy never sees an idle connection.
+    # Same pattern is already used for topic_clusters and other long
+    # generations in this file (see lines 1361 and 2196).
+    with client.messages.stream(
         model="claude-sonnet-4-6",
-        max_tokens=16000,  # bumped: 8192 still truncated on the vibratorer
-                           # cluster (34 spokes, 7 cannibalization
-                           # conflicts, 5 misplaced keywords). 16k gives
-                           # headroom while staying well under sonnet's
-                           # 64k output limit. The generic truncation
-                           # salvage handles overflow if it still happens.
+        max_tokens=16000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
-    )
+    ) as stream:
+        for _ in stream.text_stream:
+            pass
+        message = stream.get_final_message()
 
     return _parse_ai_json(message)
 
