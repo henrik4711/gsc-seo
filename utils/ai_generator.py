@@ -3166,7 +3166,7 @@ about.
 
 ## FAQ FORMAT
 The FAQ in bottom_html must use visible HTML markup like this:
-<h2>Vanliga frågor</h2>
+<h2>[FAQ heading written in {language} — e.g. "FAQ" / "Vanliga frågor" / "Ofte stillede spørgsmål" / "Häufig gestellte Fragen" — pick the natural native phrase for {language}]</h2>
 <div itemscope itemtype="https://schema.org/FAQPage">
   <div itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
     <h3 itemprop="name">Question here?</h3>
@@ -3191,7 +3191,7 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
 {{
     "top_html": "<p>Intro text above product grid...</p>",
     "top_word_count": 0,
-    "bottom_html": "<h2>heading</h2><p>text...</p><h2>Vanliga frågor</h2><div itemscope itemtype='https://schema.org/FAQPage'>...</div>",
+    "bottom_html": "<h2>heading</h2><p>text...</p><h2>[FAQ heading in {language}]</h2><div itemscope itemtype='https://schema.org/FAQPage'>...</div>",
     "bottom_word_count": 0,
     "faq_schema": {{
         "@context": "https://schema.org",
