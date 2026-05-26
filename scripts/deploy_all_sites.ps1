@@ -50,21 +50,12 @@ foreach ($b in $branches) {
     git pull origin $b
     git merge main --no-edit
 
-    # bundled_data/ contains mshop.se-specific SF crawl + Ahrefs exports.
-    # On DK / EU / other site branches it gets re-introduced every merge
-    # from main, then auto-unpacks on Railway startup and pollutes the
-    # service's page_authority/sf_pages state with SE data. Remove after
-    # every merge on non-SE branches to keep them clean.
-    if ($b -ne "mshop-se") {
-        if (Test-Path "bundled_data") {
-            Write-Host "  Removing bundled_data/ (SE-specific, would contaminate ${b})..." -ForegroundColor DarkYellow
-            Remove-Item -Recurse -Force "bundled_data"
-            git add -A
-            # --allow-empty handles the case where nothing changed since
-            # the previous cleanup (idempotent).
-            git commit -m "auto: remove SE-specific bundled_data on ${b}" --allow-empty
-        }
-    }
+    # bundled_data/ no longer needs special cleanup. Files are now suffixed
+    # with the shop code (sf_pages_se.csv.gz, etc.) and persistence.py only
+    # loads files matching the service's SITE_CODE env var. SE files merged
+    # to DK/EU branches sit on disk but are never loaded → no contamination.
+    # Each shop's own data lives only on its branch (e.g. sf_pages_dk.csv.gz
+    # only on mshop-dk) because main never gets cross-shop data merged back.
 
     git push origin $b
     Write-Host "  ${b} updated and pushed." -ForegroundColor Green

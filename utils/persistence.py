@@ -148,45 +148,94 @@ def _normalize_df_urls(df: pd.DataFrame) -> pd.DataFrame:
 
 BUNDLED_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bundled_data")
 
-# Map: gz filename -> (target path in /data, persist key, data type)
+# Map: logical key -> (gz basename, csv basename, persist session key, data type)
+#
+# Naming convention: each bundled file MUST be suffixed with the site code
+# (se/dk/eu/...) so multi-shop deployments load only their own crawl +
+# backlink data. Example: bundled_data/sf_pages_se.csv.gz, NOT
+# bundled_data/sf_pages.csv.gz. The site code comes from the SITE_CODE
+# env var on each Railway service (set it to 'se', 'dk', 'eu', etc.).
+#
+# Without SITE_CODE set, _unpack_bundled_data() falls back to the legacy
+# unsuffixed filenames for backwards compatibility, but emits a warning.
+# Once all services have SITE_CODE configured, the legacy filenames can
+# be removed.
 BUNDLED_FILES = {
-    "sf_inlinks.csv.gz": ("sf_inlinks.csv", "sf_inlinks", "dataframe"),
-    "sf_link_map.json.gz": ("sf_link_map.json", "sf_link_map", "json"),
-    "sf_pages.csv.gz": ("sf_pages.csv", "sf_pages", "dataframe"),
-    "ahrefs_best_by_links.csv.gz": ("ahrefs_best_by_links.csv", "ahrefs_best_by_links", "dataframe"),
-    "ahrefs_backlinks.csv.gz": ("ahrefs_backlinks.csv", "ahrefs_backlinks", "dataframe"),
-    "ahrefs_organic_keywords.csv.gz": ("ahrefs_organic_keywords.csv", "ahrefs_organic_keywords", "dataframe"),
+    "sf_inlinks":              ("sf_inlinks",          ".csv.gz",  "sf_inlinks.csv",          "sf_inlinks",              "dataframe"),
+    "sf_link_map":             ("sf_link_map",         ".json.gz", "sf_link_map.json",        "sf_link_map",             "json"),
+    "sf_pages":                ("sf_pages",            ".csv.gz",  "sf_pages.csv",            "sf_pages",                "dataframe"),
+    "ahrefs_best_by_links":    ("ahrefs_best_by_links",".csv.gz",  "ahrefs_best_by_links.csv","ahrefs_best_by_links",    "dataframe"),
+    "ahrefs_backlinks":        ("ahrefs_backlinks",    ".csv.gz",  "ahrefs_backlinks.csv",    "ahrefs_backlinks",        "dataframe"),
+    "ahrefs_organic_keywords": ("ahrefs_organic_keywords",".csv.gz","ahrefs_organic_keywords.csv","ahrefs_organic_keywords","dataframe"),
 }
+
+
+def _site_code() -> str:
+    """Resolve current shop's site code from env var. Returns lowercase
+    string ('se', 'dk', 'eu'...) or '' if unset."""
+    return os.environ.get("SITE_CODE", "").strip().lower()
+
+
+def _resolve_bundled_path(stem: str, ext: str) -> str | None:
+    """Return the path to the bundled file this service should load, or
+    None if no suitable file exists.
+
+    Resolution:
+    1. SITE_CODE env var picks the suffix. If unset, defaults to 'se'
+       so existing mshop.se deploys (which haven't yet had SITE_CODE
+       added in Railway) keep working — with a one-line warning so the
+       user notices and sets it explicitly.
+    2. Look for bundled_data/<stem>_<site_code><ext> — that's the shop-
+       specific file.
+    3. SE-only fallback to legacy unsuffixed name bundled_data/<stem><ext>
+       so any deploy still pointing at the pre-rename files keeps loading
+       them. Other shops get NO fallback — they refuse to load SE-suffixed
+       or unsuffixed files to prevent contamination.
+    """
+    site = _site_code()
+    if not site:
+        print(
+            "[bundled] WARN: SITE_CODE env var not set — defaulting to 'se'. "
+            "Set SITE_CODE=se|dk|eu|... explicitly on each Railway service."
+        )
+        site = "se"
+
+    # Primary: shop-specific suffix
+    site_path = os.path.join(BUNDLED_DIR, f"{stem}_{site}{ext}")
+    if os.path.exists(site_path):
+        return site_path
+
+    # SE-only legacy fallback for the pre-rename world. Anything else
+    # finding only unsuffixed files means the dataset is wrong for this
+    # site — refuse to load (SE data contamination risk).
+    if site == "se":
+        legacy_path = os.path.join(BUNDLED_DIR, f"{stem}{ext}")
+        if os.path.exists(legacy_path):
+            print(f"[bundled] Loading legacy {stem}{ext} — rename to {stem}_se{ext} to silence.")
+            return legacy_path
+
+    return None
 
 
 def _unpack_bundled_data():
     """Decompress bundled .gz files to /data volume on first run.
 
-    Set env var SKIP_BUNDLED_DATA=1 to suppress unpack — used on
-    multi-site deployments (mshop-dk, mshop-eu) where bundled_data/
-    contains mshop.se-specific SF crawl + Ahrefs exports that would
-    otherwise auto-load into the DK/EU service and contaminate its
-    page_authority / sf_pages / sf_inlinks state with SE data.
-    Safer than deleting the files from disk because future `git merge
-    main` would re-introduce them — env var keeps the suppression
-    branch-independent and per-service.
+    Multi-shop aware: only loads files matching this service's SITE_CODE
+    env var (see _resolve_bundled_path for resolution rules).
     """
-    if os.environ.get("SKIP_BUNDLED_DATA", "").strip() in ("1", "true", "yes"):
-        print("[bundled] SKIP_BUNDLED_DATA env var set — skipping auto-unpack")
-        return
     if not _volume_available() or not os.path.isdir(BUNDLED_DIR):
         return
 
     import gzip
     unpacked = []
-    for gz_name, (target_name, key, dtype) in BUNDLED_FILES.items():
-        gz_path = os.path.join(BUNDLED_DIR, gz_name)
+    for logical_key, (stem, ext, target_name, key, dtype) in BUNDLED_FILES.items():
+        gz_path = _resolve_bundled_path(stem, ext)
         target_path = os.path.join(DATA_DIR, target_name)
 
         # Skip if already unpacked or already loaded
         if os.path.exists(target_path) or key in st.session_state:
             continue
-        if not os.path.exists(gz_path):
+        if gz_path is None or not os.path.exists(gz_path):
             continue
 
         try:
