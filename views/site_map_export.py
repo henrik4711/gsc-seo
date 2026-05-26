@@ -83,7 +83,14 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
         profile = build_page_profile(url)
 
         cluster_names = [c.get("topic", "") for c in profile["clusters"][:3]]
-        if not cluster_names and _norm_url(url) in _no_cluster_set:
+        # Products are intentionally NOT clustered (see structure_fix.py:36
+        # — the unclustered UI excludes page_type == 'product'). Without
+        # this sentinel, every product page would show up in the dashboard's
+        # "unclustered" count, inflating the number by 500+ on typical
+        # e-commerce sites. Treat the same way as 🚫 no-cluster-needed.
+        if not cluster_names and profile.get("page_type") == "product":
+            cluster_names = ["(product — n/a)"]
+        elif not cluster_names and _norm_url(url) in _no_cluster_set:
             cluster_names = ["(no cluster needed)"]
 
         # Avg position from GSC queries

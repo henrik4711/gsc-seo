@@ -155,12 +155,26 @@ def _get_cluster_breakdown():
     # Build per-URL classification. Manual assignments are saved by
     # structure_fix.py with queries_in_topic == 0; AI clustering writes
     # rows with queries_in_topic > 0 (the queries belonging to the topic).
-    audited_urls = {normalize_url(r["url"]) for r in audit_results if r.get("url")}
+    # Products are EXCLUDED from the universe — they're not expected to
+    # belong to a topic cluster (structure_fix.py:36 already filters them
+    # out of the Unclustered list). Tracked separately so the user sees
+    # what was excluded.
+    by_url = {}  # norm → page_type
+    for r in audit_results:
+        url = r.get("url", "")
+        if not url:
+            continue
+        by_url[normalize_url(url)] = r.get("page_type") or "unknown"
+
     manual = 0
     ai_assigned = 0
     marked_no_cluster = 0
     truly_unassigned = 0
-    for norm in audited_urls:
+    products_excluded = 0
+    for norm, page_type in by_url.items():
+        if page_type == "product":
+            products_excluded += 1
+            continue
         if norm in no_cluster_needed:
             marked_no_cluster += 1
             continue
@@ -179,13 +193,15 @@ def _get_cluster_breakdown():
         else:
             manual += 1
 
-    total = len(audited_urls)
+    total_clusterable = manual + ai_assigned + marked_no_cluster + truly_unassigned
     return {
-        "total": total,
+        "total": total_clusterable,
         "manual": manual,
         "ai": ai_assigned,
         "no_cluster_needed": marked_no_cluster,
         "truly_unassigned": truly_unassigned,
+        "products_excluded": products_excluded,
+        "audited_total": len(by_url),
     }
 
 
@@ -402,9 +418,17 @@ def render():
     # can verify it matches reality (e.g. "I assigned 200 manually — why
     # does it still say 454?"). Manual / AI / 🚫 / truly-unassigned.
     breakdown = _get_cluster_breakdown()
-    if breakdown and breakdown["total"] > 0:
-        total = breakdown["total"]
-        unassigned_pct = breakdown["truly_unassigned"] / total * 100 if total else 0
+    if breakdown and breakdown["audited_total"] > 0:
+        clusterable = breakdown["total"]
+        audited_total = breakdown["audited_total"]
+        unassigned_pct = (
+            breakdown["truly_unassigned"] / clusterable * 100 if clusterable else 0
+        )
+        excluded = breakdown["products_excluded"]
+        excluded_html = (
+            f"<div><span style='color:#6b6b8a;'>Products (excluded):</span> "
+            f"<strong style='color:#6b6b8a;'>{excluded:,}</strong></div>"
+        ) if excluded else ""
         st.markdown(
             "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; "
             "padding:0.8rem; margin-bottom:1rem;'>"
@@ -412,8 +436,11 @@ def render():
             "color:#5533ff; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.5rem;'>"
             "CLUSTER ASSIGNMENT BREAKDOWN</div>"
             f"<div style='display:flex; gap:1.5rem; flex-wrap:wrap; font-size:0.82rem;'>"
-            f"<div><span style='color:#6b6b8a;'>Total audited:</span> "
-            f"<strong style='color:#e8e8f0;'>{total:,}</strong></div>"
+            f"<div><span style='color:#6b6b8a;'>Audited total:</span> "
+            f"<strong style='color:#e8e8f0;'>{audited_total:,}</strong></div>"
+            f"{excluded_html}"
+            f"<div><span style='color:#6b6b8a;'>Clusterable (non-product):</span> "
+            f"<strong style='color:#e8e8f0;'>{clusterable:,}</strong></div>"
             f"<div><span style='color:#6b6b8a;'>AI clustered:</span> "
             f"<strong style='color:#33dd88;'>{breakdown['ai']:,}</strong></div>"
             f"<div><span style='color:#6b6b8a;'>Manually assigned:</span> "
@@ -425,9 +452,10 @@ def render():
             f"<span style='color:#6b6b8a;'>({unassigned_pct:.1f}%)</span></div>"
             f"</div>"
             "<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.4rem;'>"
-            "If the truly-unassigned number doesn't match what's shown in critical issues "
-            "above, re-run Site Validation (Run Pipeline → Step 9) — the issue text is "
-            "cached from the last run.</div>"
+            "Products are excluded — they're not expected to belong to a topic cluster. "
+            "If the 'critical issues' text above shows a different number, it's cached "
+            "from the last Site Validation run (Run Pipeline → Step 9) which used the old "
+            "product-inclusive count.</div>"
             "</div>",
             unsafe_allow_html=True,
         )
