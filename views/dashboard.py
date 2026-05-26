@@ -131,6 +131,64 @@ def _get_top_pages_filtered(audit_results, n=20):
     return [url for url, _, _ in pages[:n]]
 
 
+def _get_cluster_breakdown():
+    """Break down the cluster-assignment state of all audited pages.
+
+    The dashboard's "X unclustered pages" stat is computed from a single
+    column (Cluster(s) == ""). When the number feels wrong, users need to
+    see WHERE the count comes from — manual assignments, AI clustering,
+    🚫-marks, or truly nothing. Returns a dict with counts so the dashboard
+    can render a breakdown card.
+    """
+    from utils.ui_helpers import normalize_url
+
+    audit_results = st.session_state.get("audit_results", [])
+    if not audit_results:
+        return None
+
+    topic_clusters = st.session_state.get("topic_clusters", {}) or {}
+    page_topics = topic_clusters.get("page_topics", {}) or {}
+    no_cluster_needed = {
+        normalize_url(u) for u in (st.session_state.get("_no_cluster_needed") or [])
+    }
+
+    # Build per-URL classification. Manual assignments are saved by
+    # structure_fix.py with queries_in_topic == 0; AI clustering writes
+    # rows with queries_in_topic > 0 (the queries belonging to the topic).
+    audited_urls = {normalize_url(r["url"]) for r in audit_results if r.get("url")}
+    manual = 0
+    ai_assigned = 0
+    marked_no_cluster = 0
+    truly_unassigned = 0
+    for norm in audited_urls:
+        if norm in no_cluster_needed:
+            marked_no_cluster += 1
+            continue
+        topics = page_topics.get(norm) or []
+        if not topics:
+            truly_unassigned += 1
+            continue
+        # If ANY topic entry has queries_in_topic > 0, treat as AI-assigned;
+        # otherwise it was added manually via Site Cleanup → Unclustered.
+        is_ai = any(
+            isinstance(t, dict) and (t.get("queries_in_topic") or 0) > 0
+            for t in topics
+        )
+        if is_ai:
+            ai_assigned += 1
+        else:
+            manual += 1
+
+    total = len(audited_urls)
+    return {
+        "total": total,
+        "manual": manual,
+        "ai": ai_assigned,
+        "no_cluster_needed": marked_no_cluster,
+        "truly_unassigned": truly_unassigned,
+    }
+
+
 def _get_next_action(phases):
     """Find the first incomplete task across all phases."""
     for phase in phases:
@@ -186,6 +244,41 @@ def render():
                 f"</div>",
                 unsafe_allow_html=True,
             )
+
+    # ── Cluster-assignment breakdown ─────────────────────────────
+    # Shows WHERE the "X unclustered pages" stat comes from, so the user
+    # can verify it matches reality (e.g. "I assigned 200 manually — why
+    # does it still say 454?"). Manual / AI / 🚫 / truly-unassigned.
+    breakdown = _get_cluster_breakdown()
+    if breakdown and breakdown["total"] > 0:
+        total = breakdown["total"]
+        unassigned_pct = breakdown["truly_unassigned"] / total * 100 if total else 0
+        st.markdown(
+            "<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; "
+            "padding:0.8rem; margin-bottom:1rem;'>"
+            "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; "
+            "color:#5533ff; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.5rem;'>"
+            "CLUSTER ASSIGNMENT BREAKDOWN</div>"
+            f"<div style='display:flex; gap:1.5rem; flex-wrap:wrap; font-size:0.82rem;'>"
+            f"<div><span style='color:#6b6b8a;'>Total audited:</span> "
+            f"<strong style='color:#e8e8f0;'>{total:,}</strong></div>"
+            f"<div><span style='color:#6b6b8a;'>AI clustered:</span> "
+            f"<strong style='color:#33dd88;'>{breakdown['ai']:,}</strong></div>"
+            f"<div><span style='color:#6b6b8a;'>Manually assigned:</span> "
+            f"<strong style='color:#33dd88;'>{breakdown['manual']:,}</strong></div>"
+            f"<div><span style='color:#6b6b8a;'>🚫 no-cluster-needed:</span> "
+            f"<strong style='color:#c8b4ff;'>{breakdown['no_cluster_needed']:,}</strong></div>"
+            f"<div><span style='color:#6b6b8a;'>Truly unassigned:</span> "
+            f"<strong style='color:#ff4455;'>{breakdown['truly_unassigned']:,}</strong> "
+            f"<span style='color:#6b6b8a;'>({unassigned_pct:.1f}%)</span></div>"
+            f"</div>"
+            "<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.4rem;'>"
+            "If the truly-unassigned number doesn't match what's shown in critical issues "
+            "above, re-run Site Validation (Run Pipeline → Step 9) — the issue text is "
+            "cached from the last run.</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     # ── Next action ───────────────────────────────────────────
     st.markdown(

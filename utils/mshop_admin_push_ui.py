@@ -25,6 +25,7 @@ from utils.mshop_admin_api import (
     update_for_page,
     last_successful_admin_push,
 )
+from utils.audit_refresh import update_audit_after_push, last_push_caption
 
 
 _ENDPOINT_BY_TYPE = {
@@ -143,6 +144,8 @@ def render_admin_push_block(
             ):
                 with st.spinner("Pushing intro text to Mshop..."):
                     res = update_for_page(page_info, description=intro_text_html)
+                if res.get("status") == "success":
+                    update_audit_after_push(url, intro_text=intro_text_html)
                 _show_result(res, "Intro text", key_prefix)
 
     # ── Push meta title ──────────────────────────────────────────
@@ -156,6 +159,8 @@ def render_admin_push_block(
         ):
             with st.spinner("Pushing meta title to Mshop..."):
                 res = update_for_page(page_info, meta_title=meta_title)
+            if res.get("status") == "success":
+                update_audit_after_push(url, meta_title=meta_title)
             _show_result(res, "Meta title", key_prefix)
 
     # ── Push meta description ────────────────────────────────────
@@ -169,6 +174,8 @@ def render_admin_push_block(
         ):
             with st.spinner("Pushing meta description to Mshop..."):
                 res = update_for_page(page_info, meta_description=meta_description)
+            if res.get("status") == "success":
+                update_audit_after_push(url, meta_description=meta_description)
             _show_result(res, "Meta description", key_prefix)
 
     # ── Push everything at once (convenience) ────────────────────
@@ -193,7 +200,22 @@ def render_admin_push_block(
                 kwargs["meta_description"] = meta_description
             with st.spinner("Pushing all fields to Mshop..."):
                 res = update_for_page(page_info, **kwargs)
+            if res.get("status") == "success":
+                # Mirror only the fields actually sent — keyword names on
+                # update_audit_after_push are different from the API ones.
+                update_audit_after_push(
+                    url,
+                    intro_text=kwargs.get("description"),
+                    meta_title=kwargs.get("meta_title"),
+                    meta_description=kwargs.get("meta_description"),
+                )
             _show_result(res, "All fields", key_prefix)
+
+    # Show the "audit refreshed locally" caption beneath the buttons
+    # whenever a push has updated this URL's audit row.
+    refresh_caption = last_push_caption(url)
+    if refresh_caption:
+        st.caption(f"✓ {refresh_caption}")
 
 
 def _disabled_caption(reason: str) -> None:
@@ -256,7 +278,12 @@ def render_inline_intro_push(url: str, intro_text_html: str, key_prefix: str) ->
     ):
         with st.spinner("Pushing intro text to Mshop..."):
             res = update_for_page(page_info, description=intro_text_html)
+        if res.get("status") == "success":
+            update_audit_after_push(url, intro_text=intro_text_html)
         _show_result(res, "Intro text", key_prefix)
+        refresh_caption = last_push_caption(url)
+        if refresh_caption:
+            st.caption(f"✓ {refresh_caption}")
     if disabled:
         _disabled_caption(
             "intro text is empty (length 0). The intro generator returned "
@@ -283,7 +310,12 @@ def render_inline_meta_title_push(url: str, meta_title: str, key_prefix: str, cu
     ):
         with st.spinner("Pushing meta title to Mshop..."):
             res = update_for_page(page_info, meta_title=meta_title)
+        if res.get("status") == "success":
+            update_audit_after_push(url, meta_title=meta_title)
         _show_result(res, "Meta title", key_prefix)
+        refresh_caption = last_push_caption(url)
+        if refresh_caption:
+            st.caption(f"✓ {refresh_caption}")
     if disabled:
         if current_title and (meta_title or "") == current_title:
             _disabled_caption("recommended title equals what's already live — nothing to push.")
@@ -313,7 +345,12 @@ def render_inline_meta_desc_push(url: str, meta_description: str, key_prefix: st
     ):
         with st.spinner("Pushing meta description to Mshop..."):
             res = update_for_page(page_info, meta_description=meta_description)
+        if res.get("status") == "success":
+            update_audit_after_push(url, meta_description=meta_description)
         _show_result(res, "Meta description", key_prefix)
+        refresh_caption = last_push_caption(url)
+        if refresh_caption:
+            st.caption(f"✓ {refresh_caption}")
     if disabled:
         if current_desc and (meta_description or "") == current_desc:
             _disabled_caption("recommended description equals what's already live — nothing to push.")

@@ -1347,6 +1347,16 @@ def render():
                                     _log(f"  ERR {next_fix_url}: {_err}")
                                 else:
                                     _log(f"  push_bottom-ok {next_fix_url}")
+                                    # Mirror pushed content into audit_results so
+                                    # the NEXT Fix ALL pass doesn't re-flag the
+                                    # same "no bottom text / missing keywords"
+                                    # gap on a URL we just filled. See
+                                    # utils/audit_refresh.py.
+                                    try:
+                                        from utils.audit_refresh import update_audit_after_push
+                                        update_audit_after_push(next_fix_url, bottom_text=_bottom)
+                                    except Exception as _ar_e:
+                                        _log(f"  WARN audit_refresh failed {next_fix_url}: {_ar_e}")
                             except Exception as _push_e:
                                 _err = f"push_bottom exception: {type(_push_e).__name__}: {_push_e}"
                                 _fix_state["errors"].append(f"{next_fix_url}: {_err}")
@@ -1379,6 +1389,20 @@ def render():
                                         _log(f"  ERR {next_fix_url}: {_err}")
                                     else:
                                         _log(f"  push_admin-ok {next_fix_url}")
+                                        # Mirror pushed intro/meta into the
+                                        # audit row so the next Fix ALL pass
+                                        # sees the new content + updated scores
+                                        # instead of replaying the same fixes.
+                                        try:
+                                            from utils.audit_refresh import update_audit_after_push
+                                            update_audit_after_push(
+                                                next_fix_url,
+                                                intro_text=(_intro_html or None),
+                                                meta_title=(_meta_t or None),
+                                                meta_description=(_meta_d or None),
+                                            )
+                                        except Exception as _ar_e:
+                                            _log(f"  WARN audit_refresh failed {next_fix_url}: {_ar_e}")
                                 else:
                                     _err = "no Mshop page-info (URL not in active-pages cache)"
                                     _fix_state["errors"].append(f"{next_fix_url}: {_err}")

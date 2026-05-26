@@ -51,6 +51,15 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
     rows = []
     audit_by_url = {_norm_url(r["url"]): r for r in audit_results}
 
+    # URLs the user has explicitly marked "no cluster needed" via Site
+    # Cleanup → Unclustered tab. We set Cluster(s) to a sentinel for these
+    # so the count of "Cluster(s) == ''" (used by dashboard, site validation,
+    # and quick wins) correctly excludes them — the user has already said
+    # they don't need a cluster.
+    _no_cluster_set = {
+        _norm_url(u) for u in (st.session_state.get("_no_cluster_needed") or [])
+    }
+
     # Get all unique URLs — deduplicate by stripping query params
     raw_urls = set(r["url"] for r in audit_results)
     if gsc_data is not None and hasattr(gsc_data, "page"):
@@ -74,6 +83,8 @@ def _build_site_structure(audit_results, gsc_data, topic_clusters, page_authorit
         profile = build_page_profile(url)
 
         cluster_names = [c.get("topic", "") for c in profile["clusters"][:3]]
+        if not cluster_names and _norm_url(url) in _no_cluster_set:
+            cluster_names = ["(no cluster needed)"]
 
         # Avg position from GSC queries
         avg_pos = None

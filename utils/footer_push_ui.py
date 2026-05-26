@@ -184,6 +184,15 @@ def _push_preview_dialog(url: str, bottom_html: str, key_prefix: str, content_ha
                 st.session_state[f"{key_prefix}_pushed_hash"] = content_hash
                 st.session_state[f"{key_prefix}_pushed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 st.session_state.pop(f"{key_prefix}_last_error", None)
+                # Reflect the pushed bottom-text in audit_results so the
+                # next AI bulk run doesn't keep flagging the same "no
+                # bottom text" / "missing keywords" gaps the user just
+                # filled. See utils/audit_refresh.py for the full story.
+                try:
+                    from utils.audit_refresh import update_audit_after_push
+                    update_audit_after_push(url, bottom_text=bottom_html)
+                except Exception as _e:
+                    print(f"[footer_push_ui] audit refresh failed for {url}: {_e}")
             st.rerun()  # re-renders dialog in result view
     with col_cancel:
         if st.button("Cancel", key=f"{key_prefix}_dlg_cancel", use_container_width=True):
