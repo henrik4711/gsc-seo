@@ -524,62 +524,74 @@ def render():
                     has_problems = bool(issues or missing_conns or misplaced or cannib or missing_subs or thin or fixes)
 
                     if has_problems:
-                        with st.expander(f"{section_title}", expanded=True):
-                            # Issues
-                            for issue in issues[:5]:
-                                if isinstance(issue, str):
-                                    st.markdown(f"<div style='color:#ff4455; font-size:0.85rem;'>✗ {issue}</div>", unsafe_allow_html=True)
-                                elif isinstance(issue, dict):
-                                    st.markdown(f"<div style='color:#ff4455; font-size:0.85rem;'>✗ {issue}</div>", unsafe_allow_html=True)
+                        # NOTE: cannot use st.expander here — we're
+                        # already inside the per-cluster "Health check"
+                        # expander, and Streamlit forbids nested expanders
+                        # with a hard API error. Render as a styled
+                        # bordered section header instead. (Same fix as
+                        # the trace-popover crash earlier.)
+                        st.markdown(
+                            f"<div style='background:#12121f; border-left:4px solid {color}; "
+                            f"padding:0.5rem 0.8rem; margin:0.8rem 0 0.4rem 0; border-radius:0 4px 4px 0;'>"
+                            f"<span style='color:{color}; font-weight:700; font-size:0.9rem;'>"
+                            f"{section_title}</span></div>",
+                            unsafe_allow_html=True,
+                        )
+                        # Issues
+                        for issue in issues[:5]:
+                            if isinstance(issue, str):
+                                st.markdown(f"<div style='color:#ff4455; font-size:0.85rem;'>✗ {issue}</div>", unsafe_allow_html=True)
+                            elif isinstance(issue, dict):
+                                st.markdown(f"<div style='color:#ff4455; font-size:0.85rem;'>✗ {issue}</div>", unsafe_allow_html=True)
 
-                            # Missing connections
-                            for mc in missing_conns[:5]:
+                        # Missing connections
+                        for mc in missing_conns[:5]:
+                            st.markdown(
+                                f"<div style='font-size:0.82rem; color:#e8e8f0; padding:2px 0;'>"
+                                f"`{mc.get('from','')}` → `{mc.get('to','')}` — {mc.get('why','')}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        # Misplaced keywords
+                        for mk in misplaced[:5]:
+                            st.markdown(
+                                f"<div style='font-size:0.82rem; color:#ffaa33; padding:2px 0;'>"
+                                f"**{mk.get('keyword','')}** is on `{mk.get('current_page','')}` but should be on `{mk.get('should_be_on','')}` — {mk.get('reason','')}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        # Cannibalization
+                        for cn in cannib[:5]:
+                            pages_str = ", ".join(f"`{p}`" for p in cn.get("pages", []))
+                            st.markdown(
+                                f"<div style='font-size:0.82rem; color:#ff4455; padding:2px 0;'>"
+                                f"**{cn.get('keyword','')}** on multiple pages: {pages_str} — {cn.get('fix','')}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        # Missing subtopics
+                        for ms in missing_subs[:5]:
+                            st.markdown(f"<div style='font-size:0.82rem; color:#c8b4ff; padding:2px 0;'>+ Create new page for: **{ms}**</div>", unsafe_allow_html=True)
+
+                        # Thin pages
+                        for tp in thin[:5]:
+                            st.markdown(
+                                f"<div style='font-size:0.82rem; color:#ffaa33; padding:2px 0;'>"
+                                f"`{tp.get('url','')}` — {tp.get('word_count',0)} words (target: {tp.get('target',1500)})</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        # Fixes
+                        if fixes:
+                            st.markdown("**What to do:**")
+                            for i, fix in enumerate(fixes, 1):
                                 st.markdown(
-                                    f"<div style='font-size:0.82rem; color:#e8e8f0; padding:2px 0;'>"
-                                    f"`{mc.get('from','')}` → `{mc.get('to','')}` — {mc.get('why','')}</div>",
+                                    f"<div style='background:#0d0d15; border-left:3px solid {color}; padding:0.4rem 0.8rem; "
+                                    f"border-radius:0 4px 4px 0; margin-bottom:0.3rem;'>"
+                                    f"<span style='color:{color}; font-weight:700;'>{i}.</span> "
+                                    f"<span style='color:#e8e8f0; font-size:0.85rem;'>{fix}</span></div>",
                                     unsafe_allow_html=True,
                                 )
-
-                            # Misplaced keywords
-                            for mk in misplaced[:5]:
-                                st.markdown(
-                                    f"<div style='font-size:0.82rem; color:#ffaa33; padding:2px 0;'>"
-                                    f"**{mk.get('keyword','')}** is on `{mk.get('current_page','')}` but should be on `{mk.get('should_be_on','')}` — {mk.get('reason','')}</div>",
-                                    unsafe_allow_html=True,
-                                )
-
-                            # Cannibalization
-                            for cn in cannib[:5]:
-                                pages_str = ", ".join(f"`{p}`" for p in cn.get("pages", []))
-                                st.markdown(
-                                    f"<div style='font-size:0.82rem; color:#ff4455; padding:2px 0;'>"
-                                    f"**{cn.get('keyword','')}** on multiple pages: {pages_str} — {cn.get('fix','')}</div>",
-                                    unsafe_allow_html=True,
-                                )
-
-                            # Missing subtopics
-                            for ms in missing_subs[:5]:
-                                st.markdown(f"<div style='font-size:0.82rem; color:#c8b4ff; padding:2px 0;'>+ Create new page for: **{ms}**</div>", unsafe_allow_html=True)
-
-                            # Thin pages
-                            for tp in thin[:5]:
-                                st.markdown(
-                                    f"<div style='font-size:0.82rem; color:#ffaa33; padding:2px 0;'>"
-                                    f"`{tp.get('url','')}` — {tp.get('word_count',0)} words (target: {tp.get('target',1500)})</div>",
-                                    unsafe_allow_html=True,
-                                )
-
-                            # Fixes
-                            if fixes:
-                                st.markdown("**What to do:**")
-                                for i, fix in enumerate(fixes, 1):
-                                    st.markdown(
-                                        f"<div style='background:#0d0d15; border-left:3px solid {color}; padding:0.4rem 0.8rem; "
-                                        f"border-radius:0 4px 4px 0; margin-bottom:0.3rem;'>"
-                                        f"<span style='color:{color}; font-weight:700;'>{i}.</span> "
-                                        f"<span style='color:#e8e8f0; font-size:0.85rem;'>{fix}</span></div>",
-                                        unsafe_allow_html=True,
-                                    )
 
                 # Priority actions
                 actions = health.get("priority_actions", [])
