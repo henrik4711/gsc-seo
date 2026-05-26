@@ -398,7 +398,14 @@ def render():
                     st.error(f"Evaluation failed — {label}")
                     tb = health.get("traceback", "")
                     if tb:
-                        with st.expander("Stack trace (for debugging)", expanded=True):
+                        # NOTE: cannot use st.expander here — this whole
+                        # block is already inside an outer st.expander
+                        # (the per-cluster "Health check: …" expander)
+                        # and Streamlit forbids nested expanders with a
+                        # hard API error. Use st.popover, which is
+                        # explicitly allowed inside expanders. See
+                        # mshop_admin_push_ui.py for the same workaround.
+                        with st.popover("Stack trace (for debugging)"):
                             st.code(tb, language="python")
                     else:
                         st.caption(
