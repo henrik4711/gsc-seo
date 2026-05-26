@@ -189,6 +189,151 @@ def _get_cluster_breakdown():
     }
 
 
+def _render_freshness_panel():
+    """Render the Data Freshness panel: per-dataset timestamps + status +
+    refresh hints, plus a 7-day push summary. The whole point is that the
+    user shouldn't have to remember when they last ran anything."""
+    try:
+        from utils.freshness import get_freshness_report
+        report = get_freshness_report()
+    except Exception as e:
+        st.caption(f"Freshness panel unavailable: {e}")
+        return
+
+    STATUS_STYLE = {
+        "fresh":   ("#33dd88", "FRESH"),
+        "aging":   ("#ffaa33", "AGING"),
+        "stale":   ("#ff4455", "STALE"),
+        "missing": ("#6b6b8a", "MISSING"),
+    }
+
+    # Header
+    st.markdown(
+        "<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; "
+        "color:#5533ff; text-transform:uppercase; letter-spacing:0.1em; "
+        "margin: 0 0 0.5rem 0;'>DATA FRESHNESS</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Persisted datasets ──────────────────────────────────────
+    rows_html = []
+    for d in report["datasets"]:
+        color, badge_text = STATUS_STYLE.get(d["status"], STATUS_STYLE["missing"])
+        count_str = f"{d['row_count']:,}" if isinstance(d["row_count"], int) else "—"
+        hint = d["hint"] if d["status"] in ("stale", "missing") else ""
+        hint_html = (
+            f"<span style='color:#6b6b8a; margin-left:0.5rem;'>→ {hint}</span>"
+            if hint else ""
+        )
+        rows_html.append(
+            f"<div style='display:flex; justify-content:space-between; align-items:center; "
+            f"padding:0.35rem 0; border-bottom:1px solid #1e1e2e; font-size:0.8rem;'>"
+            f"<div style='flex:2;'>"
+            f"<span style='color:#e8e8f0;'>{d['label']}</span>"
+            f"<span style='color:#6b6b8a; font-size:0.72rem; margin-left:0.5rem;'>"
+            f"{count_str} items</span>"
+            f"</div>"
+            f"<div style='flex:2; color:#9b9bb8; font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem;'>"
+            f"{d['age_human']}{hint_html}"
+            f"</div>"
+            f"<div style='flex:0 0 70px; text-align:right;'>"
+            f"<span style='color:{color}; font-family:\"IBM Plex Mono\",monospace; "
+            f"font-size:0.65rem; font-weight:600;'>{badge_text}</span>"
+            f"</div>"
+            f"</div>"
+        )
+
+    for s in report["ai_singles"]:
+        color, badge_text = STATUS_STYLE.get(s["status"], STATUS_STYLE["missing"])
+        hint = s["hint"] if s["status"] in ("stale", "missing") else ""
+        hint_html = (
+            f"<span style='color:#6b6b8a; margin-left:0.5rem;'>→ {hint}</span>"
+            if hint else ""
+        )
+        rows_html.append(
+            f"<div style='display:flex; justify-content:space-between; align-items:center; "
+            f"padding:0.35rem 0; border-bottom:1px solid #1e1e2e; font-size:0.8rem;'>"
+            f"<div style='flex:2;'>"
+            f"<span style='color:#e8e8f0;'>{s['label']}</span>"
+            f"<span style='color:#6b6b8a; font-size:0.72rem; margin-left:0.5rem;'>(AI)</span>"
+            f"</div>"
+            f"<div style='flex:2; color:#9b9bb8; font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem;'>"
+            f"{s['age_human']}{hint_html}"
+            f"</div>"
+            f"<div style='flex:0 0 70px; text-align:right;'>"
+            f"<span style='color:{color}; font-family:\"IBM Plex Mono\",monospace; "
+            f"font-size:0.65rem; font-weight:600;'>{badge_text}</span>"
+            f"</div>"
+            f"</div>"
+        )
+
+    # AI batches — show count + oldest age, no traffic light (a single
+    # batch can mix fresh + stale items so a single status is misleading).
+    for b in report["ai_batches"]:
+        if b["count"] == 0:
+            age_text = "<span style='color:#6b6b8a;'>none cached</span>"
+        else:
+            age_text = (
+                f"newest {b['newest_age_human']} · oldest {b['oldest_age_human']}"
+            )
+        hint_html = (
+            f"<span style='color:#6b6b8a; margin-left:0.5rem;'>→ {b['hint']}</span>"
+            if b["count"] == 0 else ""
+        )
+        rows_html.append(
+            f"<div style='display:flex; justify-content:space-between; align-items:center; "
+            f"padding:0.35rem 0; border-bottom:1px solid #1e1e2e; font-size:0.8rem;'>"
+            f"<div style='flex:2;'>"
+            f"<span style='color:#e8e8f0;'>{b['label']}</span>"
+            f"<span style='color:#6b6b8a; font-size:0.72rem; margin-left:0.5rem;'>"
+            f"{b['count']:,} cached</span>"
+            f"</div>"
+            f"<div style='flex:2; color:#9b9bb8; font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem;'>"
+            f"{age_text}{hint_html}"
+            f"</div>"
+            f"<div style='flex:0 0 70px; text-align:right;'>"
+            f"<span style='color:#6b6b8a; font-family:\"IBM Plex Mono\",monospace; "
+            f"font-size:0.65rem;'>BATCH</span>"
+            f"</div>"
+            f"</div>"
+        )
+
+    st.markdown(
+        f"<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; "
+        f"padding:0.5rem 1rem 0.8rem; margin-bottom:1rem;'>"
+        f"{''.join(rows_html)}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Push summary (last 7 days) ──────────────────────────────
+    ps = report["push_summary"]
+    total = ps.get("total", 0)
+    if total > 0:
+        latest_str = ps["latest_ts_human"]
+        latest_url = ps.get("latest_url") or ""
+        latest_url_short = latest_url if len(latest_url) <= 60 else "…" + latest_url[-60:]
+        st.markdown(
+            f"<div style='background:#0d0d15; border:1px solid #2a2a40; border-radius:6px; "
+            f"padding:0.7rem 1rem; margin-bottom:1rem;'>"
+            f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.65rem; "
+            f"color:#33dd88; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.4rem;'>"
+            f"PUSHED TO MSHOP (LAST {ps['days']} DAYS)</div>"
+            f"<div style='font-size:0.82rem; color:#e8e8f0;'>"
+            f"<strong>{total}</strong> successful pushes · "
+            f"<span style='color:#9b9bb8;'>"
+            f"{ps['intro']} intro · {ps['bottom_text']} bottom · "
+            f"{ps['meta_title']} meta titles · {ps['meta_description']} meta descriptions"
+            f"</span></div>"
+            f"<div style='font-size:0.72rem; color:#6b6b8a; margin-top:0.3rem;'>"
+            f"Latest: {latest_str} · {latest_url_short}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("No successful pushes to mshop in the last 7 days.")
+
+
 def _get_next_action(phases):
     """Find the first incomplete task across all phases."""
     for phase in phases:
@@ -244,6 +389,13 @@ def render():
                 f"</div>",
                 unsafe_allow_html=True,
             )
+
+    # ── Data Freshness panel ────────────────────────────────────
+    # The single biggest pain point: user cannot tell at a glance which
+    # data is fresh, which is stale, and where to refresh it. This panel
+    # shows mtime + row count + status for every major dataset plus a
+    # summary of recent pushes to mshop. Source: utils/freshness.py.
+    _render_freshness_panel()
 
     # ── Cluster-assignment breakdown ─────────────────────────────
     # Shows WHERE the "X unclustered pages" stat comes from, so the user

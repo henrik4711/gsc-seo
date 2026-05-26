@@ -170,11 +170,19 @@ def _recompute_meta_score(row: dict) -> None:
     # evaluate_meta come from the "issues" key of its return dict.
     new_meta_issues = meta_eval.get("issues", []) or []
     existing = row.get("issues", []) or []
-    # Filter out old meta issues (field "title" or "meta_description")
+    # Filter out old meta issues (field "title" or "meta_description").
+    # isinstance(..., str) guard: a malformed issue row could store a dict
+    # in `field`, and `dict in {strs}` raises "unhashable type: 'dict'" —
+    # crashing every push for that page. Belt-and-braces: if `field` is
+    # not a string we keep the row untouched.
     META_FIELDS = {"title", "meta_description"}
     non_meta = [
         i for i in existing
-        if not (isinstance(i, dict) and i.get("field") in META_FIELDS)
+        if not (
+            isinstance(i, dict)
+            and isinstance(i.get("field"), str)
+            and i.get("field") in META_FIELDS
+        )
     ]
     row["issues"] = non_meta + new_meta_issues
 
@@ -207,7 +215,9 @@ def _recompute_content_score(row: dict) -> None:
         return
     row["content_score"] = cat_audit.get("score")
     row["content_audit"] = cat_audit
-    # Replace content-area issues; keep meta/structure issues.
+    # Replace content-area issues; keep meta/structure issues. Same
+    # isinstance guard as _recompute_meta_score — a non-string `area`
+    # value would crash `in CONTENT_AREAS` with unhashable type: 'dict'.
     CONTENT_AREAS = {
         "content_volume", "intro", "bottom", "keyword_coverage",
         "topic_coverage", "subtopics", "linking", "trust", "structure",
@@ -215,7 +225,11 @@ def _recompute_content_score(row: dict) -> None:
     existing = row.get("issues", []) or []
     non_content = [
         i for i in existing
-        if not (isinstance(i, dict) and i.get("area") in CONTENT_AREAS)
+        if not (
+            isinstance(i, dict)
+            and isinstance(i.get("area"), str)
+            and i.get("area") in CONTENT_AREAS
+        )
     ]
     new_content_issues = [
         {"type": i.get("severity"), "field": i.get("area"), "msg": i.get("msg")}
