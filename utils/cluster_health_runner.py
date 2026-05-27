@@ -199,6 +199,7 @@ def run_cluster_eval(
     from utils.persistence import save as _persist_save
     from config import get_anthropic_key
 
+    cluster_topic = cluster.get("topic", "") if isinstance(cluster, dict) else ""
     try:
         client = get_client(get_anthropic_key())
         cd = _build_cluster_data(cluster, audit_results, tc, gsc_data, sf_link_map)
@@ -216,7 +217,7 @@ def run_cluster_eval(
     except Exception as e:
         import traceback as _tb_run
         tb_text = _tb_run.format_exc()
-        print(f"[cluster_health] eval failed for {cluster.get('topic', '?')}: {e}")
+        print(f"[cluster_health] eval failed for {cluster_topic or '?'}: {e}")
         print(tb_text)
         payload = {
             "error": str(e),
@@ -224,6 +225,14 @@ def run_cluster_eval(
             "traceback": tb_text[-2000:],
             "health_score": 0,
         }
+
+    # Stamp the cluster's topic onto the payload — evaluate_cluster_health
+    # doesn't include topic in its AI JSON, so downstream consumers
+    # (find_cluster_health_flagged_urls, _format_cluster_health_insights)
+    # would otherwise see "(unknown cluster)" or have no topic to display.
+    # Done AFTER the try/except so error payloads carry the topic too.
+    if isinstance(payload, dict) and not payload.get("topic"):
+        payload["topic"] = cluster_topic
 
     st.session_state[health_key] = payload
     try:
