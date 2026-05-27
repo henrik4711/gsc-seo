@@ -4196,9 +4196,15 @@ def _format_cluster_health_insights(page_data: dict, topic_clusters: dict = None
 
     Without this in the prompt, bulk AI would happily continue
     optimizing a page for a keyword the strategic review says belongs
-    elsewhere. This function digs into each cluster THIS page is in,
-    pulls out the items mentioning this URL, and formats them for the
-    prompt.
+    elsewhere. This function scans every cached _cluster_health_* entry
+    in session_state — NOT just the clusters this page is a member of —
+    because a strategic finding from cluster X often points at a URL in
+    cluster Y (e.g. "this keyword should be on page B" where B sits in
+    a sibling cluster). The earlier "only my_topics" implementation
+    dropped those cross-cluster findings silently.
+
+    The topic_clusters argument is accepted for call-site compatibility
+    but no longer required — every callsite can pass None safely.
 
     Returns empty string when no cluster_health is cached yet — caller
     should still continue (the rest of the prompt has the structural
@@ -4206,32 +4212,33 @@ def _format_cluster_health_insights(page_data: dict, topic_clusters: dict = None
     BEFORE bulk AI text generation" so this section is populated.
     """
     import streamlit as st
-    from utils.ui_helpers import normalize_url, stable_hash
-
-    if not topic_clusters:
-        return ""
+    from utils.ui_helpers import normalize_url
 
     url = page_data.get("url", "")
     if not url:
         return ""
     url_norm = normalize_url(url)
 
-    page_topics = topic_clusters.get("page_topics", {}) or {}
-    my_topics = page_topics.get(url_norm) or page_topics.get(url) or []
-    if not my_topics:
-        return ""
-
+    # Scan EVERY cached cluster_health entry — not just the clusters this
+    # page is a member of in topic_clusters.page_topics. A strategic
+    # finding from cluster X often points at a URL in cluster Y (e.g.
+    # "keyword Y belongs on page B" where B sits in a sibling cluster).
+    # The earlier "iterate my_topics only" scope dropped those findings
+    # silently — meaning a flagged page got regenerated with NO strategic
+    # context in its prompt, defeating the whole point of this function.
+    # Now we iterate every _cluster_health_* key in session_state and
+    # collect findings that mention this URL anywhere.
     insights = []
-    for t in my_topics:
-        if not isinstance(t, dict):
+    for skey, health in list(st.session_state.items()):
+        if not isinstance(skey, str) or not skey.startswith("_cluster_health_"):
             continue
-        topic = t.get("topic", "")
-        if not topic:
+        # _cluster_health_summary is the pipeline step's run stats, not a
+        # cluster eval — skip so we don't try to read keyword_issues off it.
+        if skey == "_cluster_health_summary":
             continue
-        health_key = f"_cluster_health_{stable_hash(topic)}"
-        health = st.session_state.get(health_key)
         if not isinstance(health, dict) or health.get("error"):
             continue
+        topic = health.get("topic") or health.get("cluster") or "(unknown cluster)"
 
         kw_issues = health.get("keyword_issues") or {}
 
