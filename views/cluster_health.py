@@ -127,6 +127,136 @@ def render():
             status.update(label="Evaluation complete", state="complete", expanded=False)
         st.rerun()
 
+    # ── Auto-find + regenerate flagged pages ─────────────────────
+    # The strategic review surfaces a small set of URLs that need their
+    # AI text redone (misplaced keyword, cannibalization participant,
+    # priority action target). Surfacing those URLs + a one-click regen
+    # avoids the user having to read every cluster card by hand.
+    from utils.cluster_health_runner import (
+        find_cluster_health_flagged_urls,
+        regenerate_flagged_pages,
+    )
+    flagged = find_cluster_health_flagged_urls()
+    if flagged:
+        st.markdown("---")
+        st.markdown("### 🎯 Pages flagged by the strategic review")
+        st.markdown(
+            "<p style='color:#9b9bb8; font-size:0.85rem; margin-bottom:0.6rem;'>"
+            "These are the only pages whose old AI-generated text was "
+            "missing the cluster-health context. Everything else is "
+            "reasonably OK as-is. Regen runs the same flow as Quick Wins' "
+            "Fix ALL but only on these URLs — implementation plan + bottom "
+            "text + intro rewrite, force=True (overwrites cached results)."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+
+        audit_results = st.session_state.get("audit_results", []) or []
+        audit_urls = {r.get("url", "") for r in audit_results if isinstance(r, dict)}
+        from utils.ui_helpers import normalize_url as _nu_fl
+        audit_urls_norm = {_nu_fl(u) for u in audit_urls if u}
+        has_audit_flagged = [
+            e for e in flagged if _nu_fl(e["url"]) in audit_urls_norm
+        ]
+        no_audit_flagged = [
+            e for e in flagged if _nu_fl(e["url"]) not in audit_urls_norm
+        ]
+
+        cF1, cF2, cF3 = st.columns([1, 1, 2])
+        cF1.metric("Pages flagged", len(flagged))
+        cF2.metric("With audit row", len(has_audit_flagged))
+        cF3.markdown(
+            f"<div style='font-size:0.75rem; color:#6b6b8a; padding-top:0.8rem;'>"
+            f"Cost: ~${len(has_audit_flagged):,} "
+            f"(~$1/page · plan + bottom + intro) · "
+            f"~{len(has_audit_flagged) * 1.5:.0f} min</div>",
+            unsafe_allow_html=True,
+        )
+
+        with st.expander(
+            f"Show the {len(flagged)} flagged URL(s) + reasons",
+            expanded=False,
+        ):
+            for e in flagged[:60]:
+                in_audit = _nu_fl(e["url"]) in audit_urls_norm
+                badge = (
+                    "<span style='background:#0e2a18; color:#33dd88; "
+                    "font-size:0.65rem; padding:0.1rem 0.4rem; border-radius:3px;'>AUDIT ✓</span>"
+                    if in_audit else
+                    "<span style='background:#2a0e0e; color:#ff6677; "
+                    "font-size:0.65rem; padding:0.1rem 0.4rem; border-radius:3px;'>NO AUDIT — will be skipped</span>"
+                )
+                st.markdown(
+                    f"<div style='background:#0d0d15; border-left:3px solid "
+                    f"{'#5533ff' if in_audit else '#ff4455'}; padding:0.4rem 0.6rem; "
+                    f"margin:0.3rem 0; border-radius:0 4px 4px 0;'>"
+                    f"<div style='font-size:0.78rem; color:#c8b4ff;'>{e['url']} {badge}</div>"
+                    f"<div style='font-size:0.7rem; color:#9b9bb8; margin-top:0.2rem;'>"
+                    f"{' · '.join(e['topics'])}</div>"
+                    f"<ul style='font-size:0.72rem; color:#e8e8f0; margin:0.3rem 0 0 1rem; padding:0;'>"
+                    + "".join(f"<li>{r}</li>" for r in e["reasons"][:5])
+                    + "</ul></div>",
+                    unsafe_allow_html=True,
+                )
+            if len(flagged) > 60:
+                st.caption(f"+ {len(flagged) - 60} more (capped at 60 for readability)")
+
+        # Safety cap so a runaway review can't burn 200 page calls
+        cap_col, run_col = st.columns([1, 2])
+        with cap_col:
+            cap = st.number_input(
+                "Max pages to regen",
+                min_value=1,
+                max_value=max(1, len(has_audit_flagged)),
+                value=min(50, len(has_audit_flagged)) if has_audit_flagged else 1,
+                step=1,
+                key="cluster_health_regen_cap",
+                help="Safety cap to bound cost. Set to the full count if you want to do them all in one go.",
+            )
+        with run_col:
+            do_regen = st.button(
+                f"🤖 Regenerate {min(cap, len(has_audit_flagged))} flagged page(s) "
+                f"with cluster-health context",
+                type="primary",
+                disabled=not has_audit_flagged,
+                use_container_width=True,
+            )
+
+        if do_regen:
+            with st.status("Regenerating flagged pages...", expanded=True) as rstatus:
+                rprog = st.progress(0.0)
+                rlog = st.empty()
+
+                def _regen_cb(i, n, url, status):
+                    rprog.progress(min(1.0, i / max(n, 1)))
+                    short = url[-60:] if len(url) > 60 else url
+                    parts = []
+                    for k, v in (status or {}).items():
+                        parts.append(f"{k}={v}")
+                    rlog.markdown(
+                        f"<div style='font-family:monospace; font-size:0.72rem;'>"
+                        f"<span style='color:#c8b4ff;'>[{i}/{n}]</span> "
+                        f"<span style='color:#e8e8f0;'>{short}</span> · "
+                        f"<span style='color:#9b9bb8;'>{' · '.join(parts)}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+
+                summary = regenerate_flagged_pages(progress_cb=_regen_cb, max_pages=int(cap))
+                rstatus.update(
+                    label=(
+                        f"Regen done — {summary['regenerated']} ok, "
+                        f"{summary['errors']} errors, {summary['skipped']} skipped "
+                        f"(no audit row), {summary['flagged']} attempted"
+                    ),
+                    state="complete",
+                    expanded=False,
+                )
+            st.success(
+                f"Regenerated {summary['regenerated']} flagged page(s). "
+                f"Go to Quick Wins (or per-page view) to review the new "
+                f"intro/bottom/plan and push them to Mshop."
+            )
+
     # ── Cluster cards ─────────────────────────────────────────────
     ITEMS_PER_PAGE = 10
     total_items = len(clusters_sorted)
