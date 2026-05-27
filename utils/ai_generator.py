@@ -2536,8 +2536,20 @@ def generate_full_article_html(
     all_site_urls: list = None,
     cluster_context: str = "",
 ) -> dict:
-    """Generate a complete article as CMS-ready HTML."""
-    from utils.templates import blog_template_instructions
+    """Generate a complete article as CMS-ready HTML.
+
+    Picks the right template-instruction block based on `content_type`:
+    - "product" / "product_page"        → product_page_instructions
+    - "test" / "review" / "test_page"   → test_page_instructions
+    - "shopping-guide" / "buying-guide" → shopping_guide_instructions
+    - everything else (how-to, listicle, comparison, explainer, guide,
+      article, blog, unknown) → blog_template_instructions
+
+    The template embeds page-type-appropriate schema (Article, Product,
+    Review, HowTo, etc.) and the marker placeholders the publisher fills
+    in (price, stock, affiliate URL, breadcrumb, ratings).
+    """
+    from utils.templates import select_template
 
     products_section = ""
     if products:
@@ -2576,7 +2588,7 @@ This article supports/links from: {link_from_url}
 Site: {site_context}
 Language: {language}
 
-{blog_template_instructions(language)}
+{select_template(content_type, language)}
 {products_section}{url_section}
 
 ## CONTENT REQUIREMENTS
