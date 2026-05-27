@@ -7,7 +7,7 @@ utils/cluster_health_runner.py. This view imports and renders.
 """
 
 import streamlit as st
-from config import get_anthropic_key, has_anthropic_key
+from config import has_anthropic_key
 from utils.ui_helpers import stable_hash
 from utils.cluster_health_runner import run_cluster_eval as _run_cluster_eval
 
