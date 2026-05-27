@@ -304,3 +304,183 @@ def run_all_clusters(progress_cb=None) -> dict:
             pass
 
     return {"evaluated": evaluated, "skipped": skipped, "failed": failed, "total": n}
+
+
+def find_cluster_health_flagged_urls() -> list:
+    """Return URLs the strategic Cluster Health review has actionable
+    findings for, with the reason attached.
+
+    Walks every cached `_cluster_health_<hash>` session entry and pulls
+    URLs that appear as:
+      - misplaced_keywords.current_page  (page optimized for wrong keyword)
+      - misplaced_keywords.should_be_on  (page that should own a keyword)
+      - cannibalization.pages[]          (conflict participant)
+      - priority_actions[].page          (cluster-level action target)
+
+    A page generated BEFORE Cluster Health was integrated into the AI
+    prompts is "reasonably OK" for almost everything — except for these
+    URLs, where the strategic review contradicts what the per-page AI
+    saw at the time. Regenerating ONLY this set costs ~$1/page instead
+    of bulk-regenerating every site page.
+
+    Returns: [{"url": str, "reasons": [str, ...], "topics": [str, ...]}]
+    Sorted: highest reason-count first (most evidence the page needs redo).
+    """
+    from utils.ui_helpers import normalize_url as _nu
+
+    findings: dict[str, dict] = {}
+
+    def _add(url: str, reason: str, topic: str) -> None:
+        if not isinstance(url, str) or not url.strip():
+            return
+        key = _nu(url)
+        entry = findings.setdefault(key, {"url": url, "reasons": [], "topics": set()})
+        if reason not in entry["reasons"]:
+            entry["reasons"].append(reason)
+        if topic:
+            entry["topics"].add(topic)
+
+    for k, v in list(st.session_state.items()):
+        if not k.startswith("_cluster_health_"):
+            continue
+        # `_cluster_health_summary` is the pipeline step's run stats —
+        # not a per-cluster evaluation. Skip it to avoid treating the
+        # summary's counts as a cluster's findings dict.
+        if k == "_cluster_health_summary":
+            continue
+        if not isinstance(v, dict) or v.get("error"):
+            continue
+        topic = v.get("topic") or v.get("cluster") or ""
+
+        kw_issues = v.get("keyword_issues") or {}
+
+        for m in (kw_issues.get("misplaced_keywords") or []):
+            if not isinstance(m, dict):
+                continue
+            kw = m.get("keyword", "")
+            cur = m.get("current_page", "")
+            tgt = m.get("should_be_on", "")
+            if cur:
+                _add(cur, f"misplaced — optimized for '{kw}' but it belongs on {tgt or '(another page)'}", topic)
+            if tgt:
+                _add(tgt, f"should own '{kw}' (currently on {cur or 'another page'})", topic)
+
+        for c in (kw_issues.get("cannibalization") or []):
+            if not isinstance(c, dict):
+                continue
+            kw = c.get("keyword", "")
+            fix = c.get("fix", "")
+            for p in (c.get("pages") or []):
+                _add(p, f"cannibalizing '{kw}' — fix: {fix or 'differentiate or redirect'}", topic)
+
+        for a in (v.get("priority_actions") or []):
+            if not isinstance(a, dict):
+                continue
+            page = a.get("page", "")
+            action = a.get("action", "")
+            impact = (a.get("impact") or "medium").upper()
+            _add(page, f"[{impact}] {action}", topic)
+
+    # Normalize topics to sorted list + sort by reason count
+    out = []
+    for entry in findings.values():
+        entry["topics"] = sorted(entry["topics"])
+        out.append(entry)
+    out.sort(key=lambda e: -len(e["reasons"]))
+    return out
+
+
+def regenerate_flagged_pages(progress_cb=None, max_pages: int = 0) -> dict:
+    """Find every page flagged by Cluster Health and regenerate its AI
+    artifacts (implementation plan + bottom text + intro rewrite) with
+    force=True so the new cluster_health-aware prompts overwrite the
+    cached output.
+
+    Honors the existing single-source-of-truth runner
+    utils.page_fix_runner.generate_all_fixes_for_page — same retry
+    behavior, same error capture, same caching keys. Never invents its
+    own generation loop.
+
+    Parameters
+    ----------
+    progress_cb : callable(i, n, url, status) -> None, optional
+        Called after each page; status comes from generate_all_fixes_for_page.
+    max_pages : int
+        Safety cap (0 = unlimited). Set when calling from a UI that
+        wants to stop after N pages to bound cost.
+
+    Returns
+    -------
+    dict with: flagged, regenerated, errors, skipped (no-audit), urls.
+    Each value is a count; urls is the list of regenerated URLs.
+    """
+    from utils.page_fix_runner import (
+        generate_all_fixes_for_page,
+        page_audit_to_page_dict,
+    )
+    from utils.audit_refresh import _invalidate_ai_plan_cache
+    from utils.ui_helpers import normalize_url as _nu
+
+    flagged = find_cluster_health_flagged_urls()
+    if not flagged:
+        return {"flagged": 0, "regenerated": 0, "errors": 0, "skipped": 0, "urls": []}
+
+    audit_results = st.session_state.get("audit_results", []) or []
+    audit_by_url = {_nu(r.get("url", "")): r for r in audit_results if isinstance(r, dict)}
+
+    regenerated_urls: list[str] = []
+    errors = 0
+    skipped = 0
+    total = len(flagged)
+    if max_pages and max_pages < total:
+        flagged = flagged[:max_pages]
+        total = len(flagged)
+
+    for i, entry in enumerate(flagged):
+        url = entry["url"]
+        row = audit_by_url.get(_nu(url))
+        if not row:
+            skipped += 1
+            if progress_cb:
+                try:
+                    progress_cb(i + 1, total, url, {"reason": "no audit row"})
+                except Exception:
+                    pass
+            continue
+
+        # generate_ai_fixes_for_page early-returns the cached plan when
+        # plan_key is in session_state and not errored — force=True on
+        # generate_all_fixes_for_page only forces bottom/intro regen, not
+        # the plan. Drop the cache first so the plan also regenerates with
+        # the new cluster-health-aware prompt. _invalidate_ai_plan_cache
+        # also drops _quality_, _bottom_text_, _intro_text_ — exactly what
+        # we want before a force-regen.
+        _invalidate_ai_plan_cache(url)
+
+        page = page_audit_to_page_dict(row)
+        try:
+            status = generate_all_fixes_for_page(page, force=True, batch_mode=True)
+            had_error = any(
+                isinstance(v, str) and v.startswith("error") for v in status.values()
+            )
+            if had_error:
+                errors += 1
+            else:
+                regenerated_urls.append(url)
+        except Exception as e:
+            errors += 1
+            status = {"exception": f"{type(e).__name__}: {e}"}
+
+        if progress_cb:
+            try:
+                progress_cb(i + 1, total, url, status)
+            except Exception:
+                pass
+
+    return {
+        "flagged": len(flagged),
+        "regenerated": len(regenerated_urls),
+        "errors": errors,
+        "skipped": skipped,
+        "urls": regenerated_urls,
+    }
