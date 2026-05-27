@@ -62,6 +62,15 @@ def _step_status(state_key):
                 if total == 0:
                     return "✗", "Not run", "#6b6b8a"
                 return "✓", f"Done ({total:,} issues)", "#33dd88"
+            # Special handling for cluster health summary dict
+            if state_key == "_cluster_health_summary" and isinstance(data, dict):
+                total = int(data.get("total", 0) or 0)
+                if total == 0:
+                    return "✗", "Not run", "#6b6b8a"
+                ev = int(data.get("evaluated", 0) or 0)
+                sk = int(data.get("skipped", 0) or 0)
+                fa = int(data.get("failed", 0) or 0)
+                return "✓", f"Done ({ev + sk}/{total} clusters" + (f", {fa} failed" if fa else "") + ")", "#33dd88"
             # Lists
             if isinstance(data, list):
                 if not data:
@@ -1191,6 +1200,49 @@ def _run_cluster_linking():
     return recs
 
 
+def _run_cluster_health():
+    """Evaluate every topic cluster BEFORE bulk per-page AI text generation.
+
+    Cluster Health is the strategic "second pass" review — it reads the
+    whole cluster and produces findings like 'keyword X belongs on page
+    B not A' or 'pages C and D are cannibalizing keyword Y'. These
+    findings get cached as `_cluster_health_<hash>` session keys and are
+    surfaced to ALL downstream per-page AI prompts via
+    _format_cluster_health_insights() in utils/ai_generator.py.
+
+    Running this BEFORE Step 7 (AI Content Quality), Step 7+ implementation
+    plans, and any manual intro/bottom-text generation guarantees every
+    page-level AI call has the strategic context. Without this step the
+    per-page AI would optimize a page for a keyword the strategic review
+    says belongs elsewhere.
+
+    Idempotent: skips clusters that already have a non-error cached eval.
+    """
+    from utils.cluster_health_runner import run_all_clusters
+
+    progress_bar = st.progress(0.0, text="Starting cluster health evaluation...")
+    status_box = st.empty()
+
+    def _cb(i, n, topic):
+        progress_bar.progress(min(1.0, i / max(n, 1)),
+                              text=f"Cluster {i}/{n} — {topic[:60]}")
+        status_box.markdown(
+            f"<div style='font-size:0.78rem; color:#c8b4ff;'>"
+            f"Evaluating cluster {i}/{n}: <strong>{topic[:80]}</strong></div>",
+            unsafe_allow_html=True,
+        )
+
+    summary = run_all_clusters(progress_cb=_cb)
+    progress_bar.progress(
+        1.0,
+        text=(f"Cluster health done — {summary['evaluated']} evaluated, "
+              f"{summary['skipped']} cached, {summary['failed']} failed "
+              f"({summary['total']} total)"),
+    )
+    # Stash a small summary so _step_done() can flip to ✓
+    st.session_state["_cluster_health_summary"] = summary
+
+
 # Pipeline definition — single source of truth for "what to run, in what order"
 PIPELINE_STEPS = [
     {"num": 1,  "title": "Fetch GSC data",         "key": "gsc_data",         "fn": _run_fetch_gsc,         "long": False, "estimate": "~30 sec"},
@@ -1199,6 +1251,7 @@ PIPELINE_STEPS = [
     {"num": 4,  "title": "CTR Gap Analysis",       "key": "ctr_gaps",         "fn": _run_ctr_analysis,      "long": False, "estimate": "~30 sec"},
     {"num": 5,  "title": "Build Topic Clusters",   "key": "topic_clusters",   "fn": _run_topic_clusters,    "long": False, "estimate": "~1 min (AI)"},
     {"num": 6,  "title": "Bulk Audit Pages (Mshop API list)",       "key": "audit_results",    "fn": _run_bulk_audit,        "long": True,  "estimate": "~18 min for 1000+ pages"},
+    {"num": "6b", "title": "Cluster Health (strategic review)", "key": "_cluster_health_summary", "fn": _run_cluster_health, "long": True, "estimate": "~30 sec / cluster (AI)"},
     {"num": 7,  "title": "AI Content Quality",     "key": None,               "fn": _run_quality_until_done,"long": True,  "estimate": "~15 min (AI)"},
     {"num": 8,  "title": "Cannibalization",        "key": "cannibalization",  "fn": _run_cannibalization,   "long": False, "estimate": "~5 min"},
     {"num": 9,  "title": "Cluster Linking",        "key": "cluster_link_recommendations", "fn": _run_cluster_linking, "long": False, "estimate": "~10 sec"},

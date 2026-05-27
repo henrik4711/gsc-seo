@@ -988,10 +988,18 @@ IMPORTANT: Meta for category pages should focus on category intent (browse/explo
     elif page_type == "blog":
         cat_context = "\nPage type: BLOG/GUIDE\nIMPORTANT: Meta should focus on informational intent and value for the reader."
 
+    # Cluster Health insights for THIS URL — when the strategic review
+    # flags a keyword as belonging on another page, the meta title MUST
+    # NOT lead with that keyword. Empty string if cluster_health hasn't
+    # been run.
+    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    cluster_health_block = _format_cluster_health_insights(page_data, _ch_topic_clusters)
+
     prompt = f"""You are a senior SEO specialist and conversion optimization expert for an e-commerce webshop.
 {anti_hallucination_rules(language)}
 {human_writing_style(language)}
 {human_writing_style(language)}
+{cluster_health_block}
 
 ## CURRENT SITUATION
 URL: {url}{cat_context}
@@ -1243,6 +1251,14 @@ def assess_content_quality_batch(
                 cluster_info += f"PILLAR page with {len(child_pages)} child pages\n"
                 cluster_info += f"Child pages: {', '.join(c.split('/')[-1] for c in child_pages[:8])}\n"
 
+        # Cluster Health insights for THIS page (strategic AI review).
+        # Surfaces misplaced keywords, cannibalization, and priority
+        # actions that target this URL — so quality verdicts factor in
+        # the cluster-level review, not just per-page signals.
+        ch_block = _format_cluster_health_insights(p, topic_clusters) if topic_clusters else ""
+        if ch_block:
+            cluster_info += ch_block + "\n"
+
         internal_links = p.get("internal_links", 0)
         link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
         # Word-count line shown to AI: BOTH editorial and total. AI was
@@ -1394,10 +1410,18 @@ def assess_content_quality(
     internal_links = pd.get("internal_links", 0)
     link_count = internal_links if isinstance(internal_links, int) else len(internal_links)
 
+    # Cluster Health insights for THIS page — strategic review trumps
+    # per-page signals when deciding KEEP/IMPROVE/REWRITE.
+    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    cluster_health_block = _format_cluster_health_insights(
+        {"url": url, **(pd or {})}, _ch_topic_clusters
+    )
+
     prompt = f"""You are a senior SEO content strategist and UX copywriter. Evaluate this page's EXISTING text quality — not just keyword presence, but whether the text is actually good.
 {anti_hallucination_rules(language)}
 {human_writing_style(language)}
 {human_writing_style(language)}
+{cluster_health_block}
 
 ## PAGE
 URL: {url}
@@ -1516,10 +1540,19 @@ Focus on informational value, E-E-A-T signals and depth.
     link_count = page_data.get("internal_link_count", 0)
 
     existing_word_count = len(existing.split()) if existing else 0
+
+    # Cluster Health insights — strategic review may forbid optimizing
+    # this page for a given keyword (says it belongs elsewhere) or flag
+    # cannibalization with another page. Empty if cluster_health hasn't
+    # been run yet.
+    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    cluster_health_block = _format_cluster_health_insights(page_data, _ch_topic_clusters)
+
     prompt = f"""You are a senior SEO copywriter specialized in e-commerce.
 {anti_hallucination_rules(language)}
 {human_writing_style(language)}
 {human_writing_style(language)}
+{cluster_health_block}
 
 ## CONTEXT
 URL: {url}
@@ -1814,10 +1847,19 @@ def generate_intro_rewrite(
               "after generation; if the same issue persists, the result is rejected.\n"
         )
 
+    # Cluster Health insights for THIS URL — strategic review may say a
+    # keyword belongs on a different page; don't force it into the intro
+    # here. Empty string if cluster_health hasn't run yet.
+    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    cluster_health_block = _format_cluster_health_insights(
+        {"url": url}, _ch_topic_clusters
+    )
+
     prompt = f"""You are a senior SEO copywriter. Rewrite ONLY the intro paragraph of this page.
 
 {human_writing_style(language)}
 {retry_block}
+{cluster_health_block}
 ## CONTEXT
 URL: {url}
 Page type: {page_type}
@@ -3095,12 +3137,22 @@ Concretely, when you rewrite the text:
 
 """
 
+    # ── Cluster Health insights (strategic review from cluster_health step) ──
+    # Pulls per-page findings out of cached _cluster_health_<topic> session
+    # keys. Empty string when cluster_health hasn't been run — caller's
+    # responsibility (the pipeline now runs cluster_health BEFORE bulk AI).
+    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    cluster_health_block = _format_cluster_health_insights(
+        {"url": url}, _ch_topic_clusters
+    )
+
     # ── Build the full prompt ──
     prompt = f"""{anti_hallucination_rules(language)}
 
 You are rewriting the BODY TEXT for an e-commerce category page.
 {topical_boundary_block}
 {validation_block}
+{cluster_health_block}
 {required_kw_block}
 {required_link_block}
 ## CRITICAL: KEYWORD FOCUS (with synonym variation — read carefully)
@@ -4057,11 +4109,21 @@ def generate_category_bottom_text(
 
     bottom_word_count = len(current_bottom_text.split()) if current_bottom_text else 0
     intro_word_count = len(current_intro_text.split()) if current_intro_text else 0
+
+    # Cluster Health insights for THIS page — strategic review trumps
+    # per-page keyword signals. Empty string when cluster_health hasn't
+    # been run yet (pipeline now runs it before bulk AI generation).
+    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    cluster_health_block = _format_cluster_health_insights(
+        {"url": url}, _ch_topic_clusters
+    )
+
     prompt = f"""You are a senior SEO copywriter.
 Rewrite the category page bottom text following the EXACT format below.
 {anti_hallucination_rules(language)}
 {human_writing_style(language)}
 {human_writing_style(language)}
+{cluster_health_block}
 
 ## CRITICAL REQUIREMENTS — YOU MUST FOLLOW THESE
 1. You MUST include AT LEAST 8-12 internal links in the text. Use ALL subcategory URLs and at least 3 sibling URLs from the lists below.
@@ -4107,6 +4169,128 @@ Site: {site_context}
     )
 
     return _parse_ai_json(message)
+
+
+def _format_cluster_health_insights(page_data: dict, topic_clusters: dict = None) -> str:
+    """Surface Cluster Health AI insights that apply specifically to THIS page.
+
+    Bulk AI text generation used to run with only cluster STRUCTURE data
+    (page memberships, link recommendations) but no STRATEGIC review.
+    Cluster Health is the AI's "second pass" — it reads the entire
+    cluster and flags things like:
+      - "Keyword X is on page A but should be on page B"
+      - "Pages C and D are cannibalizing keyword Y"
+      - "Priority action: rewrite page E's title to focus on Z"
+
+    Without this in the prompt, bulk AI would happily continue
+    optimizing a page for a keyword the strategic review says belongs
+    elsewhere. This function digs into each cluster THIS page is in,
+    pulls out the items mentioning this URL, and formats them for the
+    prompt.
+
+    Returns empty string when no cluster_health is cached yet — caller
+    should still continue (the rest of the prompt has the structural
+    cluster context). The recommendation to users is "run Cluster Health
+    BEFORE bulk AI text generation" so this section is populated.
+    """
+    import streamlit as st
+    from utils.ui_helpers import normalize_url, stable_hash
+
+    if not topic_clusters:
+        return ""
+
+    url = page_data.get("url", "")
+    if not url:
+        return ""
+    url_norm = normalize_url(url)
+
+    page_topics = topic_clusters.get("page_topics", {}) or {}
+    my_topics = page_topics.get(url_norm) or page_topics.get(url) or []
+    if not my_topics:
+        return ""
+
+    insights = []
+    for t in my_topics:
+        if not isinstance(t, dict):
+            continue
+        topic = t.get("topic", "")
+        if not topic:
+            continue
+        health_key = f"_cluster_health_{stable_hash(topic)}"
+        health = st.session_state.get(health_key)
+        if not isinstance(health, dict) or health.get("error"):
+            continue
+
+        kw_issues = health.get("keyword_issues") or {}
+
+        # Misplaced keywords mentioning THIS page (either as current or as target)
+        my_misplaced = []
+        for m in (kw_issues.get("misplaced_keywords") or []):
+            if not isinstance(m, dict):
+                continue
+            cur_norm = normalize_url(m.get("current_page", "") or "")
+            tgt_norm = normalize_url(m.get("should_be_on", "") or "")
+            if cur_norm == url_norm or tgt_norm == url_norm:
+                my_misplaced.append(m)
+
+        # Cannibalization where this page is involved
+        my_cannibal = []
+        for c in (kw_issues.get("cannibalization") or []):
+            if not isinstance(c, dict):
+                continue
+            page_list = c.get("pages") or []
+            if any(normalize_url(p) == url_norm for p in page_list):
+                my_cannibal.append(c)
+
+        # Priority actions targeting this page
+        my_actions = []
+        for a in (health.get("priority_actions") or []):
+            if not isinstance(a, dict):
+                continue
+            if normalize_url(a.get("page", "") or "") == url_norm:
+                my_actions.append(a)
+
+        if not (my_misplaced or my_cannibal or my_actions):
+            continue
+
+        insights.append(f"\nCluster '{topic}':")
+        for m in my_misplaced[:5]:
+            cur = m.get("current_page", "")
+            tgt = m.get("should_be_on", "")
+            kw = m.get("keyword", "")
+            reason = m.get("reason", "")
+            if normalize_url(cur) == url_norm and normalize_url(tgt) != url_norm:
+                insights.append(
+                    f"  - REMOVE keyword '{kw}' from this page — should be on {tgt}. {reason}"
+                )
+            elif normalize_url(tgt) == url_norm:
+                insights.append(
+                    f"  - OWN keyword '{kw}' on this page (currently misplaced on {cur}). {reason}"
+                )
+            else:
+                insights.append(f"  - Keyword '{kw}' misplacement: {reason}")
+        for c in my_cannibal[:5]:
+            others = [p for p in (c.get("pages") or []) if normalize_url(p) != url_norm]
+            insights.append(
+                f"  - CANNIBAL '{c.get('keyword','')}' — also on {', '.join(others[:3])}. Fix: {c.get('fix','')}"
+            )
+        for a in my_actions[:5]:
+            insights.append(
+                f"  - [{(a.get('impact','medium') or 'medium').upper()}] {a.get('action','')}"
+            )
+
+    if not insights:
+        return ""
+
+    return (
+        "\n\n## CLUSTER HEALTH INSIGHTS (AI strategic review — TRUMPS keyword optimization signals below)\n"
+        "These items come from a cluster-level AI review. They take PRECEDENCE over the per-page "
+        "GSC/keyword data — if a keyword is flagged as 'should be on another page', do NOT optimize "
+        "this page for it (even if GSC shows impressions). If this page is the strategic winner of "
+        "a cannibalization conflict, optimize for it; if it's the loser, recommend differentiation "
+        "or redirect, not stronger optimization."
+        + "".join(insights)
+    )
 
 
 def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str:
@@ -4436,6 +4620,7 @@ Language: {language}
 
 ## TOPIC CLUSTER CONTEXT (this page's role in the site's topic structure)
 {_format_cluster_context(page_data, topic_clusters)}
+{_format_cluster_health_insights(page_data, topic_clusters)}
 
 ## GSC KEYWORDS (sorted by impressions, these are queries users search to find this page)
 {', '.join(target_keywords)}
