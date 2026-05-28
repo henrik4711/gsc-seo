@@ -214,6 +214,78 @@ def fetch_page_level_summary(
     return df
 
 
+def fetch_gsc_two_windows(
+    service,
+    site_url: str,
+    recent_days: int = 30,
+    prior_days: int = 30,
+    row_limit: int = 5000,
+) -> dict:
+    """Fetch page-level GSC data for two consecutive windows for trend
+    analysis. Used by Content Freshness detection (utils/content_freshness.py)
+    to flag decaying pages.
+
+    Two API calls — one per window — at page-only level (no query dim) so
+    payloads stay small even for sites with thousands of indexed pages.
+
+    Windows (working backwards from today, GSC's typical 2-day lag means
+    "today" in GSC = today - 2 days, but the API handles that internally
+    when we pass real calendar dates):
+      recent: [today - recent_days,                today]
+      prior:  [today - recent_days - prior_days,   today - recent_days]
+
+    Returns
+    -------
+    dict with:
+      recent_df : DataFrame with columns [page, clicks, impressions, ctr, position]
+      prior_df  : same shape
+      recent_window : tuple (start_iso, end_iso)
+      prior_window  : tuple (start_iso, end_iso)
+    """
+    end_recent = datetime.now().date()
+    start_recent = end_recent - timedelta(days=recent_days)
+    end_prior = start_recent
+    start_prior = end_prior - timedelta(days=prior_days)
+
+    def _fetch(start, end) -> pd.DataFrame:
+        request = {
+            "startDate": str(start),
+            "endDate": str(end),
+            "dimensions": ["page"],
+            "rowLimit": row_limit,
+            "dataState": "final",
+        }
+        response = _execute_with_retry(
+            service.searchanalytics().query(siteUrl=site_url, body=request)
+        )
+        rows = response.get("rows", [])
+        if not rows:
+            return pd.DataFrame(columns=["page", "clicks", "impressions", "ctr", "position"])
+        df = pd.DataFrame([
+            {
+                "page": r["keys"][0],
+                "clicks": r["clicks"],
+                "impressions": r["impressions"],
+                "ctr": r["ctr"],
+                "position": r["position"],
+            }
+            for r in rows
+        ])
+        from utils.ui_helpers import normalize_url
+        df["page"] = df["page"].apply(normalize_url)
+        return df
+
+    recent_df = _fetch(start_recent, end_recent)
+    prior_df = _fetch(start_prior, end_prior)
+
+    return {
+        "recent_df": recent_df,
+        "prior_df": prior_df,
+        "recent_window": (str(start_recent), str(end_recent)),
+        "prior_window": (str(start_prior), str(end_prior)),
+    }
+
+
 def identify_ctr_gaps(df: pd.DataFrame, gap_threshold: float = -20.0,
                       exclude_brand: bool = True) -> pd.DataFrame:
     """

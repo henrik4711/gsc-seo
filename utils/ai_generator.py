@@ -4298,18 +4298,36 @@ def _format_cluster_health_insights(page_data: dict, topic_clusters: dict = None
                 f"  - [{(a.get('impact','medium') or 'medium').upper()}] {a.get('action','')}"
             )
 
-    if not insights:
-        return ""
+    # Build the cluster_health portion (or empty string if no findings).
+    if insights:
+        ch_block = (
+            "\n\n## CLUSTER HEALTH INSIGHTS (AI strategic review — TRUMPS keyword optimization signals below)\n"
+            "These items come from a cluster-level AI review. They take PRECEDENCE over the per-page "
+            "GSC/keyword data — if a keyword is flagged as 'should be on another page', do NOT optimize "
+            "this page for it (even if GSC shows impressions). If this page is the strategic winner of "
+            "a cannibalization conflict, optimize for it; if it's the loser, recommend differentiation "
+            "or redirect, not stronger optimization."
+            + "".join(insights)
+        )
+    else:
+        ch_block = ""
 
-    return (
-        "\n\n## CLUSTER HEALTH INSIGHTS (AI strategic review — TRUMPS keyword optimization signals below)\n"
-        "These items come from a cluster-level AI review. They take PRECEDENCE over the per-page "
-        "GSC/keyword data — if a keyword is flagged as 'should be on another page', do NOT optimize "
-        "this page for it (even if GSC shows impressions). If this page is the strategic winner of "
-        "a cannibalization conflict, optimize for it; if it's the loser, recommend differentiation "
-        "or redirect, not stronger optimization."
-        + "".join(insights)
-    )
+    # Append the content-freshness signal if THIS page is decaying. Done
+    # here (rather than at every callsite) because the 8 generation
+    # functions that call _format_cluster_health_insights are exactly the
+    # set that should also receive freshness context — if a page is
+    # flagged as decaying, every AI artifact we regenerate for it (plan,
+    # bottom text, intro, article rewrite) needs to target the decay
+    # angle. Doing it here means new callsites get freshness automatically.
+    try:
+        from utils.content_freshness import format_freshness_signal_for_prompt
+        freshness_block = format_freshness_signal_for_prompt(page_data.get("url", ""))
+    except Exception:
+        freshness_block = ""
+
+    if not ch_block and not freshness_block:
+        return ""
+    return ch_block + freshness_block
 
 
 def _format_cluster_context(page_data: dict, topic_clusters: dict = None) -> str:

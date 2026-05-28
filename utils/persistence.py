@@ -89,6 +89,10 @@ AI_CACHE_PREFIXES = (
     "art_meta_", "kw_text_", "kw_intro_", "kw_faq_", "link_result_",
     "_site_validation", "_ideal_structure", "_gap_analysis", "_plan_validation",
     "_impl_plans_", "_structure_fix",
+    # Content Freshness — single-file payload (one per run) with the
+    # list of decaying pages + their decay metrics. Loaded at startup so
+    # the view doesn't show "never run" after a Railway restart.
+    "_decaying_pages",
 )
 
 
