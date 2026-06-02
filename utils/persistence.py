@@ -246,6 +246,52 @@ BUNDLED_FILES = {
 }
 
 
+# For raw vendor CSV exports (Ahrefs, SF), generic pd.read_csv loads
+# data but leaves column names in vendor format ("Target URL",
+# "Referring page URL", "Address", "H1-1" etc.). Downstream consumers
+# like build_page_authority expect canonical names ("target_url",
+# "source_url", "url", "h1") — produced by the specific parsers below.
+#
+# Maps each logical bundled-file key to its parser function. When set,
+# _unpack_bundled_data routes the file through the parser instead of
+# the generic CSV reader. The parser handles encoding + separator
+# detection AND column normalization in one pass.
+#
+# sf_inlinks is intentionally absent: prepare_inlinks.py already runs
+# parse_all_inlinks during prep, so the bundled CSV is canonical and
+# re-parsing would just waste 30+s of dedup work.
+BUNDLED_DATAFRAME_PARSERS: dict = {
+    "sf_pages":                "ahrefs_import._sf_pages",  # placeholder; resolved below
+    "ahrefs_best_by_links":    "ahrefs_best_by_links",
+    "ahrefs_backlinks":        "ahrefs_backlinks",
+    "ahrefs_organic_keywords": "ahrefs_organic_keywords",
+}
+
+
+def _resolve_bundled_parser(logical_key: str):
+    """Lazily import and return the parser callable for a bundled-file
+    logical key, or None if no parser is registered.
+
+    Lazy import keeps utils.persistence from carrying screaming_frog +
+    ahrefs imports at module load time — those modules pull in pandas
+    + bs4 + regex chains that aren't needed when persistence is just
+    saving JSON or settings.
+    """
+    if logical_key == "sf_pages":
+        from utils.screaming_frog_import import parse_all_pages
+        return parse_all_pages
+    if logical_key == "ahrefs_best_by_links":
+        from utils.ahrefs_import import parse_best_by_links
+        return parse_best_by_links
+    if logical_key == "ahrefs_backlinks":
+        from utils.ahrefs_import import parse_backlinks
+        return parse_backlinks
+    if logical_key == "ahrefs_organic_keywords":
+        from utils.ahrefs_import import parse_organic_keywords
+        return parse_organic_keywords
+    return None
+
+
 def _site_code() -> str:
     """Resolve current shop's site code from env var. Returns lowercase
     string ('se', 'dk', 'eu'...) or '' if unset."""
@@ -293,6 +339,35 @@ def _resolve_bundled_path(stem: str, ext: str) -> str | None:
     return None
 
 
+def _load_bundled_dataframe(logical_key: str, target_path: str) -> pd.DataFrame:
+    """Load a bundled-data CSV into a canonical-column DataFrame.
+
+    Routes raw vendor CSV exports (Ahrefs, SF) through their specific
+    parsers so column names come out in the canonical form downstream
+    consumers expect ("target_url", "source_url", "url", "h1" etc.).
+    Falls back to the generic encoding+sep-aware reader for files
+    that are already canonical (sf_inlinks output from prepare_inlinks).
+
+    The parser dispatch is what build_page_authority needed: without
+    it, ahrefs_backlinks loaded with "Target URL" column and the
+    derivation crashed with KeyError: 'target_url'.
+
+    Pass file BYTES to the parser (it accepts either bytes or a file-
+    like with .read()). We read the file fresh each call rather than
+    pass the path because the parsers don't accept paths directly.
+    """
+    parser = _resolve_bundled_parser(logical_key)
+    if parser is None:
+        # No parser registered — file is already canonical (e.g.
+        # sf_inlinks deduped output from prepare_inlinks.py).
+        return _read_csv_with_encoding_fallback(target_path)
+
+    with open(target_path, "rb") as f:
+        file_bytes = f.read()
+    df = parser(file_bytes)
+    return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+
+
 def _unpack_bundled_data():
     """Decompress bundled .gz files to /data volume on first run.
 
@@ -336,7 +411,7 @@ def _unpack_bundled_data():
             # without re-unpacking, then fall through to next iteration.
             try:
                 if dtype == "dataframe":
-                    df = _read_csv_with_encoding_fallback(target_path)
+                    df = _load_bundled_dataframe(logical_key, target_path)
                     if not df.empty:
                         df = _normalize_df_urls(df)
                         st.session_state[key] = df
@@ -404,7 +479,7 @@ def _unpack_bundled_data():
         # ── Load into session state ─────────────────────────────
         try:
             if dtype == "dataframe":
-                df = _read_csv_with_encoding_fallback(target_path)
+                df = _load_bundled_dataframe(logical_key, target_path)
                 if not df.empty:
                     df = _normalize_df_urls(df)
                     st.session_state[key] = df
