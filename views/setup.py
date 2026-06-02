@@ -443,12 +443,42 @@ def render():
                     except Exception:
                         pass
             # Re-run the unpack now so new data is live immediately
-            _unpack_bundled_data()
-            st.success(
-                f"Refreshed bundled data — re-unpacked from bundled_data/. "
-                f"Cleared old files: {', '.join(cleared) if cleared else '(none on disk)'}. "
-                f"Audit results and quality verdicts kept."
-            )
+            unpack_result = _unpack_bundled_data() or {}
+            loaded = unpack_result.get("loaded", [])
+            errors = unpack_result.get("errors", [])
+            skipped = unpack_result.get("skipped", [])
+
+            if not errors:
+                st.success(
+                    f"Refreshed bundled data — re-unpacked from bundled_data/. "
+                    f"Loaded: {', '.join(loaded) if loaded else '(none)'}. "
+                    f"Cleared old files: {', '.join(cleared) if cleared else '(none on disk)'}. "
+                    f"Audit results and quality verdicts kept."
+                )
+            else:
+                # Surface per-file failures so the operator doesn't have
+                # to dig through Railway logs to find out what broke.
+                st.warning(
+                    f"Refresh partially succeeded. "
+                    f"Loaded: {', '.join(loaded) if loaded else '(none)'}. "
+                    f"Errors below — fix and click Refresh again."
+                )
+                for err in errors:
+                    st.error(
+                        f"**{err.get('key', '?')}** failed at stage "
+                        f"`{err.get('stage', '?')}`:\n\n```\n{err.get('msg', '')}\n```"
+                    )
+                # Hint about the most common cause: out-of-memory on
+                # Railway when the SF inlinks CSV is too big for the
+                # service's memory tier.
+                if any("MemoryError" in (e.get("msg") or "") for e in errors):
+                    st.info(
+                        "**MemoryError fix**: upgrade this Railway "
+                        "service's memory tier (Service → Settings → "
+                        "Resources) and click Refresh again. The "
+                        "unpacked .csv is already on /data so retry "
+                        "won't re-decompress."
+                    )
             st.rerun()
 
         # ── RESET ALL DATA ─────────────────────────────────────────
