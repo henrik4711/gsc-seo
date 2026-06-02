@@ -505,6 +505,68 @@ def render():
                 del st.session_state["_refresh_bundled_result"]
                 st.rerun()
 
+        # ── RESYNC MSHOP ACTIVE PAGES ──────────────────────────────
+        # Targeted refresh of just the Mshop Admin API URL list. Use
+        # when the cached list contains URLs for the wrong shop
+        # (stale from before a storeId fix), or when categories /
+        # CMS pages / filter pages have changed on the Mshop side
+        # and you want them reflected immediately. Far lighter than
+        # RESET ALL DATA — keeps audit results, GSC data, AI cache.
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### Re-sync Mshop active pages")
+        st.markdown(
+            "<p style='color:#5bb4d4; font-size:0.8rem;'>"
+            "Re-fetches the category + CMS page + filter page URL list "
+            "from the Mshop Admin API for this service's <code>FOOTER_TEXT_STORE_ID</code>. "
+            "<strong>Use when</strong> the bulk audit is scraping URLs for the wrong shop, "
+            "or after Mshop staff have added/removed pages.</p>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Re-sync Mshop active pages now", type="primary",
+                     key="btn_resync_mshop"):
+            try:
+                from utils.mshop_admin_api import fetch_active_pages_all
+                from utils.persistence import save_key
+                # Clear first so the auto-sync inside fetch isn't shadowed
+                st.session_state.pop("mshop_active_pages", None)
+                result = fetch_active_pages_all()
+                if result.get("status") in ("success", "partial"):
+                    st.session_state["mshop_active_pages"] = result
+                    try:
+                        save_key("mshop_active_pages")
+                    except Exception:
+                        pass
+                    counts = result.get("counts", {}) or {}
+                    sample_urls = []
+                    for meta in (result.get("lookup") or {}).values():
+                        if isinstance(meta, dict):
+                            u = meta.get("url", "")
+                            if u:
+                                sample_urls.append(u)
+                                if len(sample_urls) >= 3:
+                                    break
+                    msg = (
+                        f"Re-synced — got {counts.get('category', 0)} categories "
+                        f"+ {counts.get('cms', 0)} CMS + "
+                        f"{counts.get('filterpage', 0)} filter pages. "
+                    )
+                    if sample_urls:
+                        msg += f"First URLs: {', '.join(sample_urls)}"
+                    st.success(msg)
+                else:
+                    st.error(
+                        f"Re-sync failed (status={result.get('status')}). "
+                        f"Errors: {result.get('errors', [])}"
+                    )
+            except Exception as e:
+                try:
+                    from utils.errors import report_error
+                    report_error(stage="mshop_resync_button",
+                                 key="mshop_active_pages", error=e)
+                except Exception:
+                    pass
+                st.error(f"Re-sync failed: {e}")
+
         # ── RESET ALL DATA ─────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### Reset All Data")
