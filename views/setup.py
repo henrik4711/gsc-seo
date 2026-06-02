@@ -420,6 +420,7 @@ def render():
             # target_name + key. The dict KEY is the logical key (e.g.
             # "sf_inlinks"), NOT a filename — name it logical_key to stay
             # consistent with the loop in persistence._unpack_bundled_data.
+            delete_warnings = []
             for logical_key, (_stem, _ext, target_name, key, _dtype) in BUNDLED_FILES.items():
                 # Remove from session state so the unpacker re-loads it
                 if key in st.session_state:
@@ -431,7 +432,7 @@ def render():
                         os.remove(target_path)
                         cleared.append(target_name)
                     except Exception as e:
-                        st.warning(f"Could not delete {target_name}: {e}")
+                        delete_warnings.append(f"Could not delete {target_name}: {e}")
             # page_authority is derived from Ahrefs — clear so it rebuilds
             for derived in ("page_authority",):
                 if derived in st.session_state:
@@ -444,34 +445,52 @@ def render():
                         pass
             # Re-run the unpack now so new data is live immediately
             unpack_result = _unpack_bundled_data() or {}
-            loaded = unpack_result.get("loaded", [])
-            errors = unpack_result.get("errors", [])
-            skipped = unpack_result.get("skipped", [])
 
-            if not errors:
+            # Store result in session_state so the display survives the
+            # subsequent st.rerun() (without persistence the messages
+            # vanish before the user can read them — happens because
+            # st.success/error are tied to the current render and
+            # st.rerun() discards everything from this run).
+            st.session_state["_refresh_bundled_result"] = {
+                "loaded":  unpack_result.get("loaded", []),
+                "errors":  unpack_result.get("errors", []),
+                "skipped": unpack_result.get("skipped", []),
+                "cleared": cleared,
+                "delete_warnings": delete_warnings,
+            }
+            st.rerun()
+
+        # Persistent result panel — reads from session_state so the
+        # outcome of the last Refresh click stays visible across reruns
+        # until the user explicitly dismisses it. Without this, st.rerun()
+        # in the button handler wipes the messages before the user can
+        # read them.
+        _refresh_result = st.session_state.get("_refresh_bundled_result")
+        if _refresh_result:
+            r_loaded  = _refresh_result.get("loaded", [])
+            r_errors  = _refresh_result.get("errors", [])
+            r_cleared = _refresh_result.get("cleared", [])
+            r_dwarn   = _refresh_result.get("delete_warnings", [])
+
+            if not r_errors:
                 st.success(
                     f"Refreshed bundled data — re-unpacked from bundled_data/. "
-                    f"Loaded: {', '.join(loaded) if loaded else '(none)'}. "
-                    f"Cleared old files: {', '.join(cleared) if cleared else '(none on disk)'}. "
+                    f"Loaded: {', '.join(r_loaded) if r_loaded else '(none)'}. "
+                    f"Cleared old files: {', '.join(r_cleared) if r_cleared else '(none on disk)'}. "
                     f"Audit results and quality verdicts kept."
                 )
             else:
-                # Surface per-file failures so the operator doesn't have
-                # to dig through Railway logs to find out what broke.
                 st.warning(
                     f"Refresh partially succeeded. "
-                    f"Loaded: {', '.join(loaded) if loaded else '(none)'}. "
+                    f"Loaded: {', '.join(r_loaded) if r_loaded else '(none)'}. "
                     f"Errors below — fix and click Refresh again."
                 )
-                for err in errors:
+                for err in r_errors:
                     st.error(
                         f"**{err.get('key', '?')}** failed at stage "
                         f"`{err.get('stage', '?')}`:\n\n```\n{err.get('msg', '')}\n```"
                     )
-                # Hint about the most common cause: out-of-memory on
-                # Railway when the SF inlinks CSV is too big for the
-                # service's memory tier.
-                if any("MemoryError" in (e.get("msg") or "") for e in errors):
+                if any("MemoryError" in (e.get("msg") or "") for e in r_errors):
                     st.info(
                         "**MemoryError fix**: upgrade this Railway "
                         "service's memory tier (Service → Settings → "
@@ -479,7 +498,12 @@ def render():
                         "unpacked .csv is already on /data so retry "
                         "won't re-decompress."
                     )
-            st.rerun()
+            for w in r_dwarn:
+                st.warning(w)
+
+            if st.button("Dismiss refresh result", key="btn_dismiss_refresh"):
+                del st.session_state["_refresh_bundled_result"]
+                st.rerun()
 
         # ── RESET ALL DATA ─────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
