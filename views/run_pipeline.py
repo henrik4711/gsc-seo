@@ -411,15 +411,75 @@ def _run_bulk_audit():
     # ── Determine the URL set to audit ─────────────────────────────
     # PRIMARY: Mshop Admin API active pages (authoritative). Auto-sync
     # if not yet cached so first-time users don't have to remember a
-    # separate sync step.
+    # separate sync step. ALWAYS validate the cache before using it —
+    # the auto-invalidation in load_all only fires on a fresh session
+    # boot, and Streamlit can keep session_state alive across what looks
+    # like a redeploy.
     target_urls = []
     source_label = ""
     mshop_active = st.session_state.get("mshop_active_pages") or {}
     mshop_lookup = (mshop_active or {}).get("lookup") or {}
+
+    # ── Diagnostic: surface env + cache state in the UI so the
+    # operator can SEE what's happening, not guess from logs
+    import os as _os
+    _site_code_env = (_os.environ.get("SITE_CODE") or "").strip().lower()
+    _store_id_env = (_os.environ.get("FOOTER_TEXT_STORE_ID") or "").strip()
+    _api_base_env = (_os.environ.get("MSHOP_ADMIN_API_BASE") or _os.environ.get("FOOTER_TEXT_API") or "").strip()
+
+    # Sample first 5 cached URLs for visibility
+    _cache_sample = []
+    for meta in mshop_lookup.values():
+        if isinstance(meta, dict):
+            u = meta.get("url", "")
+            if u:
+                _cache_sample.append(u)
+                if len(_cache_sample) >= 5:
+                    break
+
+    with st.expander("🔎 Bulk audit input diagnostic — env + URL source", expanded=True):
+        st.markdown(
+            f"- **SITE_CODE** = `{_site_code_env or '(unset)'}`  ← determines which shop we expect\n"
+            f"- **FOOTER_TEXT_STORE_ID** = `{_store_id_env or '(unset)'}`  ← sent to Mshop API\n"
+            f"- **MSHOP_ADMIN_API_BASE / FOOTER_TEXT_API** = `{_api_base_env or '(unset)'}`\n"
+            f"- **Cached URLs**: {len(mshop_lookup)} (sample: {_cache_sample[:5] or '(empty)'})"
+        )
+
+    # Validate cache matches this shop — if not, wipe + re-sync
+    if mshop_lookup:
+        try:
+            from utils.mshop_admin_api import validate_active_pages_match_site
+            is_valid, reason = validate_active_pages_match_site(mshop_active)
+        except Exception as _ve:
+            is_valid, reason = True, f"(validator import failed: {_ve})"
+        if not is_valid:
+            st.warning(
+                f"⚠ Cached mshop_active_pages is for the WRONG shop and is being "
+                f"discarded now. Reason: {reason}"
+            )
+            try:
+                from utils.errors import report_error
+                report_error(stage="bulk_audit_cache_validation",
+                             key="mshop_active_pages",
+                             message=reason, severity="warning")
+            except Exception:
+                pass
+            # Wipe both session and disk so the next code path can re-sync clean
+            st.session_state.pop("mshop_active_pages", None)
+            try:
+                from utils.persistence import DATA_DIR
+                _stale = _os.path.join(DATA_DIR, "mshop_active_pages.json")
+                if _os.path.exists(_stale):
+                    _os.remove(_stale)
+            except Exception:
+                pass
+            mshop_active = {}
+            mshop_lookup = {}
+
     if not mshop_lookup:
         try:
             from utils.mshop_admin_api import fetch_active_pages_all
-            print("[bulk_audit] Mshop active-pages not cached — auto-syncing now")
+            st.info("Mshop active-pages cache empty or invalid — syncing now…")
             mshop_active = fetch_active_pages_all()
             if mshop_active.get("status") in ("success", "partial"):
                 st.session_state["mshop_active_pages"] = mshop_active
@@ -428,10 +488,29 @@ def _run_bulk_audit():
                 except Exception:
                     pass
                 mshop_lookup = mshop_active.get("lookup") or {}
+                # Surface what the API actually returned so the operator
+                # can verify the right shop's URLs came back
+                _fresh_sample = []
+                for meta in mshop_lookup.values():
+                    if isinstance(meta, dict):
+                        u = meta.get("url", "")
+                        if u:
+                            _fresh_sample.append(u)
+                            if len(_fresh_sample) >= 5:
+                                break
+                st.success(
+                    f"Sync OK — {mshop_active.get('counts', {})}. "
+                    f"First 5 URLs from API: {_fresh_sample}"
+                )
                 print(f"[bulk_audit] Mshop sync done: {mshop_active.get('counts', {})}")
             else:
+                st.error(
+                    f"Mshop sync FAILED. Status: {mshop_active.get('status')}. "
+                    f"Errors: {mshop_active.get('errors')}"
+                )
                 print(f"[bulk_audit] Mshop sync failed: {mshop_active.get('errors')}")
         except Exception as e:
+            st.error(f"Mshop API auto-sync exception: {e}")
             print(f"[bulk_audit] Mshop API auto-sync exception: {e}")
 
     if mshop_lookup:
