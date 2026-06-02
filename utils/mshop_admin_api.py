@@ -5,12 +5,19 @@ intro / description fields on categories, CMS pages, and filter pages.
 Required Railway env vars (same credentials as bottom-text push):
   FOOTER_TEXT_API_USER  — Basic auth username
   FOOTER_TEXT_API_PASS  — Basic auth password
-  FOOTER_TEXT_STORE_ID  — integer store ID (used for category texts updates).
-                         The Mshop Admin API is multi-tenant — set this to the
-                         numeric ID of the target shop:
+  FOOTER_TEXT_STORE_ID  — integer store ID. The Mshop Admin API is
+                         multi-tenant — set this to the numeric ID of
+                         the target shop:
                            1 = mshop.se
                            2 = mshop.dk
-                         (additional shops use higher IDs)
+                           3 = mshop.eu
+                           4 = mshop.de  (future)
+                         REQUIRED for BOTH list endpoints (?storeId=N
+                         query param) and update endpoints (storeId
+                         field in payload). Without it the API
+                         silently defaults to store 1 (mshop.se),
+                         which causes DK/EU services to see SE URLs
+                         and contaminate their /data caches.
   MSHOP_ADMIN_API_BASE  — base URL, e.g. https://www.mshop.se/public-api
                          (optional — derived from FOOTER_TEXT_API if absent)
 
@@ -104,11 +111,40 @@ def _get_list(endpoint: str) -> dict:
     err = _config_check()
     if err:
         return {"status": "error", "error": err, "items": []}
+
+    # storeId MUST be sent in the query — without it, the Mshop API
+    # defaults to store 1 (mshop.se) and returns SE pages for every
+    # service. This is the bug behind "DK/EU service shows SE pages"
+    # in the troubleshooting section of MULTISITE_SETUP.md.
+    store_id = _store_id()
+    if store_id <= 0:
+        msg = (
+            "FOOTER_TEXT_STORE_ID env var is not set (or is 0). "
+            "List endpoints require it — without storeId the Mshop "
+            "API silently defaults to store 1 (mshop.se), which "
+            "contaminates DK/EU services with SE URLs. Set the env "
+            "var to 1 (SE), 2 (DK), 3 (EU), 4 (DE) and redeploy."
+        )
+        # Surface to the operator's UI via the central errors system
+        # so this silent-default failure stops being invisible.
+        try:
+            from utils.errors import report_error
+            report_error(stage="mshop_admin_list", key=endpoint,
+                         message=msg, severity="error")
+        except Exception:
+            pass
+        return {"status": "error", "error": msg, "items": []}
+
     base = _api_base()
     user, pwd = _credentials()
     url = f"{base}/{endpoint.lstrip('/')}"
     try:
-        resp = requests.get(url, auth=(user, pwd), timeout=TIMEOUT_SECONDS)
+        resp = requests.get(
+            url,
+            auth=(user, pwd),
+            params={"storeId": store_id},
+            timeout=TIMEOUT_SECONDS,
+        )
     except requests.Timeout:
         return {"status": "timeout", "error": f"Timeout after {TIMEOUT_SECONDS}s", "items": []}
     except Exception as e:
