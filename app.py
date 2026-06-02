@@ -387,6 +387,17 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ── System Messages panel ─────────────────────────────────────────
+# Renders accumulated runtime errors/warnings/info reported via
+# utils.errors.report_error(). Visible on every view so silent failures
+# (disk writes, AI saves, CSV encoding, etc.) become visible without
+# the operator having to dig through Railway logs.
+try:
+    from utils.errors import render_errors_panel
+    render_errors_panel()
+except Exception:
+    pass  # Error panel itself must never break the app
+
 # Show ECN2 deep-link banner (dismissible)
 if st.session_state.get("_ecn2_url") and not st.session_state.get("_ecn2_dismissed"):
     _ecn2_col1, _ecn2_col2 = st.columns([10, 1])
