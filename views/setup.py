@@ -414,7 +414,11 @@ def render():
         if st.button("Refresh bundled data only", type="primary", key="btn_refresh_bundled"):
             from utils.persistence import DATA_DIR, BUNDLED_FILES, _unpack_bundled_data
             cleared = []
-            for gz_name, (target_name, key, _dtype) in BUNDLED_FILES.items():
+            # BUNDLED_FILES values became 5-tuples in commit 6289950 (multi-
+            # site SITE_CODE convention). The (stem, ext) prefix is consumed
+            # by _resolve_bundled_path elsewhere; this loop only needs
+            # target_name + key.
+            for gz_name, (_stem, _ext, target_name, key, _dtype) in BUNDLED_FILES.items():
                 # Remove from session state so the unpacker re-loads it
                 if key in st.session_state:
                     del st.session_state[key]
