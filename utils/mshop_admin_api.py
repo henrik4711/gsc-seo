@@ -75,6 +75,86 @@ def _store_id() -> int:
         return 0
 
 
+# Maps SITE_CODE env-var value → expected URL domain substring. Used by
+# validate_active_pages_match_site() below to detect when a cached
+# mshop_active_pages dict on /data was synced before a multi-site fix
+# and contains URLs for the wrong shop.
+_SITE_CODE_TO_DOMAIN = {
+    "se": "mshop.se",
+    "dk": "mshop.dk",
+    "eu": "mshop.eu",
+    "de": "mshop.de",  # future shop
+}
+
+
+def validate_active_pages_match_site(cache: dict | None) -> tuple[bool, str]:
+    """Check whether a cached mshop_active_pages dict contains URLs that
+    match this service's SITE_CODE.
+
+    Without this, a /data cache synced when FOOTER_TEXT_STORE_ID was
+    wrong (or before storeId was being sent to list endpoints) keeps
+    returning the wrong shop's URLs even after the env var or code is
+    fixed — because run_pipeline's bulk audit auto-syncs only when the
+    cache is empty (see views/run_pipeline.py:419-435).
+
+    Returns (is_valid, reason). reason is empty if valid, otherwise a
+    short human-readable diagnostic the caller can surface to the UI.
+
+    Cases that return (True, ""):
+      - cache is empty / None / has no lookup (caller will trigger
+        fresh sync naturally)
+      - SITE_CODE not set (we can't validate; assume operator knows)
+      - SITE_CODE not in our domain map (forward-compat: don't reject)
+
+    Case that returns (False, reason):
+      - cache has URLs and >=50% don't contain the expected domain
+        substring for this SITE_CODE
+    """
+    if not isinstance(cache, dict):
+        return True, ""
+    lookup = cache.get("lookup") or {}
+    if not isinstance(lookup, dict) or not lookup:
+        return True, ""
+
+    from utils.persistence import _site_code  # late import to avoid cycle
+    site = _site_code()
+    if not site:
+        return True, ""
+    expected_domain = _SITE_CODE_TO_DOMAIN.get(site)
+    if not expected_domain:
+        return True, ""
+
+    # Sample up to first 20 URLs from the cache; if fewer than half
+    # contain the expected domain, consider the cache contaminated.
+    sample_urls = []
+    for meta in lookup.values():
+        if isinstance(meta, dict):
+            u = meta.get("url", "")
+            if u:
+                sample_urls.append(u)
+                if len(sample_urls) >= 20:
+                    break
+
+    if not sample_urls:
+        return True, ""
+
+    matching = sum(1 for u in sample_urls if expected_domain in u.lower())
+    match_rate = matching / len(sample_urls)
+    if match_rate >= 0.5:
+        return True, ""
+
+    # Find an example of the wrong-domain URL to surface in the diagnostic
+    wrong_example = next((u for u in sample_urls if expected_domain not in u.lower()), "")
+    return False, (
+        f"Cached mshop_active_pages contains {matching}/{len(sample_urls)} "
+        f"URLs matching expected domain '{expected_domain}' for "
+        f"SITE_CODE={site}. Example wrong-domain URL: {wrong_example!r}. "
+        f"This is a stale cache from a previous boot when storeId was "
+        f"wrong — discarding so the next bulk audit triggers a fresh "
+        f"sync against the correct shop."
+    )
+
+
 def _config_check() -> Optional[str]:
     """Return an error string if config is incomplete, None if OK."""
     base = _api_base()

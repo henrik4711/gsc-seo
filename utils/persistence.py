@@ -771,11 +771,80 @@ def load_all():
     # ── Unpack bundled data (shipped in git as .gz) ─────────────
     _unpack_bundled_data()
 
+    # ── Auto-invalidate stale shop-specific caches ───────────────
+    # mshop_active_pages can carry URLs for the WRONG shop if it was
+    # synced before the storeId fix landed. Self-heal by discarding
+    # any cache whose URLs don't match SITE_CODE — the next bulk audit
+    # will then auto-sync against the correct shop.
+    _validate_and_clean_shop_caches()
+
     st.session_state["_persistence_loaded"] = True
     if loaded:
         print(f"[persistence] Loaded: {', '.join(loaded)}")
     if ai_loaded:
         print(f"[persistence] AI cache loaded: {ai_loaded} items")
+
+
+# ── Shop-specific cache validation ────────────────────────────────
+
+
+def _validate_and_clean_shop_caches() -> None:
+    """Discard cached shop-specific data that doesn't match this service's
+    SITE_CODE. Called during load_all so stale cross-shop contamination
+    self-heals at boot — no manual RESET ALL DATA required.
+
+    Currently covers:
+      - mshop_active_pages: 50% of URLs must contain the expected domain
+        for SITE_CODE; otherwise the cache is wiped from session_state
+        AND from /data, and the operator is notified via report_error.
+
+    audit_results is NOT validated here because it can legitimately
+    contain URLs from various sources (manual audits of specific pages,
+    legacy imports). If audit_results contamination becomes an issue
+    we'll add a similar check that flags rather than auto-wipes.
+    """
+    cache = st.session_state.get("mshop_active_pages")
+    if not cache:
+        return
+    try:
+        from utils.mshop_admin_api import validate_active_pages_match_site
+    except Exception:
+        return  # mshop_admin_api not importable — skip silently
+    is_valid, reason = validate_active_pages_match_site(cache)
+    if is_valid:
+        return
+
+    # Surface in the System Messages panel so the operator knows the
+    # cache was auto-wiped and why
+    try:
+        from utils.errors import report_error
+        report_error(
+            stage="mshop_active_pages_validation",
+            key="mshop_active_pages",
+            message=reason,
+            severity="warning",
+        )
+    except Exception:
+        pass
+
+    # Wipe from session and disk so next bulk audit triggers a fresh
+    # sync against the correct shop
+    st.session_state.pop("mshop_active_pages", None)
+    target_path = _file_path("mshop_active_pages", "json") if _volume_available() else ""
+    if target_path and os.path.exists(target_path):
+        try:
+            os.remove(target_path)
+        except Exception as e:
+            try:
+                from utils.errors import report_error
+                report_error(
+                    stage="mshop_active_pages_validation",
+                    key="mshop_active_pages",
+                    error=e,
+                    message=f"Could not delete stale {target_path}: {e}",
+                )
+            except Exception:
+                pass
 
 
 # ── Utility ───────────────────────────────────────────────────────
