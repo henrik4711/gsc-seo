@@ -243,7 +243,7 @@ def _unpack_bundled_data():
             continue
 
         try:
-            print(f"[bundled] Unpacking {gz_name}...")
+            print(f"[bundled] Unpacking {logical_key} from {os.path.basename(gz_path)}...")
             with gzip.open(gz_path, "rb") as f_in:
                 with open(target_path, "wb") as f_out:
                     # Stream in chunks to avoid memory spike
@@ -271,7 +271,7 @@ def _unpack_bundled_data():
                     unpacked.append(key)
 
         except Exception as e:
-            print(f"[bundled] Failed {gz_name}: {e}")
+            print(f"[bundled] Failed {logical_key}: {e}")
 
     if unpacked:
         print(f"[bundled] Loaded from bundled data: {', '.join(unpacked)}")

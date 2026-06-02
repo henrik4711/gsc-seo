@@ -417,8 +417,10 @@ def render():
             # BUNDLED_FILES values became 5-tuples in commit 6289950 (multi-
             # site SITE_CODE convention). The (stem, ext) prefix is consumed
             # by _resolve_bundled_path elsewhere; this loop only needs
-            # target_name + key.
-            for gz_name, (_stem, _ext, target_name, key, _dtype) in BUNDLED_FILES.items():
+            # target_name + key. The dict KEY is the logical key (e.g.
+            # "sf_inlinks"), NOT a filename — name it logical_key to stay
+            # consistent with the loop in persistence._unpack_bundled_data.
+            for logical_key, (_stem, _ext, target_name, key, _dtype) in BUNDLED_FILES.items():
                 # Remove from session state so the unpacker re-loads it
                 if key in st.session_state:
                     del st.session_state[key]
