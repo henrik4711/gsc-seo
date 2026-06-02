@@ -437,13 +437,25 @@ def _run_bulk_audit():
                 if len(_cache_sample) >= 5:
                     break
 
-    with st.expander("🔎 Bulk audit input diagnostic — env + URL source", expanded=True):
-        st.markdown(
-            f"- **SITE_CODE** = `{_site_code_env or '(unset)'}`  ← determines which shop we expect\n"
-            f"- **FOOTER_TEXT_STORE_ID** = `{_store_id_env or '(unset)'}`  ← sent to Mshop API\n"
-            f"- **MSHOP_ADMIN_API_BASE / FOOTER_TEXT_API** = `{_api_base_env or '(unset)'}`\n"
-            f"- **Cached URLs**: {len(mshop_lookup)} (sample: {_cache_sample[:5] or '(empty)'})"
-        )
+    # Plain markdown block — st.expander cannot be nested inside the
+    # outer pipeline-step expander that wraps each step in run_pipeline.
+    # Streamlit raises StreamlitAPIException ("Expanders may not be
+    # nested inside other expanders") if we try.
+    st.markdown(
+        "<div style='background:#12121f; border:1px solid #5533ff; "
+        "border-radius:6px; padding:0.8rem; margin:0.5rem 0;'>"
+        "<div style='font-family:\"IBM Plex Mono\",monospace; "
+        "font-size:0.7rem; color:#5533ff; margin-bottom:0.4rem; "
+        "letter-spacing:0.1em;'>"
+        "BULK AUDIT INPUT DIAGNOSTIC — ENV + URL SOURCE</div>"
+        f"<div style='font-size:0.85rem; line-height:1.7; color:#e8e8f0;'>"
+        f"&bull; <strong>SITE_CODE</strong> = <code>{_site_code_env or '(unset)'}</code> &larr; determines which shop we expect<br>"
+        f"&bull; <strong>FOOTER_TEXT_STORE_ID</strong> = <code>{_store_id_env or '(unset)'}</code> &larr; sent to Mshop API<br>"
+        f"&bull; <strong>MSHOP_ADMIN_API_BASE / FOOTER_TEXT_API</strong> = <code>{_api_base_env or '(unset)'}</code><br>"
+        f"&bull; <strong>Cached URLs</strong>: {len(mshop_lookup)} (sample: <code>{_cache_sample[:5] or '(empty)'}</code>)"
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
 
     # Validate cache matches this shop — if not, wipe + re-sync
     if mshop_lookup:
