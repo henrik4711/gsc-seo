@@ -112,31 +112,74 @@ def _volume_available() -> bool:
 
 
 def _read_csv_with_encoding_fallback(path: str) -> pd.DataFrame:
-    """Read a CSV trying common encodings until one parses.
+    """Read a CSV by auto-detecting BOTH encoding AND separator.
 
-    Why: Ahrefs CSV exports default to UTF-16 with BOM. SF Internal
-    HTML / All Inlinks exports are UTF-8. Letting pandas default to
-    UTF-8 silently fails on UTF-16 with `UnicodeDecodeError: 0xff at
-    position 0` (the BOM byte). This helper tries the realistic set in
-    order, returning the first successful parse.
+    Why: Ahrefs CSV exports default to UTF-16 with BOM and a TAB
+    separator (Excel-friendly). SF Internal HTML / All Inlinks exports
+    are UTF-8 with comma. Some Excel exports use semicolon. pandas
+    defaults are UTF-8 + comma which fails on the Ahrefs case in two
+    different ways:
+      1. UnicodeDecodeError on 0xff (the UTF-16 BOM byte)
+      2. After fixing encoding: ParserError because pandas reads the
+         whole tab-separated line as a single field, then sees an
+         unexpected delimiter further down
 
-    Order chosen so the cheapest correct match wins: most of our files
-    are UTF-8 already (SF + our own prepared outputs), so try that
-    first. utf-8-sig handles UTF-8-with-BOM (some tools emit it).
-    utf-16 / utf-16-le catch Ahrefs. latin-1 / cp1252 catch the rare
-    Windows-localized export. If all fail, re-raise the LAST error so
-    the caller sees a meaningful traceback.
+    Strategy:
+      1. Iterate encodings, decode the first line to determine the
+         likely separator (tab > semicolon-majority > comma)
+      2. For each encoding × separator combo, try pd.read_csv with
+         on_bad_lines='skip' and check the result has >1 column
+      3. Return the first valid result. If none, re-raise the last
+         exception so the caller sees a meaningful traceback.
+
+    Order chosen so the cheapest correct match wins: SF/our own
+    outputs are UTF-8 already, so try that first. utf-16 / utf-16-le
+    catch Ahrefs. latin-1 / cp1252 catch the rare Windows-localized
+    export.
     """
     encodings = ("utf-8", "utf-8-sig", "utf-16", "utf-16-le", "latin-1", "cp1252")
     last_err: Exception | None = None
+
     for enc in encodings:
+        # Phase 1: decode the first line to detect a likely separator
         try:
-            return pd.read_csv(path, encoding=enc)
+            with open(path, "r", encoding=enc) as f:
+                first_line = f.readline().lstrip("﻿")
         except (UnicodeDecodeError, UnicodeError) as e:
             last_err = e
             continue
+
+        # Reorder the separator priority based on what the header
+        # tells us (cheap heuristic — but if it's wrong we still
+        # fall back to trying the others).
+        if "\t" in first_line:
+            sep_priority = ("\t", ",", ";")
+        elif ";" in first_line and first_line.count(";") >= first_line.count(","):
+            sep_priority = (";", ",", "\t")
+        else:
+            sep_priority = (",", "\t", ";")
+
+        # Phase 2: try each separator with this encoding
+        for sep in sep_priority:
+            try:
+                df = pd.read_csv(
+                    path,
+                    encoding=enc,
+                    sep=sep,
+                    on_bad_lines="skip",
+                    engine="python",  # tolerates more variation than C engine
+                )
+                if len(df.columns) > 1:
+                    return df
+                # Single-column result almost always means we picked
+                # the wrong separator. Don't return — try next sep.
+            except (pd.errors.ParserError, UnicodeDecodeError, UnicodeError) as e:
+                last_err = e
+                continue
+
     raise last_err or ValueError(
-        f"Could not decode {path} with any of: {', '.join(encodings)}"
+        f"Could not parse {path} as CSV with any encoding × separator combo "
+        f"({', '.join(encodings)} × tab/comma/semicolon)"
     )
 
 
