@@ -384,6 +384,15 @@ def _unpack_bundled_data():
             print(_tb.format_exc())
             result["errors"].append({"key": logical_key, "stage": "unpack",
                                         "msg": err})
+            # Also report via the central errors system so the failure
+            # appears in the global System Messages panel — important
+            # because load_all() runs at boot and bypasses the Refresh
+            # button's result dict surfacing.
+            try:
+                from utils.errors import report_error
+                report_error(stage="bundled_unpack", key=logical_key, error=e)
+            except Exception:
+                pass
             # Remove partial target so retry can start clean
             try:
                 if os.path.exists(target_path):
@@ -416,6 +425,12 @@ def _unpack_bundled_data():
             err = f"load: MemoryError reading {target_name} ({os.path.getsize(target_path) / (1024 * 1024):.0f} MB CSV/JSON) — Railway memory tier too small for this dataset"
             print(f"[bundled] Failed {logical_key} during load: {err}")
             result["errors"].append({"key": logical_key, "stage": "load", "msg": err})
+            try:
+                from utils.errors import report_error
+                report_error(stage="bundled_load", key=logical_key, error=e,
+                             message=err)
+            except Exception:
+                pass
             # Keep the unpacked file on disk; the issue is memory not data
         except Exception as e:
             err = f"load: {type(e).__name__}: {e}"
@@ -423,6 +438,11 @@ def _unpack_bundled_data():
             print(_tb.format_exc())
             result["errors"].append({"key": logical_key, "stage": "load",
                                         "msg": err})
+            try:
+                from utils.errors import report_error
+                report_error(stage="bundled_load", key=logical_key, error=e)
+            except Exception:
+                pass
             # Remove the corrupt unpack so retry can start clean
             try:
                 if os.path.exists(target_path):
@@ -540,8 +560,17 @@ def save_ai_cache():
             try:
                 _save_ai_key(key, st.session_state[key])
                 count += 1
-            except Exception:
-                pass
+            except Exception as e:
+                # Was a silent pass — now surfaces in the UI so the
+                # operator knows their cached AI work isn't safely on
+                # disk. Without this, a successful "Bulk audit complete"
+                # toast can be followed by losing N AI verdicts on the
+                # next Railway restart with zero indication.
+                try:
+                    from utils.errors import report_error
+                    report_error(stage="save_ai_cache", key=key, error=e)
+                except Exception:
+                    print(f"[save_ai_cache] Failed {key}: {e}", file=__import__("sys").stderr)
     if count:
         print(f"[persistence] AI cache saved: {count} items")
 
@@ -555,7 +584,15 @@ def save_all():
             try:
                 _save_persist_key(key, st.session_state[key])
             except Exception as e:
-                print(f"[save_all] Failed {key}: {e}")
+                # Was stdout-only; now goes to the central reporter so
+                # the operator sees disk-write failures in the UI. Losing
+                # gsc_data or audit_results on save is silent corruption
+                # otherwise — operator restarts Railway and the work is gone.
+                try:
+                    from utils.errors import report_error
+                    report_error(stage="save_all", key=key, error=e)
+                except Exception:
+                    print(f"[save_all] Failed {key}: {e}", file=__import__("sys").stderr)
     save_ai_cache()
 
 
@@ -585,7 +622,10 @@ def load_all():
                     st.session_state[key] = val
                     loaded.append(key)
             elif data_type == "dataframe":
-                df = pd.read_csv(path)
+                # Use the encoding+separator-aware reader so legacy
+                # files saved in non-UTF-8 / non-comma formats load
+                # without silently failing.
+                df = _read_csv_with_encoding_fallback(path)
                 if not df.empty:
                     # Normalize URL columns loaded from disk
                     df = _normalize_df_urls(df)

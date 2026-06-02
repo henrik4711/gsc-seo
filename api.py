@@ -56,8 +56,20 @@ def _load_csv_as_records(filename: str) -> Optional[list[dict]]:
     path = os.path.join(DATA_DIR, filename)
     if not os.path.exists(path):
         return None
-    import pandas as pd
-    df = pd.read_csv(path)
+    # Use the encoding+separator-aware reader from persistence so a
+    # non-UTF-8 saved file (legacy or external import) doesn't silently
+    # return None — that translated into mysterious API 404s before.
+    try:
+        from utils.persistence import _read_csv_with_encoding_fallback
+        df = _read_csv_with_encoding_fallback(path)
+    except Exception as e:
+        try:
+            from utils.errors import report_error
+            report_error(stage="api_load_csv", key=filename, error=e)
+        except Exception:
+            print(f"[api] _load_csv_as_records failed for {filename}: {e}",
+                  file=__import__("sys").stderr)
+        return None
     if df.empty:
         return None
     return df.to_dict("records")
@@ -73,8 +85,17 @@ def _load_ai_cache(prefix: str) -> dict:
         try:
             with open(fpath, "r", encoding="utf-8") as f:
                 results[key] = json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            # Was a silent pass — now reports so the operator can see
+            # which cache files are corrupted instead of debugging
+            # "where did my saved AI plan go?" with no clues.
+            try:
+                from utils.errors import report_error
+                report_error(stage="api_load_ai_cache", key=key,
+                             error=e, severity="warning")
+            except Exception:
+                print(f"[api] _load_ai_cache failed for {key}: {e}",
+                      file=__import__("sys").stderr)
     return results
 
 
@@ -253,8 +274,19 @@ def page_audit(
         try:
             with open(quality_path, "r", encoding="utf-8") as f:
                 match["quality_assessment"] = json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            # Was a silent pass — wp_publisher then got partial data
+            # with no indication that enrichment failed. Now reports
+            # so downstream consumers can correlate missing fields with
+            # actual cache corruption.
+            try:
+                from utils.errors import report_error
+                report_error(stage="api_enrich_quality",
+                             key=match.get("url", "?"), error=e,
+                             severity="warning")
+            except Exception:
+                print(f"[api] quality enrich failed: {e}",
+                      file=__import__("sys").stderr)
 
     # Enrich with AI plan if available
     plan_path = os.path.join(AI_CACHE_DIR, f"_ai_plan_{url_hash}.json")
@@ -262,8 +294,15 @@ def page_audit(
         try:
             with open(plan_path, "r", encoding="utf-8") as f:
                 match["ai_plan"] = json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                from utils.errors import report_error
+                report_error(stage="api_enrich_ai_plan",
+                             key=match.get("url", "?"), error=e,
+                             severity="warning")
+            except Exception:
+                print(f"[api] ai_plan enrich failed: {e}",
+                      file=__import__("sys").stderr)
 
     return match
 
