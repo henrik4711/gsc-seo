@@ -307,6 +307,38 @@ def _post_update(endpoint: str, payload: dict) -> dict:
     err = _config_check()
     if err:
         return {"status": "error", "error": err, "payload": payload}
+
+    # Defensive central check: every update payload MUST include a
+    # positive storeId. The Mshop API silently defaults to store 1
+    # (mshop.se) when storeId is missing or zero, so a forgotten
+    # field doesn't fail the API call — it just lands on the wrong
+    # shop. We've already been bitten by this twice
+    # (update_cms_page_texts, update_filterpage_texts). Enforce
+    # storeId at the central poster so the next added endpoint
+    # can't repeat the pattern, and surface the failure via the
+    # central errors system so the operator sees it in the UI.
+    incoming_store_id = payload.get("storeId") if isinstance(payload, dict) else None
+    try:
+        incoming_store_id_int = int(incoming_store_id) if incoming_store_id is not None else 0
+    except (TypeError, ValueError):
+        incoming_store_id_int = 0
+    if incoming_store_id_int <= 0:
+        msg = (
+            f"Push to {endpoint} blocked: payload has no positive storeId "
+            f"(got {incoming_store_id!r}). Without it the Mshop API "
+            f"silently routes the request to store 1 (mshop.se). Set "
+            f"FOOTER_TEXT_STORE_ID on the Railway service (1=SE, 2=DK, "
+            f"3=EU, 4=DE) and verify the calling function includes "
+            f'"storeId": _store_id() in its payload dict.'
+        )
+        try:
+            from utils.errors import report_error
+            report_error(stage="mshop_admin_post", key=endpoint,
+                         message=msg, severity="error")
+        except Exception:
+            pass
+        return {"status": "error", "error": msg, "payload": payload}
+
     base = _api_base()
     user, pwd = _credentials()
     url = f"{base}/{endpoint.lstrip('/')}"
@@ -382,8 +414,11 @@ def update_cms_page_texts(
     meta_description: Optional[str] = None,
 ) -> dict:
     # CMS pages do NOT take a description field per the API spec.
+    # storeId is REQUIRED — without it the Mshop API silently defaults
+    # to store 1 (mshop.se) and DK/EU pushes land on the wrong shop.
     payload = {
         "cmsPageId": int(cms_page_id),
+        "storeId": _store_id(),
         "metaTitle": meta_title,
         "metaDescription": meta_description,
     }
@@ -396,8 +431,11 @@ def update_filterpage_texts(
     meta_title: Optional[str] = None,
     meta_description: Optional[str] = None,
 ) -> dict:
+    # storeId is REQUIRED — without it the Mshop API silently defaults
+    # to store 1 (mshop.se) and DK/EU pushes land on the wrong shop.
     payload = {
         "filterPageId": int(filter_page_id),
+        "storeId": _store_id(),
         "description": description,
         "metaTitle": meta_title,
         "metaDescription": meta_description,
