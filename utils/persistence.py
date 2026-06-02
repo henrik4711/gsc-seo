@@ -111,6 +111,35 @@ def _volume_available() -> bool:
     return os.path.isdir(DATA_DIR)
 
 
+def _read_csv_with_encoding_fallback(path: str) -> pd.DataFrame:
+    """Read a CSV trying common encodings until one parses.
+
+    Why: Ahrefs CSV exports default to UTF-16 with BOM. SF Internal
+    HTML / All Inlinks exports are UTF-8. Letting pandas default to
+    UTF-8 silently fails on UTF-16 with `UnicodeDecodeError: 0xff at
+    position 0` (the BOM byte). This helper tries the realistic set in
+    order, returning the first successful parse.
+
+    Order chosen so the cheapest correct match wins: most of our files
+    are UTF-8 already (SF + our own prepared outputs), so try that
+    first. utf-8-sig handles UTF-8-with-BOM (some tools emit it).
+    utf-16 / utf-16-le catch Ahrefs. latin-1 / cp1252 catch the rare
+    Windows-localized export. If all fail, re-raise the LAST error so
+    the caller sees a meaningful traceback.
+    """
+    encodings = ("utf-8", "utf-8-sig", "utf-16", "utf-16-le", "latin-1", "cp1252")
+    last_err: Exception | None = None
+    for enc in encodings:
+        try:
+            return pd.read_csv(path, encoding=enc)
+        except (UnicodeDecodeError, UnicodeError) as e:
+            last_err = e
+            continue
+    raise last_err or ValueError(
+        f"Could not decode {path} with any of: {', '.join(encodings)}"
+    )
+
+
 def _normalize_json_urls(key: str, data):
     """Normalize URLs in JSON data loaded from disk."""
     from utils.ui_helpers import normalize_url
@@ -264,7 +293,7 @@ def _unpack_bundled_data():
             # without re-unpacking, then fall through to next iteration.
             try:
                 if dtype == "dataframe":
-                    df = pd.read_csv(target_path)
+                    df = _read_csv_with_encoding_fallback(target_path)
                     if not df.empty:
                         df = _normalize_df_urls(df)
                         st.session_state[key] = df
@@ -323,7 +352,7 @@ def _unpack_bundled_data():
         # ── Load into session state ─────────────────────────────
         try:
             if dtype == "dataframe":
-                df = pd.read_csv(target_path)
+                df = _read_csv_with_encoding_fallback(target_path)
                 if not df.empty:
                     df = _normalize_df_urls(df)
                     st.session_state[key] = df
