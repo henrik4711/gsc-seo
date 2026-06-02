@@ -226,22 +226,73 @@ def _unpack_bundled_data():
 
     Multi-shop aware: only loads files matching this service's SITE_CODE
     env var (see _resolve_bundled_path for resolution rules).
+
+    Returns a result dict so the caller (e.g. the Refresh-bundled-data
+    button in views/setup.py) can surface per-file errors to the UI
+    instead of relying on Railway logs:
+
+        {
+          "loaded":  ["sf_inlinks", "sf_link_map", ...],
+          "errors":  [{"key": "...", "stage": "unpack|load",
+                       "msg": "..."}],
+          "skipped": [{"key": "...", "reason": "..."}],
+        }
+
+    Existing callers that ignore the return value (load_all) keep
+    working unchanged.
     """
+    result = {"loaded": [], "errors": [], "skipped": []}
+
     if not _volume_available() or not os.path.isdir(BUNDLED_DIR):
-        return
+        result["skipped"].append({"key": "(all)",
+                                    "reason": "no /data volume or bundled dir"})
+        return result
 
     import gzip
-    unpacked = []
+    import traceback as _tb
     for logical_key, (stem, ext, target_name, key, dtype) in BUNDLED_FILES.items():
         gz_path = _resolve_bundled_path(stem, ext)
         target_path = os.path.join(DATA_DIR, target_name)
 
         # Skip if already unpacked or already loaded
-        if os.path.exists(target_path) or key in st.session_state:
+        if os.path.exists(target_path) and key in st.session_state:
+            result["skipped"].append({"key": logical_key,
+                                        "reason": "already unpacked + in session"})
             continue
+        if os.path.exists(target_path) and key not in st.session_state:
+            # Stale unpack from a previous boot — load it into session
+            # without re-unpacking, then fall through to next iteration.
+            try:
+                if dtype == "dataframe":
+                    df = pd.read_csv(target_path)
+                    if not df.empty:
+                        df = _normalize_df_urls(df)
+                        st.session_state[key] = df
+                        result["loaded"].append(logical_key)
+                        print(f"[bundled] Loaded stale unpack {target_name}")
+                elif dtype == "json":
+                    with open(target_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if data:
+                        st.session_state[key] = data
+                        result["loaded"].append(logical_key)
+                        print(f"[bundled] Loaded stale unpack {target_name}")
+                continue
+            except Exception as e:
+                # Stale file is corrupt — delete and fall through to
+                # re-unpack below.
+                print(f"[bundled] Stale {target_name} corrupt, removing: {e}")
+                try:
+                    os.remove(target_path)
+                except Exception:
+                    pass
+                # do NOT continue — fall through to fresh unpack
         if gz_path is None or not os.path.exists(gz_path):
+            result["skipped"].append({"key": logical_key,
+                                        "reason": "no bundled .gz for this SITE_CODE"})
             continue
 
+        # ── Fresh unpack ────────────────────────────────────────
         try:
             print(f"[bundled] Unpacking {logical_key} from {os.path.basename(gz_path)}...")
             with gzip.open(gz_path, "rb") as f_in:
@@ -255,29 +306,63 @@ def _unpack_bundled_data():
 
             size_mb = os.path.getsize(target_path) / (1024 * 1024)
             print(f"[bundled] Unpacked {target_name} ({size_mb:.1f} MB)")
+        except Exception as e:
+            err = f"unpack: {type(e).__name__}: {e}"
+            print(f"[bundled] Failed {logical_key} during unpack: {err}")
+            print(_tb.format_exc())
+            result["errors"].append({"key": logical_key, "stage": "unpack",
+                                        "msg": err})
+            # Remove partial target so retry can start clean
+            try:
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+            except Exception:
+                pass
+            continue
 
-            # Load into session state
+        # ── Load into session state ─────────────────────────────
+        try:
             if dtype == "dataframe":
                 df = pd.read_csv(target_path)
                 if not df.empty:
                     df = _normalize_df_urls(df)
                     st.session_state[key] = df
-                    unpacked.append(key)
+                    result["loaded"].append(logical_key)
+                else:
+                    result["errors"].append({"key": logical_key, "stage": "load",
+                                                "msg": "CSV parsed as empty DataFrame"})
             elif dtype == "json":
                 with open(target_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if data:
                     st.session_state[key] = data
-                    unpacked.append(key)
-
+                    result["loaded"].append(logical_key)
+                else:
+                    result["errors"].append({"key": logical_key, "stage": "load",
+                                                "msg": "JSON parsed as empty"})
+        except MemoryError as e:
+            err = f"load: MemoryError reading {target_name} ({os.path.getsize(target_path) / (1024 * 1024):.0f} MB CSV/JSON) — Railway memory tier too small for this dataset"
+            print(f"[bundled] Failed {logical_key} during load: {err}")
+            result["errors"].append({"key": logical_key, "stage": "load", "msg": err})
+            # Keep the unpacked file on disk; the issue is memory not data
         except Exception as e:
-            print(f"[bundled] Failed {logical_key}: {e}")
+            err = f"load: {type(e).__name__}: {e}"
+            print(f"[bundled] Failed {logical_key} during load: {err}")
+            print(_tb.format_exc())
+            result["errors"].append({"key": logical_key, "stage": "load",
+                                        "msg": err})
+            # Remove the corrupt unpack so retry can start clean
+            try:
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+            except Exception:
+                pass
 
-    if unpacked:
-        print(f"[bundled] Loaded from bundled data: {', '.join(unpacked)}")
+    if result["loaded"]:
+        print(f"[bundled] Loaded from bundled data: {', '.join(result['loaded'])}")
 
         # If we loaded Ahrefs raw data, build page_authority
-        if any(k.startswith("ahrefs_") for k in unpacked) and "page_authority" not in st.session_state:
+        if any(k.startswith("ahrefs_") for k in result["loaded"]) and "page_authority" not in st.session_state:
             try:
                 from utils.ahrefs_import import build_page_authority
                 authority = build_page_authority(
@@ -289,6 +374,10 @@ def _unpack_bundled_data():
                 print(f"[bundled] Built page_authority ({len(authority)} pages)")
             except Exception as e:
                 print(f"[bundled] Failed to build authority: {e}")
+                result["errors"].append({"key": "page_authority", "stage": "derive",
+                                            "msg": f"{type(e).__name__}: {e}"})
+
+    return result
 
 
 def _file_path(key: str, data_type: str) -> str:
