@@ -92,8 +92,17 @@ def render():
     try:
         from utils.persistence import save_key as _sk
         _sk("audit_results")
-    except Exception:
-        pass
+    except Exception as _e:
+        # Was a silent pass — the audit is the most expensive operation
+        # in the pipeline, and losing its persistence silently is the
+        # worst class of bug we have. Surface it so the operator knows
+        # to investigate (most likely cause: /data full or permissions).
+        try:
+            from utils.errors import report_error
+            report_error(stage="save_audit_results", key="audit_results",
+                         error=_e, severity="error")
+        except Exception:
+            pass
 
     # ── Normalized lookup helpers (cross-source matching) ─────────
     _audit_by_norm = {}

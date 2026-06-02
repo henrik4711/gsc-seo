@@ -42,8 +42,16 @@ def _save_to_disk() -> None:
         from utils.persistence import save
         save(ACTION_STATUS_KEY)
     except Exception as e:
-        # Persistence shouldn't be a hard dependency in tests / local dev
-        print(f"[action_status] save failed: {e}")
+        # Persistence shouldn't be a hard dependency in tests / local dev,
+        # but if it IS available and fails the operator needs to see it —
+        # otherwise their "Mark as handled" / skip-list / fix-history
+        # vanishes on next Railway restart with no warning.
+        try:
+            from utils.errors import report_error
+            report_error(stage="action_status_save", key=ACTION_STATUS_KEY,
+                         error=e, severity="warning")
+        except Exception:
+            print(f"[action_status] save failed: {e}", file=__import__("sys").stderr)
 
 
 # ── Read API ──────────────────────────────────────────────────────────
