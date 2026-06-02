@@ -172,16 +172,48 @@ def _process_inlinks(input_path: str, output_dir: str, site: str) -> dict | None
 
 
 def _process_passthrough(input_path: str, output_path: str) -> dict | None:
-    """Just gzip the raw file into bundled_data with the new name.
+    """Read input + canonicalize to UTF-8 + gzip into bundled_data.
 
-    Used for sf_pages and the 3 Ahrefs files — they need no preprocessing,
-    only renaming + gzipping for the site-specific bundle.
+    Used for sf_pages and the 3 Ahrefs files. They don't need any
+    structural preprocessing, but Ahrefs exports CSVs as UTF-16 with
+    BOM by default — and the unpacker on the Railway service uses
+    pd.read_csv which would silently fail with UnicodeDecodeError on
+    UTF-16 if we just byte-streamed the input. By decoding + re-
+    encoding as UTF-8 here, every bundled CSV is guaranteed to load
+    with the default pandas encoding regardless of which tool emitted it.
+
+    The decode attempts the common encodings in priority order. If all
+    fail, we fall back to byte-stream gzip and warn — the file is at
+    least preserved, and the unpacker has its own encoding fallback
+    chain that may yet save it.
     """
     if not os.path.exists(input_path):
         return None
     print(f"  Reading {os.path.basename(input_path)} ({_fmt_mb(input_path)})...")
-    _gzip_file(input_path, output_path)
-    print(f"  Wrote {os.path.basename(output_path)} ({_fmt_mb(output_path)}).")
+
+    encodings = ("utf-8", "utf-8-sig", "utf-16", "utf-16-le", "latin-1", "cp1252")
+    text: str | None = None
+    detected_enc: str | None = None
+    for enc in encodings:
+        try:
+            with open(input_path, "r", encoding=enc) as f:
+                text = f.read()
+            detected_enc = enc
+            break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+
+    if text is None or detected_enc is None:
+        print(f"  WARN: could not decode {os.path.basename(input_path)} as any common encoding — byte-streaming as-is.")
+        _gzip_file(input_path, output_path)
+        print(f"  Wrote {os.path.basename(output_path)} ({_fmt_mb(output_path)}).")
+        return {"path": output_path}
+
+    _gzip_bytes(text.encode("utf-8"), output_path)
+    if detected_enc == "utf-8":
+        print(f"  Wrote {os.path.basename(output_path)} ({_fmt_mb(output_path)}).")
+    else:
+        print(f"  Detected {detected_enc} → re-encoded as UTF-8 → {os.path.basename(output_path)} ({_fmt_mb(output_path)}).")
     return {"path": output_path}
 
 
