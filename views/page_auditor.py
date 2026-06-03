@@ -1859,6 +1859,86 @@ def render():
                         unsafe_allow_html=True,
                     )
 
+                # ── INLINE preview + push (fast path, no Quick Wins) ──
+                # Generate the new text, READ it right here, and push it
+                # live — without opening the heavy Quick Wins view. This is
+                # the single-page test loop: generate → review → push.
+                with st.expander("✏️ Preview & push this page (no Quick Wins)", expanded=False):
+                    _h = url_hash
+                    _bottom_obj = st.session_state.get(f"_bottom_text_{_h}") or {}
+                    _intro_obj = st.session_state.get(f"_intro_text_{_h}") or {}
+                    _plan_obj = st.session_state.get(f"_ai_plan_{_h}") or {}
+                    _mt = _plan_obj.get("meta_title", "") if isinstance(_plan_obj, dict) else ""
+                    _md = _plan_obj.get("meta_description", "") if isinstance(_plan_obj, dict) else ""
+                    _intro_html = _intro_obj.get("optimized_text", "") if isinstance(_intro_obj, dict) else ""
+                    _bottom_html = _bottom_obj.get("bottom_html", "") if isinstance(_bottom_obj, dict) else ""
+                    _has_gen = bool(_mt or _md or _intro_html or _bottom_html)
+
+                    _gc = st.columns(2)
+                    with _gc[0]:
+                        _gen_clicked = st.button(
+                            "🤖 Generate / regenerate text",
+                            key=f"inl_gen_{_h}", use_container_width=True,
+                        )
+                    with _gc[1]:
+                        _push_clicked = st.button(
+                            "🚀 Push + deploy this page",
+                            key=f"inl_push_{_h}", type="primary",
+                            use_container_width=True, disabled=not _has_gen,
+                            help="Pushes the generated intro + bottom + meta LIVE to Mshop.",
+                        )
+
+                    if _gen_clicked:
+                        from utils.page_fix_runner import (
+                            generate_all_fixes_for_page, page_audit_to_page_dict,
+                        )
+                        with st.spinner("Generating intro + bottom + meta (~90s)…"):
+                            generate_all_fixes_for_page(
+                                page_audit_to_page_dict(audit_row),
+                                force=True, batch_mode=True,
+                            )
+                        st.rerun()
+
+                    if _push_clicked:
+                        from utils.page_fix_runner import push_all_for_page
+                        with st.spinner("Pushing live to Mshop…"):
+                            _res = push_all_for_page(q["url"])
+                        if _res.get("errors"):
+                            st.error("Push errors:\n" + "\n".join(f"- {e}" for e in _res["errors"]))
+                        if _res.get("pushed_any"):
+                            st.success(
+                                f"Pushed live ✓ (bottom: {_res['bottom']}, "
+                                f"admin: {_res['admin']}). Use '🔍 Re-scrape + re-check' "
+                                f"above to verify it landed on the live site."
+                            )
+                        elif not _res.get("errors"):
+                            st.warning("Nothing pushed — generate the text first.")
+
+                    if _has_gen:
+                        if _mt:
+                            st.markdown(f"**Meta title:** {_mt}")
+                        if _md:
+                            st.markdown(f"**Meta description:** {_md}")
+                        if _intro_html:
+                            st.markdown("**Intro text (above product grid):**")
+                            st.markdown(
+                                f"<div style='background:#0d0d15; border:1px solid #2a2a40; "
+                                f"border-radius:6px; padding:0.8rem; color:#e8e8f0;'>{_intro_html}</div>",
+                                unsafe_allow_html=True,
+                            )
+                        if _bottom_html:
+                            st.markdown("**Bottom text (below product grid):**")
+                            st.markdown(
+                                f"<div style='background:#0d0d15; border:1px solid #2a2a40; "
+                                f"border-radius:6px; padding:0.8rem; color:#e8e8f0;'>{_bottom_html}</div>",
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        st.caption(
+                            "Click Generate to create the new text, review it here, "
+                            "then Push + deploy — no Quick Wins detour."
+                        )
+
                 # ── INLINE diagnostic: shown right below the button that
                 # triggered it, not at the top of the section. Avoids the
                 # "where did the result go?" UX problem when the card is

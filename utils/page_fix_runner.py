@@ -268,3 +268,87 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
 
     _gflog(f"runner.end url={url} status={status}")
     return status
+
+
+def push_all_for_page(url: str) -> dict:
+    """Push the ALREADY-generated bottom + intro + meta for ONE page live to
+    Mshop. Standalone twin of the Fix ALL push sequence, so the per-page
+    inline 'preview + push' button can publish a single page WITHOUT the
+    heavy Quick Wins view.
+
+    Reads the cached generation output (_bottom_text_/_intro_text_/_ai_plan_)
+    and:
+      - pushes bottom text via the footer API,
+      - pushes intro (description) + meta title/description via the admin API,
+      - mirrors what was pushed into the local audit row so the next quality
+        check / Fix ALL pass sees the fresh content.
+
+    Returns {"bottom": str, "admin": str, "errors": [str], "pushed_any": bool}.
+    """
+    import streamlit as _st
+    from utils.ui_helpers import stable_hash
+
+    h = stable_hash(url)
+    status = {"bottom": "skipped", "admin": "skipped", "errors": [], "pushed_any": False}
+
+    bottom = (_st.session_state.get(f"_bottom_text_{h}") or {}).get("bottom_html") or ""
+    if bottom:
+        try:
+            from utils.footer_text_api import push_footer_text
+            br = push_footer_text(url, bottom)
+            if br.get("status") != "success":
+                status["bottom"] = "error"
+                status["errors"].append(f"bottom push: {br.get('error', br.get('status'))}")
+            else:
+                status["bottom"] = "pushed"
+                status["pushed_any"] = True
+                try:
+                    from utils.audit_refresh import update_audit_after_push
+                    update_audit_after_push(url, bottom_text=bottom)
+                except Exception:
+                    pass
+        except Exception as e:
+            status["bottom"] = "error"
+            status["errors"].append(f"bottom push exception: {type(e).__name__}: {e}")
+
+    plan = _st.session_state.get(f"_ai_plan_{h}") or {}
+    intro_obj = _st.session_state.get(f"_intro_text_{h}") or {}
+    intro_html = intro_obj.get("optimized_text") or ""
+    meta_t = plan.get("meta_title", "") if isinstance(plan, dict) else ""
+    meta_d = plan.get("meta_description", "") if isinstance(plan, dict) else ""
+    if intro_html or meta_t or meta_d:
+        try:
+            from utils.mshop_admin_api import update_for_page, lookup_url
+            active = _st.session_state.get("mshop_active_pages") or {}
+            pi = lookup_url(active, url)
+            if not pi:
+                status["admin"] = "error"
+                status["errors"].append(
+                    "not in Mshop active-pages cache — cannot resolve page id"
+                )
+            else:
+                adm = update_for_page(
+                    pi,
+                    description=intro_html or None,
+                    meta_title=meta_t or None,
+                    meta_description=meta_d or None,
+                )
+                if adm.get("status") != "success":
+                    status["admin"] = "error"
+                    status["errors"].append(f"admin push: {adm.get('error', adm.get('status'))}")
+                else:
+                    status["admin"] = "pushed"
+                    status["pushed_any"] = True
+                    try:
+                        from utils.audit_refresh import update_audit_after_push
+                        update_audit_after_push(
+                            url, intro_text=intro_html or None,
+                            meta_title=meta_t or None, meta_description=meta_d or None,
+                        )
+                    except Exception:
+                        pass
+        except Exception as e:
+            status["admin"] = "error"
+            status["errors"].append(f"admin push exception: {type(e).__name__}: {e}")
+
+    return status
