@@ -159,6 +159,84 @@ def run_quality_batches(
     return errors
 
 
+def eligibility_diagnosis(audit_results: list) -> str:
+    """Human-readable explanation of WHY there are 0 eligible pages.
+
+    Step 7 only runs on category pages with >MIN_WORD_COUNT words (see
+    eligible_pages). When that set is empty the runner has nothing to do
+    and would otherwise return silently — which looks to the operator
+    like "the step started and stopped, nothing happened". This builds a
+    concrete diagnostic pointing at the actual cause so the fix is
+    obvious (almost always: re-run Step 6 with the correct Mshop
+    active-pages cache for THIS shop).
+    """
+    from collections import Counter
+
+    audit = audit_results or []
+    if not audit:
+        return (
+            "Step 7 has nothing to assess: audit_results is empty. "
+            "Run Step 6 (Bulk Audit Pages) first."
+        )
+
+    type_counts = Counter((r.get("page_type") or "missing") for r in audit)
+    type_str = ", ".join(f"{t}: {n}" for t, n in type_counts.most_common())
+
+    categories = [r for r in audit if r.get("page_type") in ELIGIBLE_PAGE_TYPES]
+    skip_set = set(st.session_state.get("_fix_skip_list") or [])
+    cats_over_words = [
+        r for r in categories if (r.get("word_count") or 0) > MIN_WORD_COUNT
+    ]
+    cats_skipped = [r for r in cats_over_words if r.get("url", "") in skip_set]
+
+    # Active-pages cache state — the gate that turns categories into
+    # "product" during Step 6 when it's empty / for the wrong shop.
+    active = st.session_state.get("mshop_active_pages") or {}
+    lookup = active.get("lookup") or {} if isinstance(active, dict) else {}
+    cache_cats = sum(
+        1 for m in lookup.values()
+        if isinstance(m, dict) and (m.get("type") or "").lower() in ("category", "filterpage")
+    )
+
+    lines = [
+        f"Step 7 found 0 eligible pages (needs page_type in "
+        f"{'/'.join(ELIGIBLE_PAGE_TYPES)} with >{MIN_WORD_COUNT} words).",
+        f"Audit has {len(audit)} pages. Type breakdown: {type_str}.",
+        f"Categories: {len(categories)} total, "
+        f"{len(cats_over_words)} with >{MIN_WORD_COUNT} words, "
+        f"{len(cats_skipped)} of those on the skip-list.",
+        f"Mshop active-pages cache: {len(lookup)} URLs, {cache_cats} categories/filterpages.",
+    ]
+
+    # Targeted next-action
+    if len(categories) == 0:
+        if cache_cats == 0:
+            lines.append(
+                "→ ROOT CAUSE: no categories in the active-pages cache, so Step 6 "
+                "classified every page as product/other. The cache is empty or was "
+                "synced for the WRONG shop. Fix: in Setup (or Bulk Audit) click "
+                "'Sync Mshop active pages now' for THIS shop, then RE-RUN Step 6, "
+                "then Step 7."
+            )
+        else:
+            lines.append(
+                "→ The cache HAS categories but the audit produced none — Step 6 ran "
+                "against a stale/empty cache. Fix: RE-RUN Step 6 (Bulk Audit) now that "
+                "the cache is correct, then Step 7."
+            )
+    elif len(cats_over_words) == 0:
+        lines.append(
+            f"→ All categories have <={MIN_WORD_COUNT} words — likely thin pages or a "
+            "parser issue. Check Step 6 word_count extraction."
+        )
+    elif len(cats_skipped) == len(cats_over_words):
+        lines.append(
+            "→ Every eligible category is on your skip-list. Remove URLs from the "
+            "skip-list editor above to assess them."
+        )
+    return "\n".join(lines)
+
+
 def run_until_done(audit_results: list, max_iterations: int = 100) -> None:
     """Loop run_quality_batches() until every eligible page has an up-to-date verdict.
 
