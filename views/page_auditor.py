@@ -739,9 +739,14 @@ def render():
     from utils.quality_check_runner import (
         eligible_pages, pages_needing_check, already_checked_count,
         run_quality_batches, ELIGIBLE_PAGE_TYPES, MIN_WORD_COUNT,
+        empty_category_pages, flag_empty_categories, flagged_empty_pages,
     )
 
-    quality_candidates = eligible_pages(results)
+    # Assessment candidates (have text) PLUS any empty category already
+    # flagged for generation (synthetic REWRITE verdict). The empties don't
+    # pass eligible_pages()'s >MIN_WORD_COUNT filter, so fold them in here
+    # so they show in the results table and reach the Fix ALL batch.
+    quality_candidates = eligible_pages(results) + flagged_empty_pages(results)
     already_checked = already_checked_count(quality_candidates)
 
     q1, q2, q3 = st.columns(3)
@@ -785,6 +790,54 @@ def render():
             "Checks 5 pages per API call. ~10 seconds per batch. Results cached.</span>",
             unsafe_allow_html=True,
         )
+
+    # ── Empty / thin categories: flag for text GENERATION ──────────
+    # The AI quality check above only assesses categories that ALREADY have
+    # text (>50 words). Empty categories have nothing to assess but DO need
+    # text written. Flag them here (no AI cost) so they join the Fix ALL
+    # generate+push batch. Scope lets you run real categories and Mshop
+    # filterpages as SEPARATE rounds.
+    _empty_all = empty_category_pages(results, scope="all")
+    if _empty_all:
+        _n_cats = len(empty_category_pages(results, scope="categories"))
+        _n_fp = len(empty_category_pages(results, scope="filterpages"))
+        with st.container():
+            st.markdown(
+                f"<div style='background:#12121f; border:1px solid #c8a04f; "
+                f"border-radius:6px; padding:0.7rem; margin-top:0.6rem;'>"
+                f"<strong style='color:#e8c87a;'>📝 {len(_empty_all)} empty/thin "
+                f"categories have no text to assess — they need text GENERATED.</strong>"
+                f"<br><span style='font-size:0.8rem; color:#c8c8d8;'>"
+                f"Real categories: <strong>{_n_cats}</strong> · "
+                f"Filterpages: <strong>{_n_fp}</strong>. "
+                f"Flagging marks them REWRITE (no AI cost) so they enter the "
+                f"Fix ALL batch below.</span></div>",
+                unsafe_allow_html=True,
+            )
+            _scope_label = st.radio(
+                "Which empty pages to flag for generation?",
+                options=[
+                    f"Real categories only ({_n_cats})",
+                    f"Filterpages only ({_n_fp})",
+                    f"Both ({len(_empty_all)})",
+                ],
+                key="empty_flag_scope",
+                horizontal=True,
+            )
+            _scope = (
+                "categories" if _scope_label.startswith("Real")
+                else "filterpages" if _scope_label.startswith("Filter")
+                else "all"
+            )
+            if st.button(f"📝 Flag empty {_scope} for generation",
+                         key="btn_flag_empty", type="secondary"):
+                _flagged = flag_empty_categories(results, scope=_scope)
+                st.success(
+                    f"Flagged {_flagged} empty page(s) as REWRITE. They now appear "
+                    f"in the results below and in Fix ALL. Run Fix ALL to generate "
+                    f"+ push their text. (Re-open this to flag the other set next.)"
+                )
+                st.rerun()
 
     # Show any errors from a previous run — persisted so they survive st.rerun
     prev_errors = st.session_state.get("_quality_check_errors", [])
