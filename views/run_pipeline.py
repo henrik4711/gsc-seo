@@ -577,7 +577,7 @@ def _run_bulk_audit():
         )
         if not used_cache:
             msg += (
-                "\n⚠ The source was the **GSC fallback**, NOT the Mshop "
+                "\n\n⚠ The source was the **GSC fallback**, NOT the Mshop "
                 "active-pages cache — so trafficless category pages were "
                 "never offered. Re-sync the cache (Setup → Re-sync Mshop "
                 "active pages now) so it's loaded, then run Step 6 again. "
@@ -585,11 +585,12 @@ def _run_bulk_audit():
             )
         else:
             msg += (
-                "\nThe Mshop cache WAS used but every one of its URLs is "
+                "\n\nThe Mshop cache WAS used but every one of its URLs is "
                 "already audited. If you expected more, the cache count "
                 "looks low — re-sync it and check the category count."
             )
-        st.warning(msg)
+        # Persist so it survives the solo-button st.rerun() (see render()).
+        st.session_state["_pipeline_notice"] = {"type": "warning", "text": msg}
         return
 
     # ── Live progress UI ──────────────────────────────────────────
@@ -1490,6 +1491,21 @@ def render():
     if "gsc_data" not in st.session_state:
         st.warning("**First time?** Go to **1. Setup & Connect** in the menu and connect GSC. Then come back here.")
         return
+
+    # ── Persistent notice ─────────────────────────────────────────
+    # Messages a step wants the operator to READ must be stored here, NOT
+    # rendered inside the step function — the solo-run button calls
+    # st.rerun() right after the step, which wipes anything drawn inline.
+    # This box survives the rerun and stays until the user dismisses it.
+    _notice = st.session_state.get("_pipeline_notice")
+    if _notice and isinstance(_notice, dict):
+        _kind = _notice.get("type", "info")
+        _text = _notice.get("text", "")
+        {"warning": st.warning, "error": st.error, "success": st.success,
+         "info": st.info}.get(_kind, st.info)(_text)
+        if st.button("✕ Dismiss message", key="rp_dismiss_notice"):
+            st.session_state.pop("_pipeline_notice", None)
+            st.rerun()
 
     # ── Skip-list editor (pages excluded from BOTH Step 7 AI Content
     # Quality AND from Fix ALL push). Single source of truth across the
