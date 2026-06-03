@@ -189,8 +189,16 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
             result["page_type"] = "info"
             result["confidence"] = "high"
             result["signals"].append("Help/info template container")
-        # Category: #category-description id OR xmx-seo-footer-section
-        elif has_cat_id or bottom_cls & {"xmx-seo-footer-section"}:
+        # Category: #category-description id OR xmx-seo-footer-section.
+        # BUT respect the active-pages cache: if it authoritatively says
+        # this URL is NOT a registered category (_blocked_category), a
+        # structural class must not override that. Some themes (mshop.eu)
+        # render xmx-seo-footer-section site-wide — on the homepage and
+        # product pages too — so it is NOT a reliable category signal
+        # there. Without this guard the high-confidence return below
+        # short-circuits before the _blocked_category check at the bottom
+        # of the function, classifying every page as a category.
+        elif (has_cat_id or bottom_cls & {"xmx-seo-footer-section"}) and not result.get("_blocked_category"):
             result["page_type"] = "category"
             result["confidence"] = "high"
             result["signals"].append("Category template container found")
