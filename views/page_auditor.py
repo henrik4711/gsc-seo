@@ -1726,48 +1726,57 @@ def render():
 
                 btn_cols = st.columns([3, 3, 3, 3])
                 with btn_cols[0]:
-                    # Open / Rewrite — only for REWRITE/IMPROVE pages
+                    # Generate / preview INLINE — no Quick Wins detour. All
+                    # these buttons now generate in place and auto-open the
+                    # "Preview & push" expander below (Henrik: Quick Wins is
+                    # too slow; review + push on this same page).
                     if verdict in ("REWRITE", "IMPROVE"):
                         if ai_plan_present:
                             if st.button(
-                                "🚀 Open in Quick Wins",
+                                "✏️ Preview & push (below)",
                                 key=f"qq_open_{url_hash}",
                                 use_container_width=True,
                             ):
-                                open_in_quick_wins(q["url"])
+                                st.session_state[f"_inline_open_{url_hash}"] = True
                                 st.rerun()
                         else:
                             if st.button(
-                                "🤖 Rewrite with AI + open",
+                                "🤖 Generate text (preview below)",
                                 key=f"qq_gen_{url_hash}",
                                 type="primary",
                                 use_container_width=True,
                             ):
-                                generate_ai_fixes_for_page(page_audit_to_page_dict(audit_row))
-                                open_in_quick_wins(q["url"])
+                                from utils.page_fix_runner import (
+                                    generate_all_fixes_for_page as _gen_all,
+                                    page_audit_to_page_dict as _p2d,
+                                )
+                                with st.spinner("Generating intro + bottom + meta (~90s)…"):
+                                    _gen_all(_p2d(audit_row), force=True, batch_mode=True)
+                                st.session_state[f"_inline_open_{url_hash}"] = True
                                 st.rerun()
                     elif ai_plan_present:
-                        # KEEP page that already has an AI plan — let user
-                        # still navigate to Quick Wins (e.g. to push a
-                        # tweak or review the cached output).
                         if st.button(
-                            "🚀 Open in Quick Wins",
+                            "✏️ Preview & push (below)",
                             key=f"qq_open_keep_{url_hash}",
                             use_container_width=True,
                         ):
-                            open_in_quick_wins(q["url"])
+                            st.session_state[f"_inline_open_{url_hash}"] = True
                             st.rerun()
                 with btn_cols[1]:
-                    # Regenerate — only if plan exists, regardless of verdict
+                    # Regenerate INLINE — no Quick Wins.
                     if ai_plan_present:
                         if st.button(
-                            "🔄 Regenerate AI fixes",
+                            "🔄 Regenerate text",
                             key=f"qq_regen_{url_hash}",
                             use_container_width=True,
                         ):
-                            st.session_state.pop(f"_ai_plan_{url_hash}", None)
-                            generate_ai_fixes_for_page(page_audit_to_page_dict(audit_row))
-                            open_in_quick_wins(q["url"])
+                            from utils.page_fix_runner import (
+                                generate_all_fixes_for_page as _gen_all2,
+                                page_audit_to_page_dict as _p2d2,
+                            )
+                            with st.spinner("Regenerating intro + bottom + meta (~90s)…"):
+                                _gen_all2(_p2d2(audit_row), force=True, batch_mode=True)
+                            st.session_state[f"_inline_open_{url_hash}"] = True
                             st.rerun()
                 with btn_cols[2]:
                     # DIAGNOSTIC: re-scrape the LIVE page, replace audit
@@ -1885,7 +1894,10 @@ def render():
                 # Generate the new text, READ it right here, and push it
                 # live — without opening the heavy Quick Wins view. This is
                 # the single-page test loop: generate → review → push.
-                with st.expander("✏️ Preview & push this page (no Quick Wins)", expanded=False):
+                with st.expander(
+                    "✏️ Preview & push this page (no Quick Wins)",
+                    expanded=st.session_state.get(f"_inline_open_{url_hash}", False),
+                ):
                     _h = url_hash
                     _bottom_obj = st.session_state.get(f"_bottom_text_{_h}") or {}
                     _intro_obj = st.session_state.get(f"_intro_text_{_h}") or {}
