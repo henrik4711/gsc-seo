@@ -567,6 +567,47 @@ def render():
                     pass
                 st.error(f"Re-sync failed: {e}")
 
+        # ── Diagnostic probe: figure out the API's real shop-selection
+        # mechanism (shared domain + ?storeId, vs per-domain) without
+        # guessing. Uses the shared Basic-auth creds to hit all three
+        # shop domains, with and without storeId, and shows what each
+        # returns. The 'sample_url' column reveals which shop answered.
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### 🔍 Diagnose Mshop API (probe all variants)")
+        st.markdown(
+            "<p style='color:#9b9bb8; font-size:0.8rem;'>"
+            "Tries <code>catalog/category/list</code> on the SE/DK/EU domains, "
+            "both without <code>storeId</code> and with <code>storeId</code> 1/2/3, "
+            "using this service's Basic-auth credentials. Read the table: "
+            "<code>http=200</code> + a <code>sample_url</code> on the expected "
+            "domain = that combination works. This tells us whether the list "
+            "API is per-domain or shared-with-storeId.</p>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Run API probe", key="btn_probe_mshop_api"):
+            from utils.mshop_admin_api import probe_admin_api_variants
+            with st.spinner("Probing all SE/DK/EU × storeId combinations…"):
+                rows = probe_admin_api_variants()
+            # Friendly table: short base label + storeId label
+            table = []
+            for r in rows:
+                base = r.get("base", "")
+                short = base.split("//")[-1].split("/")[0].replace("www.", "")
+                sid = r.get("store_id")
+                table.append({
+                    "domain": short,
+                    "storeId": "(none)" if sid is None else sid,
+                    "http": r.get("http"),
+                    "items": r.get("n_items", 0),
+                    "sample_url": r.get("sample_url", "") or r.get("error", ""),
+                })
+            st.dataframe(table, use_container_width=True, hide_index=True)
+            st.caption(
+                "Look for rows with http=200 and items>0. The sample_url's "
+                "domain tells you which shop that combination actually returned. "
+                "Send Henrik's assistant this table."
+            )
+
         # ── RESET ALL DATA ─────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### Reset All Data")

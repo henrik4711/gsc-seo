@@ -268,6 +268,54 @@ def fetch_filter_pages() -> dict:
     return _get_list("catalog/filterpage/list")
 
 
+def probe_admin_api_variants(endpoint: str = "catalog/category/list") -> list:
+    """Diagnostic probe: hit the list endpoint several ways and report what
+    each returns, so we can determine the API's ACTUAL shop-selection
+    mechanism (one shared domain + ?storeId=N, vs one endpoint per shop
+    domain with no storeId) WITHOUT guessing.
+
+    Uses the shared Basic-auth credentials (same user/pass across all
+    shops per MULTISITE_SETUP.md), so from any one service we can probe
+    all three shop domains. The first returned URL reveals WHICH shop the
+    response actually belongs to — the key signal.
+
+    Returns a list of {base, store_id, http, n_items, sample_url[, error]}.
+    store_id None means the storeId param was NOT sent at all.
+    """
+    user, pwd = _credentials()
+    bases = [
+        "https://www.mshop.se/public_api",
+        "https://www.mshop.dk/public_api",
+        "https://www.mshop.eu/public_api",
+    ]
+    store_variants = [None, 1, 2, 3]
+    ep = endpoint.lstrip("/")
+    results = []
+    for base in bases:
+        url = f"{base}/{ep}"
+        for sid in store_variants:
+            params = {} if sid is None else {"storeId": sid}
+            row = {"base": base, "store_id": sid, "http": None,
+                   "n_items": 0, "sample_url": ""}
+            try:
+                resp = requests.get(url, auth=(user, pwd), params=params, timeout=15)
+                row["http"] = resp.status_code
+                if resp.status_code == 200:
+                    try:
+                        items = resp.json().get("payload") or []
+                        if isinstance(items, list):
+                            row["n_items"] = len(items)
+                            if items and isinstance(items[0], dict):
+                                row["sample_url"] = items[0].get("url", "") or ""
+                    except Exception as e:
+                        row["sample_url"] = f"(200 but unparseable JSON: {e})"
+            except Exception as e:
+                row["http"] = "ERR"
+                row["error"] = str(e)[:140]
+            results.append(row)
+    return results
+
+
 def fetch_active_pages_all() -> dict:
     """Fetch all three lists and return a combined lookup dict.
 
