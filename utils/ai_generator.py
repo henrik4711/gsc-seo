@@ -130,9 +130,10 @@ ADVERB-LED SENTENCE OPENERS: "Importantly,", "Notably,", "Interestingly,",
 equivalents. Banned. Start with the noun, verb, or subject instead.
 
 BANNED STRUCTURE (these scream AI in any language):
-- Em-dashes (—) used more than ONCE per ~150 words. Prefer commas, periods,
-  parentheses. AI famously over-uses em-dashes. HARD CAP: max 4 em-dashes
-  in the entire bottom_html.
+- Em-dashes (— or –): NEVER use them. ZERO em-dashes in the entire
+  bottom_html. Use commas, periods, or parentheses instead. AI famously
+  over-uses em-dashes — they are a top AI tell, so the text must contain
+  none.
 - Three-item parallel lists in body prose ("X, Y, and Z") more than once
   per paragraph.
 - "BOTH X AND Y" balanced-clause pattern repeated more than 2× total —
@@ -316,15 +317,15 @@ def _fix_cyrillic_confusables(text: str) -> tuple[str, int]:
     return fixed, fixes
 
 
-def _reduce_em_dash_overuse(html: str, max_keep: int = 4) -> tuple[str, int]:
-    """Em-dashes (— or –) are an AI tell. When the count exceeds
-    `max_keep`, replace the surplus with commas. Strategy: keep the
-    first `max_keep` em-dashes (which usually fall in early headlines/
-    sentences and read naturally), comma-substitute the rest.
+def _reduce_em_dash_overuse(html: str, max_keep: int = 0) -> tuple[str, int]:
+    """Em-dashes (— or –) are an AI tell. The text must read 100% as if a
+    human wrote it, so by default we strip EVERY em-dash (max_keep=0) and
+    replace it with a comma. `max_keep` is retained only for callers that
+    deliberately want to keep a few; the editorial-text callers pass 0.
 
-    The substitution is mechanical — it doesn't try to detect whether
-    a period would be more natural — but a comma is always grammatically
-    safe in the position an em-dash sat in.
+    The substitution is mechanical (a comma is always grammatically safe
+    in the position an em-dash sat in), then surrounding whitespace is
+    tidied so the result reads natural.
 
     Returns (fixed_html, substitutions_made)."""
     if not html:
@@ -365,7 +366,7 @@ def _collapse_extra_whitespace(html: str) -> tuple[str, int]:
 def _mechanical_post_process(text_data: dict) -> dict:
     """Apply purely mechanical fixes that don't need AI intelligence:
     - Cyrillic→Latin confusable substitutions (catches 'sleeveн')
-    - Em-dash overuse reduction (HARD CAP 4, surplus → comma)
+    - Em-dash removal (strip ALL — they are an AI tell; → comma)
     - Whitespace collapse
 
     These run BEFORE the quality-gate validators, so the validators see
@@ -382,7 +383,7 @@ def _mechanical_post_process(text_data: dict) -> dict:
         if not isinstance(v, str) or not v:
             continue
         v, n_cyr = _fix_cyrillic_confusables(v)
-        v, n_em = _reduce_em_dash_overuse(v, max_keep=4)
+        v, n_em = _reduce_em_dash_overuse(v, max_keep=0)  # strip ALL — AI tell
         v, n_ws = _collapse_extra_whitespace(v)
         text_data[field] = v
         fixes["cyrillic"] += n_cyr
@@ -1762,12 +1763,14 @@ def _intro_quality_gate(text: str) -> tuple[list, int, int]:
         "actual": (", ".join(miscap_hits[:2]) if miscap_hits else "clean"),
     })
 
-    # Em-dashes — intro is short, max 1
+    # Em-dashes — ZERO allowed (top AI tell). The mechanical strip runs
+    # before this gate, so a non-zero count here means something slipped
+    # through and the page should be regenerated.
     em_count = plain.count("—") + plain.count("–")
     checks.append({
         "id": "em_dash_count",
-        "label": "Em-dashes ≤ 1 (intro is short)",
-        "passed": em_count <= 1,
+        "label": "Em-dashes == 0 (AI tell)",
+        "passed": em_count == 0,
         "actual": f"{em_count} em-dash(es)",
     })
 
@@ -1890,7 +1893,8 @@ Current intro text:
   * NEVER use adverb-led openers (Importantly, Notably, Viktigt, Notera).
   * NEVER write misspelling-capture phrases ("ibland stavat...",
     "även kallad..."). Use the correct spelling only.
-  * Em-dashes (— or –): max 1 in the entire intro.
+  * Em-dashes (— or –): NEVER use them. Zero in the entire intro. Use
+    commas, periods, or parentheses. Em-dashes are a top AI tell.
   * Bold tags: 0-1 max.
 
 ## OUTPUT FORMAT (JSON only, no markdown wrapping):
@@ -1915,7 +1919,7 @@ Current intro text:
     if isinstance(result, dict) and result.get("optimized_text"):
         opt = result["optimized_text"]
         opt, n_cyr = _fix_cyrillic_confusables(opt)
-        opt, n_em = _reduce_em_dash_overuse(opt, max_keep=1)  # intro is short
+        opt, n_em = _reduce_em_dash_overuse(opt, max_keep=0)  # strip ALL — AI tell
         opt, n_ws = _collapse_extra_whitespace(opt)
         result["optimized_text"] = opt
         if (n_cyr + n_em + n_ws) > 0:
