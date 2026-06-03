@@ -283,11 +283,18 @@ def probe_admin_api_variants(endpoint: str = "catalog/category/list") -> list:
     store_id None means the storeId param was NOT sent at all.
     """
     user, pwd = _credentials()
-    bases = [
-        "https://www.mshop.se/public_api",
-        "https://www.mshop.dk/public_api",
-        "https://www.mshop.eu/public_api",
-    ]
+    # Try BOTH path spellings (the env var has 'public_api' with an
+    # underscore, but the code's own fallback + docstring use 'public-api'
+    # with a hyphen) AND the base actually derived from the configured
+    # env, so we discover which base+path is really live.
+    domains = ["www.mshop.se", "www.mshop.dk", "www.mshop.eu"]
+    spellings = ["public_api", "public-api"]
+    bases = [f"https://{d}/{s}" for d in domains for s in spellings]
+    # Also include whatever the running config resolves to, in case the
+    # real working host is something else entirely (e.g. FOOTER_TEXT_API).
+    configured = _api_base()
+    if configured and configured not in bases:
+        bases.append(configured)
     store_variants = [None, 1, 2, 3]
     ep = endpoint.lstrip("/")
     results = []
@@ -314,6 +321,25 @@ def probe_admin_api_variants(endpoint: str = "catalog/category/list") -> list:
                 row["error"] = str(e)[:140]
             results.append(row)
     return results
+
+
+def probe_env_snapshot() -> dict:
+    """Return the admin-API-relevant env values the RUNNING service sees,
+    so the operator can verify config without shell access. Secrets
+    (password) are masked to just a length."""
+    base = os.environ.get("MSHOP_ADMIN_API_BASE", "").strip()
+    footer = os.environ.get("FOOTER_TEXT_API", "").strip()
+    user = os.environ.get("FOOTER_TEXT_API_USER", "").strip()
+    pwd = os.environ.get("FOOTER_TEXT_API_PASS", "").strip()
+    return {
+        "MSHOP_ADMIN_API_BASE": base or "(unset)",
+        "FOOTER_TEXT_API": footer or "(unset)",
+        "resolved _api_base()": _api_base() or "(empty)",
+        "FOOTER_TEXT_STORE_ID": os.environ.get("FOOTER_TEXT_STORE_ID", "").strip() or "(unset)",
+        "SITE_CODE": os.environ.get("SITE_CODE", "").strip() or "(unset)",
+        "FOOTER_TEXT_API_USER": user or "(unset)",
+        "FOOTER_TEXT_API_PASS": f"(set, {len(pwd)} chars)" if pwd else "(unset)",
+    }
 
 
 def fetch_active_pages_all() -> dict:
