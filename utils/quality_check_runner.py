@@ -89,6 +89,104 @@ def already_checked_count(eligible: list) -> int:
     return n
 
 
+# ── Empty / thin categories: GENERATE text, don't ASSESS it ──────────
+# A category with <=MIN_WORD_COUNT words has no editorial copy to judge —
+# the AI assessment prompt would just say "REWRITE" trivially. These are
+# the pages that need text written FROM SCRATCH. We give them a
+# deterministic REWRITE verdict (no paid AI call) so they flow straight
+# into the Fix ALL generate+push pipeline. Scope lets the operator run
+# real categories and Mshop filterpages in separate rounds.
+EMPTY_VERDICT_MARKER = "_synthetic_empty"
+
+
+def _is_filterpage(url: str) -> bool:
+    """True if the Mshop active-pages cache records this URL as a filterpage
+    (filtered product view), as opposed to a real category. The audit
+    page_type collapses both to 'category', so we consult the cache."""
+    try:
+        from utils.mshop_admin_api import lookup_url
+        active = st.session_state.get("mshop_active_pages") or {}
+        info = lookup_url(active, url) if active else None
+        return bool(info) and (info.get("type") or "").lower() == "filterpage"
+    except Exception:
+        return False
+
+
+def empty_category_pages(audit_results: list, scope: str = "all") -> list:
+    """Category pages too thin to assess (<=MIN_WORD_COUNT words) — they
+    need text generated.
+
+    scope:
+      - "categories"  → real categories only (exclude Mshop filterpages)
+      - "filterpages" → Mshop filterpages only
+      - "all"         → both
+    Honours the AI skip-list, same as eligible_pages().
+    """
+    skip_set = set(st.session_state.get("_fix_skip_list") or [])
+    out = []
+    for r in (audit_results or []):
+        if r.get("page_type") not in ELIGIBLE_PAGE_TYPES:
+            continue
+        if (r.get("word_count") or 0) > MIN_WORD_COUNT:
+            continue  # has text → assessed by the AI path, not here
+        url = r.get("url", "")
+        if not url or url in skip_set:
+            continue
+        if scope in ("categories", "filterpages"):
+            is_fp = _is_filterpage(url)
+            if scope == "categories" and is_fp:
+                continue
+            if scope == "filterpages" and not is_fp:
+                continue
+        out.append(r)
+    return out
+
+
+def flag_empty_categories(audit_results: list, scope: str = "all") -> int:
+    """Write a deterministic REWRITE verdict (NO AI call) for every empty
+    category in scope, so it appears in the quality results and flows into
+    Fix ALL's generate+push batch. Returns the number flagged."""
+    from utils.persistence import save_ai_cache
+
+    pages = empty_category_pages(audit_results, scope)
+    n = 0
+    for r in pages:
+        url = r.get("url", "")
+        st.session_state[quality_key(url)] = {
+            "verdict": "REWRITE",
+            "score": 0,
+            "summary": (
+                "Empty/thin category — no editorial text on the page. "
+                "Needs intro + bottom text generated from scratch."
+            ),
+            "main_issues": ["No editorial copy on the page"],
+            "specific_fixes": ["Generate a full intro + bottom text for this category"],
+            "_input_hash": quality_input_hash(r),
+            EMPTY_VERDICT_MARKER: True,
+        }
+        n += 1
+    if n:
+        try:
+            save_ai_cache()
+        except Exception:
+            pass
+    return n
+
+
+def flagged_empty_pages(audit_results: list) -> list:
+    """Category rows that currently carry a synthetic-empty verdict — used
+    to fold them into the quality-results display + Fix ALL list, which
+    otherwise only consider eligible_pages() (>MIN_WORD_COUNT)."""
+    out = []
+    for r in (audit_results or []):
+        if r.get("page_type") not in ELIGIBLE_PAGE_TYPES:
+            continue
+        v = st.session_state.get(quality_key(r.get("url", "")))
+        if isinstance(v, dict) and v.get(EMPTY_VERDICT_MARKER):
+            out.append(r)
+    return out
+
+
 def run_quality_batches(
     pages_to_check: list,
     *,
