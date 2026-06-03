@@ -316,6 +316,17 @@ def push_all_for_page(url: str) -> dict:
     intro_html = intro_obj.get("optimized_text") or ""
     meta_t = plan.get("meta_title", "") if isinstance(plan, dict) else ""
     meta_d = plan.get("meta_description", "") if isinstance(plan, dict) else ""
+
+    # Final em-dash safety net at the push boundary: em-dashes are a top AI
+    # tell and must never reach the live shop in ANY field. Body text is
+    # already stripped at generation, but meta isn't, so strip here too.
+    try:
+        from utils.ai_generator import _reduce_em_dash_overuse
+        meta_t = _reduce_em_dash_overuse(meta_t, max_keep=0)[0]
+        meta_d = _reduce_em_dash_overuse(meta_d, max_keep=0)[0]
+        intro_html = _reduce_em_dash_overuse(intro_html, max_keep=0)[0]
+    except Exception:
+        pass
     if intro_html or meta_t or meta_d:
         try:
             from utils.mshop_admin_api import update_for_page, lookup_url
