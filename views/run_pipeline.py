@@ -1298,6 +1298,7 @@ def _run_quality_until_done():
     re-implements the loop. Exceptions bubble to the pipeline UI handler."""
     from utils.quality_check_runner import (
         run_until_done, eligible_pages, eligibility_diagnosis,
+        pages_needing_check, already_checked_count,
     )
     audit = st.session_state.get("audit_results", []) or []
     if not audit:
@@ -1307,9 +1308,46 @@ def _run_quality_until_done():
     # nothing happened". Surface the actual reason instead so the operator
     # knows what to fix (usually: wrong/empty Mshop active-pages cache at
     # Step 6 time, so categories were classified as products).
-    if not eligible_pages(audit):
+    eligible = eligible_pages(audit)
+    if not eligible:
         raise ValueError(eligibility_diagnosis(audit))
-    run_until_done(audit)
+
+    # Live progress — a 5-25 min run over hundreds of categories must NOT
+    # look frozen. Without this the solo button just span a spinner with no
+    # feedback, which reads as "step 7 doesn't run".
+    total = len(eligible)
+    pending_now = len(pages_needing_check(eligible))
+    already = total - pending_now
+    st.markdown(
+        f"**AI Content Quality** — {total} eligible categories, "
+        f"{already} already checked, **{pending_now} to assess** now."
+    )
+    progress = st.progress(
+        already / max(total, 1),
+        text=f"AI quality check — {already} / {total} categories",
+    )
+    status = st.empty()
+
+    def _on_progress(done, tot):
+        progress.progress(
+            min(1.0, done / max(tot, 1)),
+            text=f"AI quality check — {done} / {tot} categories assessed",
+        )
+
+    def _on_batch(batch_num, total_batches, batch):
+        status.markdown(
+            f"<div style='font-size:0.8rem; color:#9b9bb8;'>"
+            f"Assessing a batch of {len(batch)} categories (AI call in progress)…</div>",
+            unsafe_allow_html=True,
+        )
+
+    run_until_done(audit, on_progress=_on_progress, on_batch_start=_on_batch)
+    progress.progress(1.0, text=f"AI quality check done — {total} categories")
+    # Persist a completion summary so it survives the solo-button rerun.
+    st.session_state["_pipeline_notice"] = {
+        "type": "success",
+        "text": f"✅ Step 7 done — assessed {total} eligible categories.",
+    }
 
 
 def _run_cluster_linking():
