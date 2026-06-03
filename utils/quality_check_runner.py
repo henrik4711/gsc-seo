@@ -237,24 +237,52 @@ def eligibility_diagnosis(audit_results: list) -> str:
     return "\n".join(lines)
 
 
-def run_until_done(audit_results: list, max_iterations: int = 100) -> None:
+def run_until_done(
+    audit_results: list,
+    max_iterations: int = 100,
+    on_progress=None,
+    on_batch_start=None,
+) -> None:
     """Loop run_quality_batches() until every eligible page has an up-to-date verdict.
 
     Raises on any underlying error or no-progress condition. Used by the
     pipeline orchestrator (Step 7), which displays the exception in the UI.
+
+    Optional UI callbacks (so a 5-25 min run doesn't look frozen):
+      - on_progress(checked_count, total) — called after every batch with
+        GLOBAL counts across all eligible pages (not per-call fractions).
+      - on_batch_start(batch_num, total_batches, batch) — forwarded to
+        run_quality_batches for per-batch status text.
     """
     eligible = eligible_pages(audit_results)
     if not eligible:
         return
+    total = len(eligible)
+    if on_progress:
+        on_progress(already_checked_count(eligible), total)
 
     for _ in range(max_iterations):
         pending = pages_needing_check(eligible)
         if not pending:
+            if on_progress:
+                on_progress(total, total)
             return
 
         before = already_checked_count(eligible)
-        errors = run_quality_batches(pending, cap=MAX_PAGES_PER_CALL)
+
+        # Forward per-batch progress as GLOBAL counts so the bar advances
+        # smoothly across the whole eligible set, not 0→1 per 50-page call.
+        def _fwd_progress(frac, _before=before, _n=min(len(pending), MAX_PAGES_PER_CALL)):
+            if on_progress:
+                on_progress(min(_before + int(frac * _n), total), total)
+
+        errors = run_quality_batches(
+            pending, cap=MAX_PAGES_PER_CALL,
+            on_progress=_fwd_progress, on_batch_start=on_batch_start,
+        )
         after = already_checked_count(eligible)
+        if on_progress:
+            on_progress(after, total)
 
         if errors and after <= before:
             first_batch, first_err = errors[0]
