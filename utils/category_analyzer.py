@@ -78,7 +78,15 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
         _active = _st.session_state.get("mshop_active_pages") or {}
         _lookup = _active.get("lookup") or {} if isinstance(_active, dict) else {}
         if _lookup:
-            _norm_url = _norm(url)
+            # CRITICAL: look up with the SAME normalizer that BUILT the
+            # cache keys (_normalize_for_lookup in mshop_admin_api, which
+            # drops the scheme → "mshop.eu/foo"). normalize_url keeps the
+            # scheme → "https://mshop.eu/foo", so using it here NEVER
+            # matches and every real category gets _blocked_category,
+            # collapsing all pages to "product". (This stayed hidden until
+            # EU became the first shop to actually populate the cache.)
+            from utils.mshop_admin_api import _normalize_for_lookup as _norm_lookup
+            _norm_url = _norm_lookup(url)
             _hit = _lookup.get(_norm_url)
             if _hit:
                 _t = (_hit.get("type") or "").lower()
