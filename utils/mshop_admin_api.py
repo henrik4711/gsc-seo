@@ -218,6 +218,11 @@ def _get_list(endpoint: str) -> dict:
     base = _api_base()
     user, pwd = _credentials()
     url = f"{base}/{endpoint.lstrip('/')}"
+    # Full target shown in every error so the operator can SEE the exact
+    # URL + storeId that was hit instead of guessing whether a 404 means
+    # a wrong base URL (env not redeployed), a wrong path, or a store the
+    # backend doesn't have. Don't guess from "HTTP 404" — show the call.
+    called = f"{url}?storeId={store_id}"
     try:
         resp = requests.get(
             url,
@@ -226,13 +231,13 @@ def _get_list(endpoint: str) -> dict:
             timeout=TIMEOUT_SECONDS,
         )
     except requests.Timeout:
-        return {"status": "timeout", "error": f"Timeout after {TIMEOUT_SECONDS}s", "items": []}
+        return {"status": "timeout", "error": f"Timeout after {TIMEOUT_SECONDS}s calling {called}", "items": []}
     except Exception as e:
-        return {"status": "network_error", "error": str(e), "items": []}
+        return {"status": "network_error", "error": f"{e} (calling {called})", "items": []}
     if resp.status_code != 200:
         return {
             "status": "http_error",
-            "error": f"HTTP {resp.status_code}",
+            "error": f"HTTP {resp.status_code} for {called}",
             "http_code": resp.status_code,
             "response_body": (resp.text or "")[:2000],
             "items": [],
