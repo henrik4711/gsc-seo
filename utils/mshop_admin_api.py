@@ -2,24 +2,29 @@
 Client for the Mshop Admin API — fetch active pages and update meta /
 intro / description fields on categories, CMS pages, and filter pages.
 
+SHOP SELECTION — IMPORTANT (verified empirically 2026-06-03):
+  The API selects the shop PURELY BY DOMAIN, not by a storeId param.
+    https://www.mshop.se/public-api/...  → SE pages
+    https://www.mshop.dk/public-api/...  → DK pages
+    https://www.mshop.eu/public-api/...  → EU pages
+  The list endpoints IGNORE ?storeId entirely (storeId none/1/2/3 all
+  return the same per-domain result). So each Railway service must point
+  MSHOP_ADMIN_API_BASE at ITS OWN shop domain. The path is 'public-api'
+  with a HYPHEN — 'public_api' with an underscore returns 404.
+
 Required Railway env vars (same credentials as bottom-text push):
   FOOTER_TEXT_API_USER  — Basic auth username
   FOOTER_TEXT_API_PASS  — Basic auth password
-  FOOTER_TEXT_STORE_ID  — integer store ID. The Mshop Admin API is
-                         multi-tenant — set this to the numeric ID of
-                         the target shop:
-                           1 = mshop.se
-                           2 = mshop.dk
-                           3 = mshop.eu
-                           4 = mshop.de  (future)
-                         REQUIRED for BOTH list endpoints (?storeId=N
-                         query param) and update endpoints (storeId
-                         field in payload). Without it the API
-                         silently defaults to store 1 (mshop.se),
-                         which causes DK/EU services to see SE URLs
-                         and contaminate their /data caches.
-  MSHOP_ADMIN_API_BASE  — base URL, e.g. https://www.mshop.se/public-api
-                         (optional — derived from FOOTER_TEXT_API if absent)
+  MSHOP_ADMIN_API_BASE  — this shop's OWN domain + /public-api, e.g.
+                         https://www.mshop.eu/public-api for the EU
+                         service. PER-DOMAIN, not shared. (Optional —
+                         derived from FOOTER_TEXT_API's host + /public-api
+                         if absent.)
+  FOOTER_TEXT_STORE_ID  — integer store ID, used ONLY by the UPDATE/push
+                         endpoints (carried in the JSON payload):
+                           1 = mshop.se, 2 = mshop.dk, 3 = mshop.eu,
+                           4 = mshop.de (future).
+                         NOT used by the list endpoints (domain decides).
 
 The three list endpoints return all currently active and editable pages.
 We fetch them once and cache the URL → (type, id, …) mapping in
@@ -192,42 +197,30 @@ def _get_list(endpoint: str) -> dict:
     if err:
         return {"status": "error", "error": err, "items": []}
 
-    # storeId MUST be sent in the query — without it, the Mshop API
-    # defaults to store 1 (mshop.se) and returns SE pages for every
-    # service. This is the bug behind "DK/EU service shows SE pages"
-    # in the troubleshooting section of MULTISITE_SETUP.md.
-    store_id = _store_id()
-    if store_id <= 0:
-        msg = (
-            "FOOTER_TEXT_STORE_ID env var is not set (or is 0). "
-            "List endpoints require it — without storeId the Mshop "
-            "API silently defaults to store 1 (mshop.se), which "
-            "contaminates DK/EU services with SE URLs. Set the env "
-            "var to 1 (SE), 2 (DK), 3 (EU), 4 (DE) and redeploy."
-        )
-        # Surface to the operator's UI via the central errors system
-        # so this silent-default failure stops being invisible.
-        try:
-            from utils.errors import report_error
-            report_error(stage="mshop_admin_list", key=endpoint,
-                         message=msg, severity="error")
-        except Exception:
-            pass
-        return {"status": "error", "error": msg, "items": []}
-
+    # The LIST endpoints select the shop PURELY BY DOMAIN, not by storeId.
+    # Proven empirically (probe_admin_api_variants, 2026-06-03): hitting
+    # www.mshop.{se,dk,eu}/public-api/... returns that shop's own pages,
+    # and the ?storeId param makes NO difference (storeId none/1/2/3 all
+    # returned identical results per domain). So each service must point
+    # MSHOP_ADMIN_API_BASE at its OWN shop domain (with the 'public-api'
+    # hyphen path). We do NOT send storeId here — it's ignored by the list
+    # API, and the old hard-fail-on-missing was based on a wrong
+    # assumption. (storeId is still required for the UPDATE/push endpoints,
+    # which carry it in the JSON payload — see _post_update.)
+    # The validate_active_pages_match_site() guard catches a base pointed
+    # at the wrong domain by checking returned URLs against SITE_CODE.
     base = _api_base()
     user, pwd = _credentials()
     url = f"{base}/{endpoint.lstrip('/')}"
     # Full target shown in every error so the operator can SEE the exact
-    # URL + storeId that was hit instead of guessing whether a 404 means
-    # a wrong base URL (env not redeployed), a wrong path, or a store the
-    # backend doesn't have. Don't guess from "HTTP 404" — show the call.
-    called = f"{url}?storeId={store_id}"
+    # URL that was hit instead of guessing whether a 404 means a wrong
+    # base URL, wrong path spelling (public_api vs public-api), or the
+    # env var hasn't redeployed. Don't guess from "HTTP 404" — show it.
+    called = url
     try:
         resp = requests.get(
             url,
             auth=(user, pwd),
-            params={"storeId": store_id},
             timeout=TIMEOUT_SECONDS,
         )
     except requests.Timeout:

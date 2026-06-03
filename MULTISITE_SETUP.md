@@ -36,8 +36,6 @@ Railway project: gsc-seo
 |---|---|
 | `ANTHROPIC_API_KEY` | Same Anthropic account for all shops |
 | `GSC_CREDENTIALS_JSON` | Same Google service account (added as user to each GSC property separately) |
-| `MSHOP_ADMIN_API_BASE` | Same base URL — multi-tenant. Confirmed with admin: option A. |
-| `FOOTER_TEXT_API` | Same URL |
 | `FOOTER_TEXT_API_USER` | Same Basic auth user |
 | `FOOTER_TEXT_API_PASS` | Same Basic auth pass |
 
@@ -49,8 +47,11 @@ Railway project: gsc-seo
 | `GSC_SITE_URL` | `sc-domain:mshop.se` | `sc-domain:mshop.dk` | `sc-domain:mshop.eu` |
 | `SITE_CONTEXT` | Swedish description | Danish description | English description |
 | `CONTENT_LANGUAGE` | `Swedish` | `Danish` | `English` |
+| `MSHOP_ADMIN_API_BASE` | `https://www.mshop.se/public-api` | `https://www.mshop.dk/public-api` | `https://www.mshop.eu/public-api` |
 | `FOOTER_TEXT_STORE_ID` | `1` | `2` | `3` |
 | `SITE_CODE` | `se` | `dk` | `eu` |
+
+> **`MSHOP_ADMIN_API_BASE` is PER-DOMAIN, not shared** (verified 2026-06-03 via the Setup → "Diagnose Mshop API" probe). The list endpoints pick the shop by **domain**, and IGNORE `?storeId`. Each service must point at its **own** shop domain. The path is `public-api` with a **hyphen** — `public_api` with an underscore returns 404. `FOOTER_TEXT_STORE_ID` is used only by the update/push endpoints (in the JSON payload), not by the list sync.
 
 `SITE_CODE` is the critical multi-site switch — it tells the unpack code which bundled files to load. Without it set, the service defaults to `se` with a warning, so an mshop-se deploy that forgets to set it keeps working.
 
@@ -219,11 +220,11 @@ The system reads `FOOTER_TEXT_STORE_ID` env var on each service and embeds that 
 - Service account not added as user to the DK property in Google Search Console.
 - Fix: Search Console → DK property → Settings → Users and permissions → Add user with the service account email (find in `GSC_CREDENTIALS_JSON` → `client_email`).
 
-### Sync Mshop active pages returns SE categories on DK service
-- `FOOTER_TEXT_STORE_ID` set to `1` instead of `2`. Fix in Railway Variables.
+### Sync Mshop active pages returns the wrong shop's categories (e.g. SE on the DK service)
+- `MSHOP_ADMIN_API_BASE` points at the wrong shop domain. The list API picks the shop by **domain**, so set it to this service's own domain (e.g. `https://www.mshop.dk/public-api` on the DK service). `?storeId` is ignored by the list endpoints.
 
-### Sync returns 0 pages
-- Auth wrong (`FOOTER_TEXT_API_USER` / `FOOTER_TEXT_API_PASS`), or `MSHOP_ADMIN_API_BASE` wrong, or the shop doesn't have any active categories yet.
+### Sync returns 0 pages / HTTP 404 on every list endpoint
+- `MSHOP_ADMIN_API_BASE` uses `public_api` (underscore) instead of `public-api` (hyphen) → 404. Or it points at a domain that isn't this shop. Or auth is wrong (`FOOTER_TEXT_API_USER` / `FOOTER_TEXT_API_PASS`). Use **Setup → "Diagnose Mshop API (probe all variants)"** to see exactly which base + path returns 200, then set `MSHOP_ADMIN_API_BASE` to that value and redeploy.
 
 ### Page authority is contaminated with SE data on DK service
 - `SITE_CODE` not set or set wrong on the DK service. Should be `dk`. After setting, restart the service so `_unpack_bundled_data` re-evaluates.
