@@ -1267,10 +1267,19 @@ Identify:
 def _run_quality_until_done():
     """Step 7 entry point — delegates to the shared runner so this view never
     re-implements the loop. Exceptions bubble to the pipeline UI handler."""
-    from utils.quality_check_runner import run_until_done
+    from utils.quality_check_runner import (
+        run_until_done, eligible_pages, eligibility_diagnosis,
+    )
     audit = st.session_state.get("audit_results", []) or []
     if not audit:
         raise ValueError("Run bulk audit first (step 6)")
+    # If nothing qualifies, run_until_done() would return silently and the
+    # button would just flash "done" — which reads as "started and stopped,
+    # nothing happened". Surface the actual reason instead so the operator
+    # knows what to fix (usually: wrong/empty Mshop active-pages cache at
+    # Step 6 time, so categories were classified as products).
+    if not eligible_pages(audit):
+        raise ValueError(eligibility_diagnosis(audit))
     run_until_done(audit)
 
 
