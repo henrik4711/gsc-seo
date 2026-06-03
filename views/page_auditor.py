@@ -1246,12 +1246,34 @@ def render():
                     if _eligible_fix
                     else "🤖 Fix ALL flagged (all already done)"
                 )
+                # ── GUARD: Cluster Health (step 6b) must have run ──
+                # Bulk generation without cluster-health insights gets NO
+                # cannibalization / misplaced-keyword steering, so the AI
+                # may optimise a page for a keyword that belongs elsewhere.
+                # Block Fix ALL unless 6b ran OR the user explicitly overrides.
+                from utils.cluster_health_runner import cluster_health_has_run
+                _ch_run = cluster_health_has_run()
+                _ch_override = False
+                if not _ch_run:
+                    st.warning(
+                        "⚠ **Cluster Health (step 6b) has NOT been run.** Without it the "
+                        "generated text gets **no cannibalization steering** — the AI may "
+                        "write a page for a keyword that belongs on another page. "
+                        "Strongly recommended: run **Run Pipeline → step 6b (Cluster "
+                        "Health)** first, then come back. Fix ALL is blocked until you "
+                        "run 6b or tick the box below."
+                    )
+                    _ch_override = st.checkbox(
+                        "I understand — run Fix ALL anyway, without cannibalization steering",
+                        key="fix_all_ch_override",
+                    )
+                _ch_blocked = (not _ch_run) and (not _ch_override)
                 if st.button(
                     _btn_label,
                     key="fix_all_btn",
-                    type="primary" if _eligible_fix else "secondary",
+                    type="primary" if (_eligible_fix and not _ch_blocked) else "secondary",
                     use_container_width=True,
-                    disabled=not _eligible_fix,
+                    disabled=not _eligible_fix or _ch_blocked,
                     help="For EACH flagged page in sequence: generate AI plan + "
                          "bottom text + intro (if needed), then push everything "
                          "to Mshop (bottom text via footer API, meta + intro "

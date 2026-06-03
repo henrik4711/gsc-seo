@@ -315,6 +315,24 @@ def run_all_clusters(progress_cb=None) -> dict:
     return {"evaluated": evaluated, "skipped": skipped, "failed": failed, "total": n}
 
 
+def cluster_health_has_run() -> bool:
+    """True if Cluster Health (pipeline step 6b) has produced any cached
+    evaluation this session.
+
+    Used to GATE bulk text generation (Fix ALL): without cluster-health
+    insights, _format_cluster_health_insights() returns empty and the
+    generation prompts get NO cannibalization / misplaced-keyword steering
+    — so the AI may write a page for a keyword that belongs elsewhere.
+    """
+    import streamlit as st
+    if st.session_state.get("_cluster_health_summary"):
+        return True
+    for k in list(st.session_state.keys()):
+        if isinstance(k, str) and k.startswith("_cluster_health_") and k != "_cluster_health_summary":
+            return True
+    return False
+
+
 def find_cluster_health_flagged_urls() -> list:
     """Return URLs the strategic Cluster Health review has actionable
     findings for, with the reason attached.
