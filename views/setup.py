@@ -585,8 +585,12 @@ def render():
             unsafe_allow_html=True,
         )
         if st.button("Run API probe", key="btn_probe_mshop_api"):
-            from utils.mshop_admin_api import probe_admin_api_variants
-            with st.spinner("Probing all SE/DK/EU × storeId combinations…"):
+            from utils.mshop_admin_api import probe_admin_api_variants, probe_env_snapshot
+            # Show the env this running service actually sees first —
+            # the resolved base is what every real sync uses.
+            st.markdown("**Env this service sees:**")
+            st.json(probe_env_snapshot())
+            with st.spinner("Probing all SE/DK/EU domains × path spellings × storeId…"):
                 rows = probe_admin_api_variants()
             # Friendly table: short base label + storeId label
             table = []
