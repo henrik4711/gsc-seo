@@ -1914,25 +1914,46 @@ def render():
                         elif not _res.get("errors"):
                             st.warning("Nothing pushed — generate the text first.")
 
-                    if _has_gen:
-                        if _mt:
-                            st.markdown(f"**Meta title:** {_mt}")
-                        if _md:
-                            st.markdown(f"**Meta description:** {_md}")
+                    # Honest per-field status so you can SEE whether intro /
+                    # meta were generated, failed, or just empty — instead of
+                    # a field silently vanishing from the preview.
+                    _intro_err = _intro_obj.get("error") if isinstance(_intro_obj, dict) else None
+                    _bottom_err = _bottom_obj.get("error") if isinstance(_bottom_obj, dict) else None
+                    _plan_err = _plan_obj.get("error") if isinstance(_plan_obj, dict) else None
+                    _attempted = bool(_bottom_obj or _intro_obj or _plan_obj)
+
+                    def _field_box(_label, _html):
+                        st.markdown(f"**{_label}:**")
+                        st.markdown(
+                            f"<div style='background:#0d0d15; border:1px solid #2a2a40; "
+                            f"border-radius:6px; padding:0.8rem; color:#e8e8f0;'>{_html}</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    if _attempted:
+                        # Meta (comes from the implementation plan)
+                        if _plan_err:
+                            st.markdown(f"⚠ **Meta / plan:** generation FAILED — `{_plan_err}`")
+                        else:
+                            st.markdown(f"**Meta title:** {_mt or '⚠ _not generated_'}")
+                            st.markdown(f"**Meta description:** {_md or '⚠ _not generated_'}")
+                        # Intro (category only; pushed as admin-API 'description')
                         if _intro_html:
-                            st.markdown("**Intro text (above product grid):**")
+                            _field_box("Intro text (above product grid)", _intro_html)
+                        elif _intro_err:
+                            st.markdown(f"⚠ **Intro text:** generation FAILED — `{_intro_err}`")
+                        else:
                             st.markdown(
-                                f"<div style='background:#0d0d15; border:1px solid #2a2a40; "
-                                f"border-radius:6px; padding:0.8rem; color:#e8e8f0;'>{_intro_html}</div>",
-                                unsafe_allow_html=True,
+                                "⚠ **Intro text:** not generated — click "
+                                "**Generate / regenerate** to retry it."
                             )
+                        # Bottom (footer API)
                         if _bottom_html:
-                            st.markdown("**Bottom text (below product grid):**")
-                            st.markdown(
-                                f"<div style='background:#0d0d15; border:1px solid #2a2a40; "
-                                f"border-radius:6px; padding:0.8rem; color:#e8e8f0;'>{_bottom_html}</div>",
-                                unsafe_allow_html=True,
-                            )
+                            _field_box("Bottom text (below product grid)", _bottom_html)
+                        elif _bottom_err:
+                            st.markdown(f"⚠ **Bottom text:** generation FAILED — `{_bottom_err}`")
+                        else:
+                            st.markdown("⚠ **Bottom text:** not generated.")
                     else:
                         st.caption(
                             "Click Generate to create the new text, review it here, "
