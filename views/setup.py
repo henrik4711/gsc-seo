@@ -531,28 +531,47 @@ def render():
                 st.session_state.pop("mshop_active_pages", None)
                 result = fetch_active_pages_all()
                 if result.get("status") in ("success", "partial"):
-                    st.session_state["mshop_active_pages"] = result
-                    try:
-                        save_key("mshop_active_pages")
-                    except Exception:
-                        pass
-                    counts = result.get("counts", {}) or {}
-                    sample_urls = []
-                    for meta in (result.get("lookup") or {}).values():
-                        if isinstance(meta, dict):
-                            u = meta.get("url", "")
-                            if u:
-                                sample_urls.append(u)
-                                if len(sample_urls) >= 3:
-                                    break
-                    msg = (
-                        f"Re-synced — got {counts.get('category', 0)} categories "
-                        f"+ {counts.get('cms', 0)} CMS + "
-                        f"{counts.get('filterpage', 0)} filter pages. "
+                    # Refuse to save data for the WRONG shop. The list API
+                    # selects shop by domain, so a base URL pointed at the
+                    # wrong domain returns another shop's pages (e.g. EU
+                    # service hitting www.mshop.se → SE URLs). Saving that
+                    # contaminates this shop's cache and silently breaks
+                    # classification. Validate against SITE_CODE first.
+                    from utils.mshop_admin_api import (
+                        validate_active_pages_match_site, _api_base,
                     )
-                    if sample_urls:
-                        msg += f"First URLs: {', '.join(sample_urls)}"
-                    st.success(msg)
+                    ok, reason = validate_active_pages_match_site(result)
+                    if not ok:
+                        st.error(
+                            f"⚠ NOT saving — the sync returned the WRONG shop's pages. "
+                            f"{reason} Resolved API base: `{_api_base()}`. "
+                            "Fix `MSHOP_ADMIN_API_BASE` to THIS service's own domain "
+                            "(e.g. `https://www.mshop.eu/public-api` on the EU service) "
+                            "and redeploy, then Re-sync again."
+                        )
+                    else:
+                        st.session_state["mshop_active_pages"] = result
+                        try:
+                            save_key("mshop_active_pages")
+                        except Exception:
+                            pass
+                        counts = result.get("counts", {}) or {}
+                        sample_urls = []
+                        for meta in (result.get("lookup") or {}).values():
+                            if isinstance(meta, dict):
+                                u = meta.get("url", "")
+                                if u:
+                                    sample_urls.append(u)
+                                    if len(sample_urls) >= 3:
+                                        break
+                        msg = (
+                            f"Re-synced — got {counts.get('category', 0)} categories "
+                            f"+ {counts.get('cms', 0)} CMS + "
+                            f"{counts.get('filterpage', 0)} filter pages. "
+                        )
+                        if sample_urls:
+                            msg += f"First URLs: {', '.join(sample_urls)}"
+                        st.success(msg)
                 else:
                     st.error(
                         f"Re-sync failed (status={result.get('status')}). "
