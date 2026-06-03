@@ -562,6 +562,34 @@ def _run_bulk_audit():
     existing_urls = set(_norm(r.get("url", "")) for r in existing)
     to_scrape = [p for p in target_urls if _norm(p) not in existing_urls]
     if not to_scrape:
+        # Don't silently return — that reads as "clicked Step 6, nothing
+        # happened". Tell the operator WHY there's nothing to scrape so
+        # they can act (usually: the Mshop cache wasn't loaded so it fell
+        # back to GSC, whose URLs are already all audited).
+        from collections import Counter as _Counter
+        used_cache = bool(mshop_lookup)
+        msg = (
+            f"**Bulk audit: nothing new to scrape.**\n\n"
+            f"- **URL source used:** {source_label or '(none)'}\n"
+            f"- **URLs offered by that source:** {len(target_urls)}\n"
+            f"- **Already in audit_results (skipped):** {len(existing_urls)}\n"
+            f"- **New pages to scrape:** 0\n"
+        )
+        if not used_cache:
+            msg += (
+                "\n⚠ The source was the **GSC fallback**, NOT the Mshop "
+                "active-pages cache — so trafficless category pages were "
+                "never offered. Re-sync the cache (Setup → Re-sync Mshop "
+                "active pages now) so it's loaded, then run Step 6 again. "
+                "It should then offer the full category + filterpage list."
+            )
+        else:
+            msg += (
+                "\nThe Mshop cache WAS used but every one of its URLs is "
+                "already audited. If you expected more, the cache count "
+                "looks low — re-sync it and check the category count."
+            )
+        st.warning(msg)
         return
 
     # ── Live progress UI ──────────────────────────────────────────
