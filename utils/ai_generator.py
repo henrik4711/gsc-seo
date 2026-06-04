@@ -318,38 +318,19 @@ def _fix_cyrillic_confusables(text: str) -> tuple[str, int]:
 
 
 def _reduce_em_dash_overuse(html: str, max_keep: int = 0) -> tuple[str, int]:
-    """Em-dashes (— or –) are an AI tell. The text must read 100% as if a
-    human wrote it, so by default we strip EVERY em-dash (max_keep=0) and
-    replace it with a comma. `max_keep` is retained only for callers that
-    deliberately want to keep a few; the editorial-text callers pass 0.
+    """Em-dashes (— or –) are an AI tell. Strip EVERY one (numeric ranges →
+    hyphen, prose dashes → comma) via the shared strip_ai_dashes() so the
+    SAME logic runs at generation and at the live-push API boundary.
 
-    The substitution is mechanical (a comma is always grammatically safe
-    in the position an em-dash sat in), then surrounding whitespace is
-    tidied so the result reads natural.
-
-    Returns (fixed_html, substitutions_made)."""
+    `max_keep` is ignored now (all callers want zero) but kept in the
+    signature for back-compat. Returns (fixed_html, substitutions_made)."""
     if not html:
         return html, 0
-    import re as _re_em
-    # Numeric ranges (1–2, 10–15, 5–10) use a dash legitimately; the natural
-    # HUMAN form is a plain hyphen, NOT a comma ('1, 2 day delivery' is
-    # wrong). Normalize those to a hyphen FIRST so the comma-substitution
-    # below only touches prose dashes.
-    html, n_range = _re_em.subn(r"(?<=\d)\s*[—–]\s*(?=\d)", "-", html)
-    # Count remaining em/en-dashes preserving their order
-    indexes = [i for i, ch in enumerate(html) if ch in ("—", "–")]
-    if len(indexes) <= max_keep:
-        return html, n_range
-    # Replace every dash AFTER the first max_keep with a comma
-    out = list(html)
-    surplus_indexes = indexes[max_keep:]
-    for idx in surplus_indexes:
-        out[idx] = ","
-    # Collapse "x ," → "x," and ",  " → ", " so the result reads natural
-    fixed = "".join(out)
-    fixed = _re_em.sub(r"\s+,", ",", fixed)
-    fixed = _re_em.sub(r",\s+", ", ", fixed)
-    return fixed, len(surplus_indexes) + n_range
+    from utils.text_clean import strip_ai_dashes
+    before = html.count("—") + html.count("–")
+    fixed = strip_ai_dashes(html)
+    after = fixed.count("—") + fixed.count("–")
+    return fixed, before - after
 
 
 def _collapse_extra_whitespace(html: str) -> tuple[str, int]:
@@ -4765,7 +4746,17 @@ IMPORTANT: meta_title and meta_description MUST always be included in the respon
         messages=[{"role": "user", "content": prompt}],
     )
 
-    return _parse_ai_json(message)
+    plan = _parse_ai_json(message) or {}
+    # Strip em/en-dashes from meta AT THE SOURCE so every downstream push
+    # path (inline preview, Fix ALL, Quick Wins, admin push UI) gets clean
+    # meta automatically — em-dashes are a top AI tell and must never reach
+    # the live shop. Body text (bottom/intro) is already stripped at its own
+    # generation source; this closes the meta gap once for all callers.
+    if isinstance(plan, dict):
+        for _mf in ("meta_title", "meta_description"):
+            if plan.get(_mf):
+                plan[_mf] = _reduce_em_dash_overuse(plan[_mf], max_keep=0)[0]
+    return plan
 
 
 def filter_relevant_keywords(

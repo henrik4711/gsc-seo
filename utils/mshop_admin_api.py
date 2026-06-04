@@ -606,6 +606,16 @@ def update_for_page(
     For CMS pages, description is silently ignored (the API rejects it)."""
     if not isinstance(page_info, dict):
         return {"status": "error", "error": "page_info missing", "payload": None}
+    # FINAL boundary clean: strip em/en-dashes from EVERY field before it
+    # reaches the live shop, no matter which generator or push path produced
+    # it. Single chokepoint — see utils/text_clean.strip_ai_dashes.
+    from utils.text_clean import strip_ai_dashes
+    if description:
+        description = strip_ai_dashes(description)
+    if meta_title:
+        meta_title = strip_ai_dashes(meta_title)
+    if meta_description:
+        meta_description = strip_ai_dashes(meta_description)
     t = page_info.get("type")
     pid = page_info.get("id")
     if not pid:
