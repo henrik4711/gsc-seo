@@ -300,6 +300,11 @@ def push_footer_text(url: str, bottom_html: str) -> dict:
        http_code: int|None, response_body: str|None, error: str|None,
        payload: dict|None}
     """
+    # FINAL boundary clean: no em/en-dash reaches the live shop regardless
+    # of which generator/path produced the bottom text. Single chokepoint.
+    from utils.text_clean import strip_ai_dashes
+    bottom_html = strip_ai_dashes(bottom_html)
+
     api_url = os.environ.get("FOOTER_TEXT_API", "").strip()
     api_user = os.environ.get("FOOTER_TEXT_API_USER", "").strip()
     api_pass = os.environ.get("FOOTER_TEXT_API_PASS", "").strip()
