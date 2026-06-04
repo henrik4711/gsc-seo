@@ -1408,8 +1408,14 @@ def render():
                         _gen_status = generate_all_fixes_for_page(_page, batch_mode=True)
                         _log(f"  generate-done {next_fix_url} status={_gen_status}")
 
-                        # 2. Push bottom text via footer API
-                        _url_hash = _sh(next_fix_url)
+                        # 2. Push bottom text via footer API.
+                        # CRITICAL: read under the SAME url hash that
+                        # generation used (_page["url"] == _row["url"]), NOT
+                        # next_fix_url — those can differ (www vs non-www,
+                        # trailing slash) because the audit holds both forms,
+                        # and the mismatch made the admin push read empty and
+                        # skip (intro/meta silently never pushed).
+                        _url_hash = _sh(_page.get("url") or next_fix_url)
                         _bottom = (st.session_state.get(f"_bottom_text_{_url_hash}") or {}).get("bottom_html") or ""
                         if _bottom:
                             _log(f"  step=push_bottom {next_fix_url} chars={len(_bottom)}")
@@ -1445,6 +1451,15 @@ def render():
                         _intro_html = _intro_obj.get("optimized_text") or ""
                         _meta_t = _plan.get("meta_title", "") if isinstance(_plan, dict) else ""
                         _meta_d = _plan.get("meta_description", "") if isinstance(_plan, dict) else ""
+                        # Strip dashes from meta/intro at the push boundary too
+                        # (Fix ALL doesn't route through push_all_for_page).
+                        try:
+                            from utils.ai_generator import _reduce_em_dash_overuse as _dedash
+                            _meta_t = _dedash(_meta_t, max_keep=0)[0]
+                            _meta_d = _dedash(_meta_d, max_keep=0)[0]
+                            _intro_html = _dedash(_intro_html, max_keep=0)[0]
+                        except Exception:
+                            pass
                         if _intro_html or _meta_t or _meta_d:
                             try:
                                 from utils.mshop_admin_api import update_for_page, lookup_url as _mlu_fix
@@ -1898,7 +1913,12 @@ def render():
                     "✏️ Preview & push this page (no Quick Wins)",
                     expanded=st.session_state.get(f"_inline_open_{url_hash}", False),
                 ):
-                    _h = url_hash
+                    # Read content under the SAME hash generation uses
+                    # (audit_row["url"]), which can differ from
+                    # stable_hash(q["url"]) when the audit holds www and
+                    # non-www variants of the same page.
+                    _gen_url = (audit_row or {}).get("url") or q["url"]
+                    _h = _qr_sh(_gen_url)
                     _bottom_obj = st.session_state.get(f"_bottom_text_{_h}") or {}
                     _intro_obj = st.session_state.get(f"_intro_text_{_h}") or {}
                     _plan_obj = st.session_state.get(f"_ai_plan_{_h}") or {}
@@ -1941,7 +1961,7 @@ def render():
                             # cache-key/hash mismatch (the 'admin: skipped while
                             # text is visible' bug).
                             _res = push_all_for_page(
-                                q["url"],
+                                _gen_url,
                                 bottom_html=_bottom_html,
                                 intro_html=_intro_html,
                                 meta_title=_mt,
