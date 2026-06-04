@@ -389,6 +389,29 @@ def _run_bulk_audit():
     # This block fixes already-scraped data without re-scraping (pure
     # URL pattern matching, no network calls).
     if existing:
+        # ── MIGRATION: canonicalize URLs + dedup www/non-www ──
+        # ROOT FIX for the per-page-cache hash divergence: the audit used to
+        # store BOTH the www form (from the Mshop cache) and the non-www form
+        # (from GSC) of the same page. Because the AI cache keys are
+        # stable_hash(url), that dual form made generation and push hash to
+        # different keys ("admin: skipped while the text is visible"). Here we
+        # rewrite every row's url with normalize_url and keep ONE row per page
+        # (the richest scrape), so every downstream stable_hash(url) is
+        # consistent and the whole bug class is gone.
+        _by_norm = {}
+        for r in existing:
+            nu = _norm(r.get("url", ""))
+            if not nu:
+                continue
+            r["url"] = nu
+            prev = _by_norm.get(nu)
+            if prev is None or len(r.get("body_text") or "") > len(prev.get("body_text") or ""):
+                _by_norm[nu] = r
+        _removed = len(existing) - len(_by_norm)
+        if _removed > 0:
+            existing = list(_by_norm.values())
+            print(f"[bulk_audit] canonicalized URLs — removed {_removed} duplicate www/non-www rows")
+
         backfilled = 0
         for r in existing:
             current = r.get("page_type") or ""
@@ -397,15 +420,15 @@ def _run_bulk_audit():
                 if pt and pt != current:
                     r["page_type"] = pt
                     backfilled += 1
-        if backfilled > 0:
-            print(f"[bulk_audit] backfilled page_type for {backfilled} of {len(existing)} existing entries")
+        if backfilled > 0 or _removed > 0:
+            print(f"[bulk_audit] migrated existing audit: {backfilled} page_type backfills, {_removed} dups removed")
             if audit_path:
                 try:
                     with open(audit_path, "w", encoding="utf-8") as f:
                         json.dump(existing, f, ensure_ascii=False, indent=1, default=str)
                 except Exception as _e:
-                    print(f"[bulk_audit] backfill save failed: {_e}")
-            # Also refresh session_state with the backfilled list
+                    print(f"[bulk_audit] migration save failed: {_e}")
+            # Also refresh session_state with the migrated list
             st.session_state["audit_results"] = existing
 
     # ── Determine the URL set to audit ─────────────────────────────
@@ -683,7 +706,10 @@ def _run_bulk_audit():
                 page_data = deep_scrape_category(url, timeout=30)
             else:
                 page_data = scrape_page(url, timeout=30)
-            page_data["url"] = url
+            # Store the CANONICAL url (normalize_url: https, no www, no
+            # trailing slash) so every downstream stable_hash(url) for the
+            # per-page AI cache is consistent — no www/non-www divergence.
+            page_data["url"] = _norm(url)
             # CRITICAL: persist the URL-classifier's verdict into the saved
             # page_data so Step 7 (AI Content Quality) can filter eligible
             # pages by page_type later. Previously this assignment was
@@ -695,7 +721,7 @@ def _run_bulk_audit():
             n_ok += 1
             recent.append({"url": url, "ok": True})
         except Exception as e:
-            pending.append({"url": url, "success": False, "error": str(e), "page_type": "unknown"})
+            pending.append({"url": _norm(url), "success": False, "error": str(e), "page_type": "unknown"})
             n_fail += 1
             recent.append({"url": url, "ok": False, "err": str(e)[:80]})
 
