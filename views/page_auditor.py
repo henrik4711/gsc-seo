@@ -1936,7 +1936,17 @@ def render():
                     if _push_clicked:
                         from utils.page_fix_runner import push_all_for_page
                         with st.spinner("Pushing live to Mshop…"):
-                            _res = push_all_for_page(q["url"])
+                            # Pass the EXACT content the preview is showing, so
+                            # the push can't diverge from the preview via a
+                            # cache-key/hash mismatch (the 'admin: skipped while
+                            # text is visible' bug).
+                            _res = push_all_for_page(
+                                q["url"],
+                                bottom_html=_bottom_html,
+                                intro_html=_intro_html,
+                                meta_title=_mt,
+                                meta_description=_md,
+                            )
                         if _res.get("errors"):
                             st.error("Push errors:\n" + "\n".join(f"- {e}" for e in _res["errors"]))
                         if _res.get("pushed_any"):

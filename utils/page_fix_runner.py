@@ -270,18 +270,28 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
     return status
 
 
-def push_all_for_page(url: str) -> dict:
-    """Push the ALREADY-generated bottom + intro + meta for ONE page live to
-    Mshop. Standalone twin of the Fix ALL push sequence, so the per-page
-    inline 'preview + push' button can publish a single page WITHOUT the
-    heavy Quick Wins view.
+def push_all_for_page(
+    url: str,
+    *,
+    bottom_html: str = None,
+    intro_html: str = None,
+    meta_title: str = None,
+    meta_description: str = None,
+) -> dict:
+    """Push bottom + intro + meta for ONE page live to Mshop.
 
-    Reads the cached generation output (_bottom_text_/_intro_text_/_ai_plan_)
-    and:
-      - pushes bottom text via the footer API,
-      - pushes intro (description) + meta title/description via the admin API,
-      - mirrors what was pushed into the local audit row so the next quality
-        check / Fix ALL pass sees the fresh content.
+    The caller (inline 'Preview & push') passes the EXACT content the
+    preview is showing, so the push can never diverge from the preview via
+    a session-key/hash mismatch — the bug where the preview rendered text
+    but the push read empty cache keys and skipped the admin update.
+
+    Any field left as None falls back to the cached generation output
+    (_bottom_text_/_intro_text_/_ai_plan_ by url hash) — that's the
+    back-compat path Fix ALL relies on.
+
+    - bottom text → footer API
+    - intro (description) + meta title/description → admin API
+    - mirrors pushed content into the local audit row
 
     Returns {"bottom": str, "admin": str, "errors": [str], "pushed_any": bool}.
     """
@@ -291,7 +301,22 @@ def push_all_for_page(url: str) -> dict:
     h = stable_hash(url)
     status = {"bottom": "skipped", "admin": "skipped", "errors": [], "pushed_any": False}
 
-    bottom = (_st.session_state.get(f"_bottom_text_{h}") or {}).get("bottom_html") or ""
+    if bottom_html is None:
+        bottom_html = (_st.session_state.get(f"_bottom_text_{h}") or {}).get("bottom_html") or ""
+    if intro_html is None:
+        intro_html = (_st.session_state.get(f"_intro_text_{h}") or {}).get("optimized_text") or ""
+    if meta_title is None or meta_description is None:
+        _plan = _st.session_state.get(f"_ai_plan_{h}") or {}
+        if meta_title is None:
+            meta_title = _plan.get("meta_title", "") if isinstance(_plan, dict) else ""
+        if meta_description is None:
+            meta_description = _plan.get("meta_description", "") if isinstance(_plan, dict) else ""
+
+    bottom = bottom_html or ""
+    meta_t = meta_title or ""
+    meta_d = meta_description or ""
+    intro_html = intro_html or ""
+
     if bottom:
         try:
             from utils.footer_text_api import push_footer_text
@@ -310,12 +335,6 @@ def push_all_for_page(url: str) -> dict:
         except Exception as e:
             status["bottom"] = "error"
             status["errors"].append(f"bottom push exception: {type(e).__name__}: {e}")
-
-    plan = _st.session_state.get(f"_ai_plan_{h}") or {}
-    intro_obj = _st.session_state.get(f"_intro_text_{h}") or {}
-    intro_html = intro_obj.get("optimized_text") or ""
-    meta_t = plan.get("meta_title", "") if isinstance(plan, dict) else ""
-    meta_d = plan.get("meta_description", "") if isinstance(plan, dict) else ""
 
     # Final em-dash safety net at the push boundary: em-dashes are a top AI
     # tell and must never reach the live shop in ANY field. Body text is
