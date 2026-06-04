@@ -1408,101 +1408,23 @@ def render():
                         _gen_status = generate_all_fixes_for_page(_page, batch_mode=True)
                         _log(f"  generate-done {next_fix_url} status={_gen_status}")
 
-                        # 2. Push bottom text via footer API.
-                        # CRITICAL: read under the SAME url hash that
-                        # generation used (_page["url"] == _row["url"]), NOT
-                        # next_fix_url — those can differ (www vs non-www,
-                        # trailing slash) because the audit holds both forms,
-                        # and the mismatch made the admin push read empty and
-                        # skip (intro/meta silently never pushed).
-                        _url_hash = _sh(_page.get("url") or next_fix_url)
-                        _bottom = (st.session_state.get(f"_bottom_text_{_url_hash}") or {}).get("bottom_html") or ""
-                        if _bottom:
-                            _log(f"  step=push_bottom {next_fix_url} chars={len(_bottom)}")
-                            try:
-                                from utils.footer_text_api import push_footer_text
-                                _br = push_footer_text(next_fix_url, _bottom)
-                                if _br.get("status") != "success":
-                                    _err = f"bottom push failed — {_br.get('error', _br.get('status'))}"
-                                    _fix_state["errors"].append(f"{next_fix_url}: {_err}")
-                                    _log(f"  ERR {next_fix_url}: {_err}")
-                                else:
-                                    _log(f"  push_bottom-ok {next_fix_url}")
-                                    # Mirror pushed content into audit_results so
-                                    # the NEXT Fix ALL pass doesn't re-flag the
-                                    # same "no bottom text / missing keywords"
-                                    # gap on a URL we just filled. See
-                                    # utils/audit_refresh.py.
-                                    try:
-                                        from utils.audit_refresh import update_audit_after_push
-                                        update_audit_after_push(next_fix_url, bottom_text=_bottom)
-                                    except Exception as _ar_e:
-                                        _log(f"  WARN audit_refresh failed {next_fix_url}: {_ar_e}")
-                            except Exception as _push_e:
-                                _err = f"push_bottom exception: {type(_push_e).__name__}: {_push_e}"
-                                _fix_state["errors"].append(f"{next_fix_url}: {_err}")
-                                _log(f"  ERR {next_fix_url}: {_err}")
-                        else:
-                            _log(f"  skip=push_bottom {next_fix_url} (no bottom_html)")
-
-                        # 3. Push intro + meta via admin API
-                        _plan = st.session_state.get(f"_ai_plan_{_url_hash}") or {}
-                        _intro_obj = st.session_state.get(f"_intro_text_{_url_hash}") or {}
-                        _intro_html = _intro_obj.get("optimized_text") or ""
-                        _meta_t = _plan.get("meta_title", "") if isinstance(_plan, dict) else ""
-                        _meta_d = _plan.get("meta_description", "") if isinstance(_plan, dict) else ""
-                        # Strip dashes from meta/intro at the push boundary too
-                        # (Fix ALL doesn't route through push_all_for_page).
-                        try:
-                            from utils.ai_generator import _reduce_em_dash_overuse as _dedash
-                            _meta_t = _dedash(_meta_t, max_keep=0)[0]
-                            _meta_d = _dedash(_meta_d, max_keep=0)[0]
-                            _intro_html = _dedash(_intro_html, max_keep=0)[0]
-                        except Exception:
-                            pass
-                        if _intro_html or _meta_t or _meta_d:
-                            try:
-                                from utils.mshop_admin_api import update_for_page, lookup_url as _mlu_fix
-                                _active = st.session_state.get("mshop_active_pages") or {}
-                                _pi = _mlu_fix(_active, next_fix_url)
-                                if _pi:
-                                    _log(f"  step=push_admin {next_fix_url} intro={len(_intro_html)} mt={len(_meta_t)} md={len(_meta_d)}")
-                                    _adm = update_for_page(
-                                        _pi,
-                                        description=_intro_html or None,
-                                        meta_title=_meta_t or None,
-                                        meta_description=_meta_d or None,
-                                    )
-                                    if _adm.get("status") != "success":
-                                        _err = f"admin push failed — {_adm.get('error', _adm.get('status'))}"
-                                        _fix_state["errors"].append(f"{next_fix_url}: {_err}")
-                                        _log(f"  ERR {next_fix_url}: {_err}")
-                                    else:
-                                        _log(f"  push_admin-ok {next_fix_url}")
-                                        # Mirror pushed intro/meta into the
-                                        # audit row so the next Fix ALL pass
-                                        # sees the new content + updated scores
-                                        # instead of replaying the same fixes.
-                                        try:
-                                            from utils.audit_refresh import update_audit_after_push
-                                            update_audit_after_push(
-                                                next_fix_url,
-                                                intro_text=(_intro_html or None),
-                                                meta_title=(_meta_t or None),
-                                                meta_description=(_meta_d or None),
-                                            )
-                                        except Exception as _ar_e:
-                                            _log(f"  WARN audit_refresh failed {next_fix_url}: {_ar_e}")
-                                else:
-                                    _err = "no Mshop page-info (URL not in active-pages cache)"
-                                    _fix_state["errors"].append(f"{next_fix_url}: {_err}")
-                                    _log(f"  ERR {next_fix_url}: {_err}")
-                            except Exception as _adm_e:
-                                _err = f"push_admin exception: {type(_adm_e).__name__}: {_adm_e}"
-                                _fix_state["errors"].append(f"{next_fix_url}: {_err}")
-                                _log(f"  ERR {next_fix_url}: {_err}")
-                        else:
-                            _log(f"  skip=push_admin {next_fix_url} (nothing to push)")
+                        # 2-3. Push everything via the SHARED push_all_for_page
+                        # — the SAME function the inline 'Preview & push' uses,
+                        # so Fix ALL can never diverge from it again. It reads
+                        # the generated content from the cache under
+                        # _page["url"]'s hash (exactly where generation stored
+                        # it), pushes bottom via footer API + intro/meta via
+                        # admin API, strips dashes at the boundary, and mirrors
+                        # the result into the audit row.
+                        from utils.page_fix_runner import push_all_for_page
+                        _res = push_all_for_page(_page.get("url") or next_fix_url)
+                        _log(
+                            f"  push {next_fix_url} bottom={_res.get('bottom')} "
+                            f"admin={_res.get('admin')}"
+                        )
+                        for _pe in _res.get("errors", []):
+                            _fix_state["errors"].append(f"{next_fix_url}: {_pe}")
+                            _log(f"  ERR {next_fix_url}: {_pe}")
 
                         _log(f"END {next_fix_url} OK")
                     except Exception as _fix_e:

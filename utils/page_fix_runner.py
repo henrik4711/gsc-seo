@@ -295,22 +295,21 @@ def push_all_for_page(
 
     Returns {"bottom": str, "admin": str, "errors": [str], "pushed_any": bool}.
     """
-    import streamlit as _st
-    from utils.ui_helpers import stable_hash
-
-    h = stable_hash(url)
     status = {"bottom": "skipped", "admin": "skipped", "errors": [], "pushed_any": False}
 
-    if bottom_html is None:
-        bottom_html = (_st.session_state.get(f"_bottom_text_{h}") or {}).get("bottom_html") or ""
-    if intro_html is None:
-        intro_html = (_st.session_state.get(f"_intro_text_{h}") or {}).get("optimized_text") or ""
-    if meta_title is None or meta_description is None:
-        _plan = _st.session_state.get(f"_ai_plan_{h}") or {}
+    # Fill any field not passed explicitly from the shared cache reader
+    # (single source of key derivation — see utils/cache_keys).
+    if None in (bottom_html, intro_html, meta_title, meta_description):
+        from utils.cache_keys import get_generated_content
+        _cached = get_generated_content(url)
+        if bottom_html is None:
+            bottom_html = _cached["bottom_html"]
+        if intro_html is None:
+            intro_html = _cached["intro_html"]
         if meta_title is None:
-            meta_title = _plan.get("meta_title", "") if isinstance(_plan, dict) else ""
+            meta_title = _cached["meta_title"]
         if meta_description is None:
-            meta_description = _plan.get("meta_description", "") if isinstance(_plan, dict) else ""
+            meta_description = _cached["meta_description"]
 
     bottom = bottom_html or ""
     meta_t = meta_title or ""
@@ -336,18 +335,12 @@ def push_all_for_page(
             status["bottom"] = "error"
             status["errors"].append(f"bottom push exception: {type(e).__name__}: {e}")
 
-    # Final em-dash safety net at the push boundary: em-dashes are a top AI
-    # tell and must never reach the live shop in ANY field. Body text is
-    # already stripped at generation, but meta isn't, so strip here too.
-    try:
-        from utils.ai_generator import _reduce_em_dash_overuse
-        meta_t = _reduce_em_dash_overuse(meta_t, max_keep=0)[0]
-        meta_d = _reduce_em_dash_overuse(meta_d, max_keep=0)[0]
-        intro_html = _reduce_em_dash_overuse(intro_html, max_keep=0)[0]
-    except Exception:
-        pass
+    # Dashes are stripped once at the live-push boundary (update_for_page /
+    # push_footer_text via utils.text_clean.strip_ai_dashes) — no need to
+    # repeat it here.
     if intro_html or meta_t or meta_d:
         try:
+            import streamlit as _st
             from utils.mshop_admin_api import update_for_page, lookup_url
             active = _st.session_state.get("mshop_active_pages") or {}
             pi = lookup_url(active, url)
