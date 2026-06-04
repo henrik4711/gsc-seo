@@ -330,24 +330,26 @@ def _reduce_em_dash_overuse(html: str, max_keep: int = 0) -> tuple[str, int]:
     Returns (fixed_html, substitutions_made)."""
     if not html:
         return html, 0
-    # Count em-dashes preserving their order
-    indexes = []
-    for i, ch in enumerate(html):
-        if ch in ("—", "–"):
-            indexes.append(i)
+    import re as _re_em
+    # Numeric ranges (1–2, 10–15, 5–10) use a dash legitimately; the natural
+    # HUMAN form is a plain hyphen, NOT a comma ('1, 2 day delivery' is
+    # wrong). Normalize those to a hyphen FIRST so the comma-substitution
+    # below only touches prose dashes.
+    html, n_range = _re_em.subn(r"(?<=\d)\s*[—–]\s*(?=\d)", "-", html)
+    # Count remaining em/en-dashes preserving their order
+    indexes = [i for i, ch in enumerate(html) if ch in ("—", "–")]
     if len(indexes) <= max_keep:
-        return html, 0
-    # Build new string replacing every em-dash AFTER the first max_keep
+        return html, n_range
+    # Replace every dash AFTER the first max_keep with a comma
     out = list(html)
     surplus_indexes = indexes[max_keep:]
     for idx in surplus_indexes:
         out[idx] = ","
     # Collapse "x ," → "x," and ",  " → ", " so the result reads natural
     fixed = "".join(out)
-    import re as _re_em
     fixed = _re_em.sub(r"\s+,", ",", fixed)
     fixed = _re_em.sub(r",\s+", ", ", fixed)
-    return fixed, len(surplus_indexes)
+    return fixed, len(surplus_indexes) + n_range
 
 
 def _collapse_extra_whitespace(html: str) -> tuple[str, int]:
