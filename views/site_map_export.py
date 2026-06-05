@@ -728,7 +728,7 @@ def render():
         else:
             with st.spinner("AI analyzing complete site structure... (~30 sec)"):
                 try:
-                    from utils.ai_generator import get_client, _parse_ai_json
+                    from utils.ai_generator import get_client, _parse_ai_json, DEFAULT_MODEL
 
                     client = get_client(get_anthropic_key())
 
@@ -783,7 +783,7 @@ Evaluate the OVERALL site health. Focus on:
 }}"""
 
                     message = client.messages.create(
-                        model="claude-sonnet-4-6",
+                        model=DEFAULT_MODEL,
                         max_tokens=3000,
                         temperature=0,
                         messages=[{"role": "user", "content": prompt}],
@@ -863,7 +863,7 @@ Evaluate the OVERALL site health. Focus on:
         else:
             with st.status("AI designing optimal site architecture (3 calls)...", expanded=True) as ideal_status:
                 try:
-                    from utils.ai_generator import get_client, _parse_ai_json
+                    from utils.ai_generator import get_client, _parse_ai_json, DEFAULT_MODEL
                     client = get_client(get_anthropic_key())
                     site_ctx = st.session_state.get('site_context', '')
                     site_issues = st.session_state.get(validation_key, {})
@@ -889,7 +889,7 @@ Evaluate the OVERALL site health. Focus on:
                     # ── CALL 1: Cluster design ────────────────────
                     st.write("Call 1/3: Designing clusters...")
                     msg1 = client.messages.create(
-                        model="claude-sonnet-4-6",
+                        model=DEFAULT_MODEL,
                         max_tokens=4000,
                         temperature=0,
                         messages=[{"role": "user", "content": f"""Design 20-40 topic clusters for this e-commerce site.
@@ -910,7 +910,7 @@ Output JSON: {{"clusters":[{{"name":"...","intent":"...","hub":"/url","hub_kw":"
                     st.write("Call 2/3: Identifying merges and deletions...")
                     cluster_names = [c.get("name", "") for c in clusters_result.get("clusters", [])]
                     msg2 = client.messages.create(
-                        model="claude-sonnet-4-6",
+                        model=DEFAULT_MODEL,
                         max_tokens=2000,
                         temperature=0,
                         messages=[{"role": "user", "content": f"""Given these topic clusters for {site_ctx}:
@@ -930,7 +930,7 @@ Output JSON: {{"merge":[{{"from":["/url1","/url2"],"to":"/url","why":"reason"}}]
                     # ── CALL 3: Summary + keyword assignments ─────
                     st.write("Call 3/3: Final assessment...")
                     msg3 = client.messages.create(
-                        model="claude-sonnet-4-6",
+                        model=DEFAULT_MODEL,
                         max_tokens=2000,
                         temperature=0,
                         messages=[{"role": "user", "content": f"""Site: {site_ctx}
@@ -1064,7 +1064,7 @@ Output JSON: {{"keyword_assignments":[{{"keyword":"kw","ideal_page":"/url","acti
         if st.button("Analyze gap between current and ideal structure", type="primary", key="btn_gap"):
             with st.spinner("AI comparing current vs ideal... (~30 sec)"):
                 try:
-                    from utils.ai_generator import get_client, _parse_ai_json
+                    from utils.ai_generator import get_client, _parse_ai_json, DEFAULT_MODEL
                     client = get_client(get_anthropic_key())
 
                     ideal = st.session_state[ideal_key]
@@ -1109,7 +1109,7 @@ What can be done without risk, what needs careful handling.
 }}"""
 
                     message = client.messages.create(
-                        model="claude-sonnet-4-6",
+                        model=DEFAULT_MODEL,
                         max_tokens=3000,
                         temperature=0,
                         messages=[{"role": "user", "content": prompt}],
@@ -1199,7 +1199,7 @@ What can be done without risk, what needs careful handling.
         if st.button("Validate all implementation plans against site issues", type="primary", key="btn_validate_plans"):
             with st.spinner("AI cross-checking all plans against site issues... (~30 sec)"):
                 try:
-                    from utils.ai_generator import get_client, _parse_ai_json
+                    from utils.ai_generator import get_client, _parse_ai_json, DEFAULT_MODEL
                     client = get_client(get_anthropic_key())
 
                     # Collect site issues from validation
@@ -1263,7 +1263,7 @@ Cross-check the implementation plans against the site issues. Answer:
 }}"""
 
                     message = client.messages.create(
-                        model="claude-sonnet-4-6",
+                        model=DEFAULT_MODEL,
                         max_tokens=3000,
                         temperature=0,
                         messages=[{"role": "user", "content": prompt}],
