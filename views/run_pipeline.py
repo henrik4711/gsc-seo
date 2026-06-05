@@ -776,7 +776,7 @@ def _run_ideal_structure():
         raise ValueError("Run topic clusters first")
 
     import json
-    from utils.ai_generator import get_client, _parse_ai_json
+    from utils.ai_generator import get_client, _parse_ai_json, DEFAULT_MODEL
 
     client = get_client(get_anthropic_key())
     site_ctx = st.session_state.get("site_context", "")
@@ -828,7 +828,7 @@ the path realistic for the site's URL structure (observe patterns in the list).
 
     # Call 1: Cluster design
     msg1 = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=8000,
         temperature=0,
         messages=[{"role": "user", "content": f"""Design 15-25 topic clusters for this e-commerce site.
@@ -866,7 +866,7 @@ Output ONLY valid JSON, no markdown, no commentary:
     # Call 2: Merge/delete/create
     cluster_names = [c.get("name", "") for c in clusters_result.get("clusters", [])]
     msg2 = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=6000,
         temperature=0,
         messages=[{"role": "user", "content": f"""Given these topic clusters for {site_ctx}:
@@ -900,7 +900,7 @@ Keep "why" short (<60 chars). Output ONLY valid JSON, no commentary:
 
     # Call 3: Summary
     msg3 = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": f"""Site: {site_ctx}
@@ -1019,7 +1019,7 @@ def _run_plan_validation():
         raise ValueError("Run site validation first (step 10)")
 
     import json
-    from utils.ai_generator import get_client, _parse_ai_json
+    from utils.ai_generator import get_client, _parse_ai_json, DEFAULT_MODEL
 
     # Collect all generated implementation plans
     plans_data = {}
@@ -1096,7 +1096,7 @@ Cross-check the implementation plans against site issues AND ideal structure. An
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1118,7 +1118,7 @@ def _run_gap_analysis():
         raise ValueError("Run site validation first")
 
     import json
-    from utils.ai_generator import get_client, _parse_ai_json
+    from utils.ai_generator import get_client, _parse_ai_json, DEFAULT_MODEL
 
     client = get_client(get_anthropic_key())
     site_val = st.session_state.get("_site_validation", {})
@@ -1159,7 +1159,7 @@ Output JSON:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1181,7 +1181,7 @@ def _run_site_validation():
         raise ValueError("Run topic clusters first")
 
     import json
-    from utils.ai_generator import get_client, _parse_ai_json
+    from utils.ai_generator import get_client, _parse_ai_json, DEFAULT_MODEL
     from views.site_map_export import _build_site_structure
 
     audit_results = st.session_state["audit_results"]
@@ -1296,7 +1296,7 @@ Identify:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=3000,
         temperature=0,  # Deterministic output
         messages=[{"role": "user", "content": prompt}],

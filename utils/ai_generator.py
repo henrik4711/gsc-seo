@@ -11,6 +11,10 @@ from typing import Optional
 
 from utils.footer_text_api import add_www_to_url
 
+# Single source of truth for the model name — change here to upgrade every
+# AI call in the codebase at once (views import this constant too).
+DEFAULT_MODEL = "claude-sonnet-4-6"
+
 
 def _www_urls(urls):
     """Return urls transformed to https://www. form, preserving input order/filter."""
@@ -1032,7 +1036,7 @@ Generate {n_variants} variants of improved meta title + description.
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}]
@@ -1106,7 +1110,7 @@ Return ONLY JSON (no markdown):
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}]
@@ -1359,7 +1363,7 @@ quote it from the sample, do not cite it as an issue.
     # SDK assembles the chunks for us; get_final_message() returns the
     # same Message object _parse_ai_json already understands.
     with client.messages.stream(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=8192,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1461,7 +1465,7 @@ IMPORTANT:
 - Language of analysis: English. Language of the content being analyzed: {language}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1587,7 +1591,7 @@ Return ONLY JSON:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}]
@@ -1634,7 +1638,7 @@ Language: {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=1000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1692,7 +1696,7 @@ Current text (excerpt):
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1888,7 +1892,7 @@ Current intro text:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=1000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -1976,7 +1980,7 @@ Related keywords to include: {', '.join(keywords[:15])}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -2036,7 +2040,7 @@ Language: {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=2000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -2096,7 +2100,7 @@ Language: {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=4096,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -2138,7 +2142,7 @@ Write in {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=500,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -2223,7 +2227,7 @@ Rules:
     # progress because the output is JSON), then read the final assembled
     # Message object exactly as if we'd done a non-streaming create().
     with client.messages.stream(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=out_budget,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -2498,7 +2502,7 @@ Check ALL of these and report issues + fixes:
     # Same pattern is already used for topic_clusters and other long
     # generations in this file (see lines 1361 and 2196).
     with client.messages.stream(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=16000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -2605,7 +2609,7 @@ Language: {language}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=8000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -3419,7 +3423,7 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=6000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -4161,7 +4165,7 @@ Site: {site_context}
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=6000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -4740,7 +4744,7 @@ IMPORTANT: meta_title and meta_description MUST always be included in the respon
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=3000,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -4796,7 +4800,7 @@ Return ONLY JSON:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=1500,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
@@ -4978,7 +4982,7 @@ Return ONLY JSON:
 }}"""
 
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=2500,
         temperature=0,
         messages=[{"role": "user", "content": prompt}]
