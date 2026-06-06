@@ -167,7 +167,14 @@ def render():
             if "gsc_properties" in st.session_state:
                 # Pre-select env var site if available
                 properties = st.session_state["gsc_properties"]
-                env_site = st.session_state.get("gsc_site_url", "")
+                # Default to this service's own GSC property. Fall back to the
+                # GSC_SITE_URL env var directly (e.g. sc-domain:mshop.eu) when
+                # the session key isn't populated, so each shop's service
+                # pre-selects its own site instead of the first one alphabetically.
+                env_site = (
+                    st.session_state.get("gsc_site_url")
+                    or os.environ.get("GSC_SITE_URL", "")
+                )
                 default_idx = 0
                 if env_site in properties:
                     default_idx = properties.index(env_site)

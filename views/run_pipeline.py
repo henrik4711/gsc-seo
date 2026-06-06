@@ -1029,7 +1029,14 @@ def _run_plan_validation():
             plans_data[url] = val
 
     if len(plans_data) == 0:
-        raise ValueError("No implementation plans generated yet. Generate plans in Quick Wins first.")
+        raise ValueError(
+            "No per-page implementation plans exist yet to validate. Plans are "
+            "created per page by **Fix ALL** (6. Page Auditor → 🤖 Fix ALL "
+            "flagged pages), by the per-page **🤖 Generate text** button, or in "
+            "Quick Wins. Run one of those first. Step 13 only REVIEWS existing "
+            "plans — it does not generate them (generating for every page would "
+            "be a large paid run, so it's on-demand by design)."
+        )
 
     client = get_client(get_anthropic_key())
     site_issues = st.session_state.get("_site_validation", {})
