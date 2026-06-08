@@ -1899,6 +1899,14 @@ def render():
                             )
                         elif not _res.get("errors"):
                             st.warning("Nothing pushed — generate the text first.")
+                        # Raw footer-API reply, so we can SEE whether Mshop saved
+                        # the bottom text active or inactive (it 2xx either way).
+                        if "bottom_http" in _res:
+                            st.markdown(
+                                f"**Footer API reply** — HTTP `{_res.get('bottom_http')}`, "
+                                f"{_res.get('bottom_sections', 0)} section(s) sent:"
+                            )
+                            st.code((_res.get("bottom_response") or "(empty body)"), language="json")
 
                     # Honest per-field status so you can SEE whether intro /
                     # meta were generated, failed, or just empty — instead of
