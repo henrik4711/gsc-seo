@@ -393,7 +393,8 @@ def render():
                             kind="description",
                             note="Aim for 120–165 chars. Lead with the keyword, end with a soft CTA.",
                         )
-                        with st.expander("Copy both as block", expanded=False):
+                        st.markdown("**Copy both as block**")
+                        with st.container():
                             st.code(f"Title: {meta_title}\nDescription: {meta_desc_plan}", language="text")
                     else:
                         st.markdown(
@@ -602,11 +603,13 @@ def render():
                             )
 
                             # Preview
-                            with st.expander("Preview article", expanded=True):
+                            st.markdown("**Preview article**")
+                            with st.container():
                                 st.markdown(art.get("html", ""), unsafe_allow_html=True)
 
                             # Copy HTML
-                            with st.expander("Copy HTML source"):
+                            st.markdown("**Copy HTML source**")
+                            with st.container():
                                 st.code(art.get("html", ""), language="html")
 
                             # Download
@@ -902,10 +905,12 @@ def render():
                         render_footer_push_block(url, bt_html, key_prefix=f"ap_push_{url_hash}")
 
                         if kws:
-                            with st.expander(f"Keywords integrated ({len(kws)})"):
+                            st.markdown(f"**Keywords integrated ({len(kws)})**")
+                            with st.container():
                                 st.markdown(", ".join(kws))
                         if links:
-                            with st.expander(f"Internal links ({len(links)})"):
+                            st.markdown(f"**Internal links ({len(links)})**")
+                            with st.container():
                                 for lk in links:
                                     st.markdown(f"- `{lk}`")
 
