@@ -349,7 +349,8 @@ def render():
                         )
 
                 # Detailed comments
-                with st.expander("Detailed score comments"):
+                st.markdown("**Detailed score comments**")
+                with st.container():
                     for key, label in score_labels:
                         s = scores.get(key, {})
                         st.markdown(f"**{label}** ({s.get('score', 0)}/10): {s.get('comment', '')}")

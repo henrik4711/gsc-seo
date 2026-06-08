@@ -1026,7 +1026,8 @@ def render():
             # Restore original audit_results so this test doesn't pollute other views
             st.session_state["audit_results"] = original_audit
 
-            with st.expander("Show raw generated HTML"):
+            st.markdown("**Show raw generated HTML**")
+            with st.container():
                 st.markdown("**TOP TEXT:**")
                 st.code(top_html or "(empty)", language="html")
                 st.markdown("**BOTTOM TEXT:**")
