@@ -1899,15 +1899,16 @@ def render():
                             )
                         elif not _res.get("errors"):
                             st.warning("Nothing pushed — generate the text first.")
-                        # Raw footer-API reply, tucked in a collapsed expander
-                        # so normal pushes stay clean — auto-opens only on error.
-                        if "bottom_http" in _res:
-                            with st.expander(
-                                f"Footer API reply (HTTP {_res.get('bottom_http')}, "
-                                f"{_res.get('bottom_sections', 0)} sections)",
-                                expanded=_res.get("bottom") == "error",
-                            ):
-                                st.code((_res.get("bottom_response") or "(empty body)"), language="json")
+                        # Raw footer-API reply — shown ONLY on a push error.
+                        # (Can't use an expander here: this whole block already
+                        # runs inside the "Preview & push" expander, and
+                        # Streamlit forbids nested expanders.)
+                        if _res.get("bottom") == "error":
+                            st.markdown(
+                                f"**Footer API reply** — HTTP `{_res.get('bottom_http')}`, "
+                                f"{_res.get('bottom_sections', 0)} section(s) sent:"
+                            )
+                            st.code((_res.get("bottom_response") or "(empty body)"), language="json")
 
                     # Honest per-field status so you can SEE whether intro /
                     # meta were generated, failed, or just empty — instead of
