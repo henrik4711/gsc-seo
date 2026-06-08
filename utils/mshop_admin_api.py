@@ -612,6 +612,17 @@ def update_for_page(
     from utils.text_clean import strip_ai_dashes
     if description:
         description = strip_ai_dashes(description)
+        # Same-site absolute links must use the www host
+        # (https://www.mshop.eu/…), matching the footer/bottom-text path.
+        # The admin API (intro/description) previously skipped this, so
+        # intro links could go live as non-www. Mirror the bottom rewrite.
+        try:
+            from utils.footer_text_api import add_www_to_href_attrs, _host_without_www
+            _host = _host_without_www(page_info.get("url", "") or "")
+            if _host:
+                description = add_www_to_href_attrs(description, _host)
+        except Exception:
+            pass
     if meta_title:
         meta_title = strip_ai_dashes(meta_title)
     if meta_description:
