@@ -320,6 +320,11 @@ def push_all_for_page(
         try:
             from utils.footer_text_api import push_footer_text
             br = push_footer_text(url, bottom)
+            # Surface the raw API reply so we can SEE whether Mshop saved the
+            # text active or inactive (it 2xx-succeeds either way).
+            status["bottom_http"] = br.get("http_code")
+            status["bottom_response"] = (br.get("response_body") or "")[:1500]
+            status["bottom_sections"] = len((br.get("payload") or {}).get("texts") or [])
             if br.get("status") != "success":
                 status["bottom"] = "error"
                 status["errors"].append(f"bottom push: {br.get('error', br.get('status'))}")
