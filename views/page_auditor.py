@@ -1399,13 +1399,17 @@ def render():
                         from utils.ui_helpers import stable_hash as _sh
                         _page = page_audit_to_page_dict(_row)
 
-                        # 1. Generate plan + bottom + intro
-                        # batch_mode=True: 1 attempt instead of 3 for bottom
-                        # text and 1 instead of 2 for intro. Worst-case
-                        # per-page time drops from ~5 min to ~90s, well
-                        # within Streamlit's WebSocket timeout window.
+                        # 1. Generate plan + bottom + intro.
+                        # force=True so Fix ALL behaves EXACTLY like the
+                        # single-page "Generate text" button — every flagged
+                        # page gets fresh meta + bottom + intro (without force,
+                        # a page whose existing intro is >50 words had its intro
+                        # SKIPPED, so Fix ALL pushed meta+bottom but no new intro).
+                        # Safe with resume: already-done pages are excluded via
+                        # _fix_history, so force only hits not-yet-done pages.
+                        # batch_mode=True keeps it ~90s/page (1 attempt vs 3).
                         _log(f"  step=generate {next_fix_url}")
-                        _gen_status = generate_all_fixes_for_page(_page, batch_mode=True)
+                        _gen_status = generate_all_fixes_for_page(_page, force=True, batch_mode=True)
                         _log(f"  generate-done {next_fix_url} status={_gen_status}")
 
                         # 2-3. Push everything via the SHARED push_all_for_page
