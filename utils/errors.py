@@ -206,7 +206,8 @@ def render_errors_panel() -> None:
             box(f"{header}\n\n{msg}")
 
             if tb:
-                with st.expander("traceback", expanded=False):
+                st.markdown("**traceback**")
+                with st.container():
                     st.code(tb, language="python")
 
         if st.button("Dismiss all system messages", key="btn_clear_system_errors"):
