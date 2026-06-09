@@ -1420,6 +1420,20 @@ def _run_cluster_health():
     """
     from utils.cluster_health_runner import run_all_clusters
 
+    # Free the large raw SF inlinks dataframe (millions of rows on big sites
+    # like mshop.dk) before this memory-heavy step. Cluster Health uses the
+    # small derived sf_link_map, NOT sf_inlinks — so dropping it here gives
+    # the per-cluster profile-building real headroom and avoids the container
+    # OOM-restart (which logs you out). Step 3 (crawl analysis) handles a
+    # missing sf_inlinks gracefully; a reboot reloads it from /data.
+    try:
+        import gc
+        if st.session_state.pop("sf_inlinks", None) is not None:
+            gc.collect()
+            print("[step 6b] freed sf_inlinks from memory before cluster health")
+    except Exception:
+        pass
+
     progress_bar = st.progress(0.0, text="Starting cluster health evaluation...")
     status_box = st.empty()
 
