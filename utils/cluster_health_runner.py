@@ -280,46 +280,95 @@ def run_all_clusters(progress_cb=None) -> dict:
     n = len(clusters_sorted)
     evaluated = skipped = failed = 0
 
+    # Partition into already-done (cached non-error) vs to-evaluate. Failed
+    # entries are retried so transient errors don't block downstream AI.
+    todo = []  # (cluster, health_key, topic)
     for i, cluster in enumerate(clusters_sorted):
         topic = cluster.get("topic", f"Cluster {i}")
         health_key = f"_cluster_health_{stable_hash(topic)}"
-        if progress_cb:
-            try:
-                progress_cb(i, n, topic)
-            except Exception:
-                pass
-
         cached = st.session_state.get(health_key)
-        # Skip when we already have a valid (non-error) cached eval.
-        # Failed entries are retried so transient errors don't block
-        # downstream AI generation forever.
         if isinstance(cached, dict) and not cached.get("error"):
             skipped += 1
-            continue
-
-        payload = run_cluster_eval(
-            cluster, audit_results, tc, gsc_data, sf_link_map,
-            site_context, language, all_site_urls, health_key,
-        )
-        if payload.get("error"):
-            failed += 1
         else:
-            evaluated += 1
+            todo.append((cluster, health_key, topic))
 
-        # Free the per-page profile cache between clusters. build_page_profile
-        # memoises a FULL profile (incl. body_text) per URL into
-        # _pp_cache_<hash>; across 25 clusters / thousands of pages that
-        # accumulates into GBs and OOM-restarts the container (5 GB peak on
-        # mshop.dk). Clearing here caps the resident set to ~one cluster's
-        # pages at a time. Re-profiling a page shared by two clusters is a
-        # cheap recompute — far cheaper than the crash.
+    import concurrent.futures as _cf
+    import gc
+    from utils.ai_generator import get_client, evaluate_cluster_health
+    from config import get_anthropic_key
+    from utils.persistence import save as _persist_save
+
+    client = get_client(get_anthropic_key())
+
+    def _clear_pp_cache():
+        # build_page_profile memoises a FULL profile (incl. body_text) per
+        # URL into _pp_cache_<hash>; across thousands of pages those
+        # accumulate into GBs (5 GB peak on mshop.dk). Clear each batch so
+        # the resident set stays ~one batch of clusters.
         _pp = [k for k in list(st.session_state.keys())
                if isinstance(k, str) and k.startswith("_pp_cache_")]
         for _k in _pp:
             del st.session_state[_k]
         if _pp:
-            import gc
             gc.collect()
+
+    def _ai_eval(item):
+        # PURE worker — runs in a thread, MUST NOT touch st.session_state.
+        # evaluate_cluster_health is verified free of session_state access.
+        _cluster, _hk, _topic, _cd = item
+        if not _cd:
+            return (_hk, _topic, {
+                "error": "Cluster had no usable pages after defensive filtering",
+                "error_type": "NoUsablePages", "traceback": "", "health_score": 0,
+            })
+        try:
+            p = evaluate_cluster_health(client, _cd, site_context, language, all_site_urls)
+        except Exception as e:
+            import traceback as _tb
+            p = {"error": str(e), "error_type": type(e).__name__,
+                 "traceback": _tb.format_exc()[-2000:], "health_score": 0}
+        return (_hk, _topic, p)
+
+    # Evaluate in parallel BATCHES: the AI calls (pure network I/O) run
+    # concurrently, while the session_state-touching data build + result
+    # writes stay on the main thread (Streamlit session_state isn't
+    # thread-safe). ~5x faster than sequential AND each batch is short, so
+    # the websocket never blocks long enough to drop the session.
+    BATCH = 5
+    done = 0
+    for start in range(0, len(todo), BATCH):
+        batch = todo[start:start + BATCH]
+        # 1. MAIN THREAD — build cluster data (touches session_state)
+        built = []
+        for cluster, health_key, topic in batch:
+            try:
+                cd = _build_cluster_data(cluster, audit_results, tc, gsc_data, sf_link_map)
+            except Exception:
+                cd = None
+            built.append((cluster, health_key, topic, cd))
+        _clear_pp_cache()
+        # 2. PARALLEL — AI calls (no session_state)
+        with _cf.ThreadPoolExecutor(max_workers=min(BATCH, len(built))) as ex:
+            results = list(ex.map(_ai_eval, built))
+        # 3. MAIN THREAD — persist + count + progress
+        for health_key, topic, payload in results:
+            if isinstance(payload, dict) and not payload.get("topic"):
+                payload["topic"] = topic
+            st.session_state[health_key] = payload
+            try:
+                _persist_save(health_key)
+            except Exception as save_e:
+                print(f"[cluster_health] persist failed for {health_key}: {save_e}")
+            if payload.get("error"):
+                failed += 1
+            else:
+                evaluated += 1
+            done += 1
+        if progress_cb:
+            try:
+                progress_cb(skipped + done, n, f"{skipped + done}/{n} done")
+            except Exception:
+                pass
 
     if progress_cb:
         try:
