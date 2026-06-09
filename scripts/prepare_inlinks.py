@@ -54,6 +54,15 @@ import shutil
 import sys
 import time
 
+# Windows consoles default to cp1252, which raises UnicodeEncodeError on the
+# → arrows (and other Unicode) in our progress prints — that crashed the run
+# AFTER the SF files were written but BEFORE the Ahrefs files. Force UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # Add repo root to sys.path so we can `from utils.* import ...` when the
 # script is run directly (`python scripts/prepare_inlinks.py`).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
