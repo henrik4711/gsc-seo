@@ -641,8 +641,22 @@ def deep_scrape_category(url: str, timeout: int = 15) -> dict:
 
         main = soup.find("div", class_="xmx-page-content") or soup.find("main") or soup.body
         if main:
-            full_text = main.get_text(separator=" ", strip=True)
-            result["full_body_text"] = re.sub(r'\s+', ' ', full_text)[:8000]
+            full_text = re.sub(r'\s+', ' ', main.get_text(separator=" ", strip=True)).strip()
+            result["full_body_text"] = full_text[:8000]
+            # CRITICAL: also set body_text + word_count. eligible_pages filters
+            # on word_count and the quality assessment reads body_text, but
+            # deep_scrape_category never set them — so EVERY category came out
+            # word_count=0 and failed Step 7's ">50 words" gate despite having
+            # thousands of words (surfaced on mshop.dk: 757 categories, 0
+            # eligible). Include the editorial bottom/SEO text in the count so
+            # it reflects the full page, not just the product-grid container.
+            _ed_extra = " ".join([
+                result.get("intro_text") or "",
+                result.get("bottom_text") or "",
+            ]).strip()
+            _combined = (full_text + " " + _ed_extra).strip() if _ed_extra else full_text
+            result["body_text"] = _combined[:20000]
+            result["word_count"] = len(_combined.split())
 
         # ── FAQ / Guide detection ─────────────────────────────
         faq_headings = [h for h in result["h2s"] + result["h3s"]
