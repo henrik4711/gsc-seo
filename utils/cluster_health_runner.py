@@ -306,6 +306,21 @@ def run_all_clusters(progress_cb=None) -> dict:
         else:
             evaluated += 1
 
+        # Free the per-page profile cache between clusters. build_page_profile
+        # memoises a FULL profile (incl. body_text) per URL into
+        # _pp_cache_<hash>; across 25 clusters / thousands of pages that
+        # accumulates into GBs and OOM-restarts the container (5 GB peak on
+        # mshop.dk). Clearing here caps the resident set to ~one cluster's
+        # pages at a time. Re-profiling a page shared by two clusters is a
+        # cheap recompute — far cheaper than the crash.
+        _pp = [k for k in list(st.session_state.keys())
+               if isinstance(k, str) and k.startswith("_pp_cache_")]
+        for _k in _pp:
+            del st.session_state[_k]
+        if _pp:
+            import gc
+            gc.collect()
+
     if progress_cb:
         try:
             progress_cb(n, n, "done")
