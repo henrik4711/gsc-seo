@@ -221,39 +221,65 @@ def run_quality_batches(
     topic_clusters = st.session_state.get("topic_clusters")
 
     errors = []
-    total_batches = (len(pages) + BATCH_SIZE - 1) // BATCH_SIZE
+    batches = [
+        (bs // BATCH_SIZE + 1, pages[bs:bs + BATCH_SIZE])
+        for bs in range(0, len(pages), BATCH_SIZE)
+    ]
+    total_batches = len(batches)
 
-    for batch_start in range(0, len(pages), BATCH_SIZE):
-        batch = pages[batch_start:batch_start + BATCH_SIZE]
-        batch_num = batch_start // BATCH_SIZE + 1
+    import concurrent.futures as _cf
 
-        if on_batch_start:
-            try:
-                on_batch_start(batch_num, total_batches, batch)
-            except Exception:
-                pass
-
+    def _assess(item):
+        # PURE worker — runs in a thread, MUST NOT touch st.session_state.
+        # assess_content_quality_batch is verified free of session_state.
+        _bn, _batch = item
         try:
-            assessments = assess_content_quality_batch(
-                client, batch, site_context, language, topic_clusters,
-            )
-            for idx, assessment in enumerate(assessments):
-                if idx >= len(batch):
-                    break
-                r = batch[idx]
-                if isinstance(assessment, dict):
-                    assessment["_input_hash"] = quality_input_hash(r)
-                st.session_state[quality_key(r.get("url", ""))] = assessment
-            save_ai_cache()
+            return (_bn, _batch, assess_content_quality_batch(
+                client, _batch, site_context, language, topic_clusters), None)
         except Exception as e:
-            errors.append((batch_num, str(e)))
+            return (_bn, _batch, None, str(e))
 
-        if on_progress:
-            try:
-                on_progress(min(1.0, (batch_start + BATCH_SIZE) / len(pages)))
-            except Exception:
-                pass
+    # Run the per-batch AI calls CONCURRENTLY (each is pure network I/O),
+    # capped so we don't hammer the rate limit. Verdict writes + cache save
+    # happen here on the MAIN thread as each batch completes.
+    PARALLEL = 5
+    completed = 0
+    with _cf.ThreadPoolExecutor(max_workers=min(PARALLEL, total_batches)) as ex:
+        _futures = [ex.submit(_assess, b) for b in batches]
+        for _fut in _cf.as_completed(_futures):
+            _bn, _batch, assessments, err = _fut.result()
+            if err is not None:
+                errors.append((_bn, err))
+            else:
+                for idx, assessment in enumerate(assessments or []):
+                    if idx >= len(_batch):
+                        break
+                    r = _batch[idx]
+                    if isinstance(assessment, dict):
+                        assessment["_input_hash"] = quality_input_hash(r)
+                    st.session_state[quality_key(r.get("url", ""))] = assessment
+            completed += 1
+            # Persist periodically so an interruption never loses much.
+            if completed % 3 == 0:
+                try:
+                    save_ai_cache()
+                except Exception:
+                    pass
+            if on_batch_start:
+                try:
+                    on_batch_start(completed, total_batches, _batch)
+                except Exception:
+                    pass
+            if on_progress:
+                try:
+                    on_progress(min(1.0, completed / max(total_batches, 1)))
+                except Exception:
+                    pass
 
+    try:
+        save_ai_cache()
+    except Exception:
+        pass
     return errors
 
 
