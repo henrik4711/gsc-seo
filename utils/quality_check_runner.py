@@ -46,12 +46,28 @@ def quality_key_from_hash(url_hash: str) -> str:
     return f"{QUALITY_KEY_PREFIX}{url_hash}"
 
 
+def effective_word_count(r: dict) -> int:
+    """Word count that works even for category rows scraped by the older
+    deep_scrape_category, which populated full_body_text / intro / bottom but
+    left word_count at 0. Falls back to the captured text so a category with
+    thousands of words isn't wrongly rejected as 'thin' (the mshop.dk bug:
+    757 categories, all word_count 0, 0 eligible)."""
+    wc = r.get("word_count") or 0
+    if wc:
+        return wc
+    text = r.get("full_body_text") or r.get("body_text") or ""
+    n = len(text.split())
+    if n:
+        return n
+    return (r.get("intro_word_count") or 0) + (r.get("bottom_word_count") or 0)
+
+
 def eligible_pages(audit_results: list) -> list:
     """Pages that qualify for the quality check.
 
     Skips:
       - pages whose page_type isn't in ELIGIBLE_PAGE_TYPES
-      - pages with word_count <= MIN_WORD_COUNT
+      - pages with effective word count <= MIN_WORD_COUNT
       - pages in the user's _fix_skip_list (also used by Fix ALL).
         Single source of truth: a URL in that list is "do not touch
         with AI" — neither assess nor rewrite. This matches the
@@ -62,7 +78,7 @@ def eligible_pages(audit_results: list) -> list:
     return [
         r for r in (audit_results or [])
         if r.get("page_type") in ELIGIBLE_PAGE_TYPES
-        and (r.get("word_count") or 0) > MIN_WORD_COUNT
+        and effective_word_count(r) > MIN_WORD_COUNT
         and r.get("url", "") not in skip_set
     ]
 
@@ -127,7 +143,7 @@ def empty_category_pages(audit_results: list, scope: str = "all") -> list:
     for r in (audit_results or []):
         if r.get("page_type") not in ELIGIBLE_PAGE_TYPES:
             continue
-        if (r.get("word_count") or 0) > MIN_WORD_COUNT:
+        if effective_word_count(r) > MIN_WORD_COUNT:
             continue  # has text → assessed by the AI path, not here
         url = r.get("url", "")
         if not url or url in skip_set:
@@ -309,7 +325,7 @@ def eligibility_diagnosis(audit_results: list) -> str:
     categories = [r for r in audit if r.get("page_type") in ELIGIBLE_PAGE_TYPES]
     skip_set = set(st.session_state.get("_fix_skip_list") or [])
     cats_over_words = [
-        r for r in categories if (r.get("word_count") or 0) > MIN_WORD_COUNT
+        r for r in categories if effective_word_count(r) > MIN_WORD_COUNT
     ]
     cats_skipped = [r for r in cats_over_words if r.get("url", "") in skip_set]
 
