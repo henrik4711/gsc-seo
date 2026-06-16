@@ -175,8 +175,12 @@ def render():
     site_context = st.session_state.get("site_context", "")
     language = st.session_state.get("content_language", "Swedish")
 
-    # Cache action list
-    cache_key = f"_kw_actions_v7_{len(audit_results)}"
+    # Cache action list — fingerprint clusters so re-clustering (which
+    # changes per-page target keywords / coverage) busts the cache instead
+    # of serving a keyword plan built against the old cluster layout.
+    from utils.ui_helpers import cluster_fingerprint
+    cluster_fp = cluster_fingerprint(st.session_state.get("topic_clusters"))
+    cache_key = f"_kw_actions_v8_{len(audit_results)}_{cluster_fp}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_action_list(audit_results)
     actions = st.session_state[cache_key]
