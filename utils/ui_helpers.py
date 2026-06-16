@@ -12,6 +12,28 @@ def stable_hash(text: str) -> str:
     return hashlib.md5(text.encode()).hexdigest()[:8]
 
 
+def cluster_fingerprint(topic_clusters: dict | None) -> str:
+    """
+    Short deterministic fingerprint of the current topic-cluster structure.
+
+    Changes whenever clusters are added/removed, a cluster's topic changes,
+    or its page membership changes. Used in per-session cache keys (e.g.
+    Internal Linking, Missing Keywords) so those views auto-recompute when
+    re-clustering happens — instead of silently serving link/keyword plans
+    built against an outdated cluster layout.
+    """
+    if not topic_clusters or not isinstance(topic_clusters, dict):
+        return "0"
+    clusters = topic_clusters.get("clusters", []) or []
+    parts = []
+    for c in clusters:
+        pages = c.get("pages", []) or []
+        # topic + page count + sorted page paths → catches membership moves
+        page_sig = ",".join(sorted(str(p.get("page", "")) for p in pages))
+        parts.append(f"{c.get('topic', '')}:{len(pages)}:{page_sig}")
+    return stable_hash("|".join(sorted(parts)))
+
+
 def show_ai_error(label: str, exc: Exception, context: dict | None = None):
     """
     Detailed AI error display: error class, API status, request ID, credit/rate-limit hint,
