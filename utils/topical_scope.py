@@ -234,6 +234,103 @@ def get_topical_scope(page_url: str, topic_clusters: dict) -> dict | None:
     return None
 
 
+def _find_ancestor_hub(page_url: str, topic_clusters: dict):
+    """
+    Find the cluster hub (pillar) that is a URL-hierarchy ANCESTOR of
+    page_url. Returns (hub_url, cluster_topic) for the CLOSEST such
+    ancestor, or (None, "") when the page sits under no known pillar.
+
+    Used to give orphan deep pages — ones GSC has registered no queries
+    for yet — the topical context of the pillar they belong to. E.g.
+    /sexlegetoj/anal-sexlegetoj/butt-plug inherits the 'anal sexlegetoj'
+    pillar context even though it has 0 impressions of its own.
+    """
+    if not topic_clusters or not isinstance(topic_clusters, dict):
+        return None, ""
+    from utils.url_helpers import path_is_descendant
+
+    page_norm = normalize_url(page_url)
+
+    # Slug-match-aware hub detection reads audit_results from session_state.
+    audit_lookup = None
+    try:
+        import streamlit as _st
+        _audit = _st.session_state.get("audit_results") or []
+        if _audit:
+            audit_lookup = {normalize_url(r.get("url", "")): r for r in _audit
+                            if r.get("url")}
+    except Exception:
+        pass
+
+    best_hub, best_topic, best_len = None, "", -1
+    for cluster in topic_clusters.get("clusters", []) or []:
+        hub = detect_pillar(cluster, audit_lookup=audit_lookup)
+        if not hub or normalize_url(hub) == page_norm:
+            continue
+        if path_is_descendant(page_url, hub):
+            hub_len = len(url_path(hub))
+            if hub_len > best_len:  # closest (deepest) ancestor wins
+                best_hub, best_topic, best_len = hub, cluster.get("topic", ""), hub_len
+    return best_hub, best_topic
+
+
+def derive_target_keywords(page_url: str, topic_clusters: dict = None,
+                           ahrefs_kw_df=None, limit: int = 15) -> list:
+    """
+    Derive the keywords a page SHOULD target when GSC has registered no
+    queries for it yet (new / unindexed deep category pages with 0
+    impressions). Without this, such pages reach Missing Keywords with an
+    empty keyword set, which renders as a misleading "0% (0/0)" coverage
+    and falsely flags them HIGH priority.
+
+    Pulls, in priority order:
+      1. The page's canonical slug phrase, contextualised by the pillar it
+         sits under in the topical map ("butt-plug" under the anal pillar
+         -> "butt plug").
+      2. The bare slug phrase (always a valid primary-keyword candidate).
+      3. Keywords Ahrefs already shows the EXACT URL ranking for (volume
+         desc) — real demand GSC hasn't surfaced yet.
+
+    Returns a de-duplicated list, primary keyword first. Empty only when
+    the URL has no usable slug (homepage / single-segment URL).
+    """
+    keywords, seen = [], set()
+
+    def _add(kw):
+        k = (kw or "").strip()
+        if k and k.lower() not in seen:
+            seen.add(k.lower())
+            keywords.append(k)
+
+    slug = _url_tail_segment(page_url)
+    slug_phrase = slug.replace("-", " ").replace("_", " ").strip().lower()
+
+    # 1. Pillar-contextualised canonical phrase from the topical structure
+    hub, topic = _find_ancestor_hub(page_url, topic_clusters)
+    if hub:
+        synth = synthesize_modifier_phrase(page_url, hub, topic)
+        if synth:
+            _add(synth)
+
+    # 2. Bare slug phrase — the page's intended primary keyword
+    if slug_phrase:
+        _add(slug_phrase)
+
+    # 3. Ahrefs keywords ranking for this exact URL, highest volume first
+    if (ahrefs_kw_df is not None and hasattr(ahrefs_kw_df, "empty")
+            and not ahrefs_kw_df.empty
+            and "page" in ahrefs_kw_df.columns
+            and "keyword" in ahrefs_kw_df.columns):
+        match = ahrefs_kw_df[ahrefs_kw_df["page"] == normalize_url(page_url)]
+        if not match.empty:
+            if "volume" in match.columns:
+                match = match.sort_values("volume", ascending=False)
+            for kw in match["keyword"].tolist():
+                _add(kw)
+
+    return keywords[:limit]
+
+
 def deoptimization_action_text(scope: dict, page_title: str = "",
                                page_h1: str = "",
                                page_meta_desc: str = "") -> str:
