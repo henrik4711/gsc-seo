@@ -378,6 +378,71 @@ def render():
         st.session_state[cache_key] = _build_action_list(audit_results, topic_clusters, sf_link_map)
     actions = st.session_state[cache_key]
 
+    # ── Stale-link detection after re-clustering (FREE, no AI) ─────
+    # Step 1 of the "fix stale links" flow: scan the text we already
+    # generated for each page (cached bottom + intro) and check every
+    # internal link against the CURRENT clusters. Tells us how many pages
+    # actually went stale before deciding whether to fix + push.
+    st.markdown("### 🔗 Stale internal links after re-clustering")
+    st.caption(
+        "Scans the AI text we generated for each page (cached bottom text + intro) and "
+        "checks every internal link against your CURRENT cluster structure. No AI calls — free. "
+        "Use this to see how many pages have links that went stale when the clusters changed."
+    )
+    scan_key = f"_stale_link_scan_{cluster_fp}"
+    if st.button("Scan cached page texts for stale links", key="btn_stale_scan"):
+        with st.spinner("Scanning cached page texts…"):
+            from utils.link_audit import scan_cached_link_issues
+            st.session_state[scan_key] = scan_cached_link_issues(audit_results, topic_clusters)
+
+    scan = st.session_state.get(scan_key)
+    if scan is not None:
+        bt = scan["by_type"]
+        total_issues = sum(p["n_issues"] for p in scan["pages"])
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Pages with cached text", scan["scanned"])
+        m2.metric("Pages with stale links", scan["with_issues"])
+        m3.metric("Total link issues", total_issues)
+
+        if scan["scanned"] == 0:
+            st.info(
+                "No cached page texts found yet. Generate page text first "
+                "(**Quick Wins** per page, or **Page Auditor** → 'Fix ALL'), then re-scan."
+            )
+        elif scan["with_issues"] == 0:
+            st.success(
+                "No stale internal links — every cached page's links already match "
+                "the current cluster structure. Nothing to fix."
+            )
+        else:
+            st.markdown(
+                f"**Breakdown:** {bt['missing_hub_link']} missing hub-link · "
+                f"{bt['anchor_mismatch']} spoke→hub anchor mismatch · "
+                f"{bt['hub_spoke_anchor']} hub→spoke anchor issue"
+                + (f" · {bt['other']} other" if bt['other'] else "")
+            )
+            st.info(
+                "**Next step (not built yet):** preview the exact link corrections per page, "
+                "then push the fixed text back to Mshop via the API. Tell me to build step 2 "
+                "now that you can see the numbers."
+            )
+            import json as _json
+            st.download_button(
+                "Download full stale-link report (JSON)",
+                _json.dumps(scan["pages"], ensure_ascii=False, indent=2).encode("utf-8"),
+                "stale_internal_links.json",
+                "application/json",
+                key="dl_stale_links",
+            )
+            st.markdown("**Pages with stale links (most issues first):**")
+            for p in scan["pages"][:50]:
+                with st.expander(f"{p['n_issues']} issue(s) · {p['page_type']} · {p['url']}", expanded=False):
+                    for iss in p["issues"]:
+                        st.markdown(f"- {iss}")
+            if len(scan["pages"]) > 50:
+                st.caption(f"…and {len(scan['pages']) - 50} more pages — see the downloaded report for the full list.")
+    st.markdown("---")
+
     if not actions:
         st.success("No linking issues found. Internal linking looks good!")
         st.session_state["linking_fixes"] = True
