@@ -367,8 +367,13 @@ def render():
 
     sf_link_map = st.session_state.get("sf_link_map")
 
-    # Cache action list — only rebuild when data changes
-    cache_key = f"_link_actions_v3_{len(audit_results)}_{bool(sf_link_map)}"
+    # Cache action list — only rebuild when data changes. Includes a
+    # cluster fingerprint so re-clustering (e.g. raising max keywords from
+    # 28 to 66 clusters) busts the cache: the hub→spoke link plan is
+    # derived from clusters and would otherwise stay stale.
+    from utils.ui_helpers import cluster_fingerprint
+    cluster_fp = cluster_fingerprint(topic_clusters)
+    cache_key = f"_link_actions_v4_{len(audit_results)}_{bool(sf_link_map)}_{cluster_fp}"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = _build_action_list(audit_results, topic_clusters, sf_link_map)
     actions = st.session_state[cache_key]
