@@ -250,6 +250,22 @@ def render():
                 # Also get cluster keywords for deeper validation
                 cluster_keywords = _get_cluster_keywords(url)
 
+                # Fallback for pages GSC has no data on yet (new / deep
+                # category pages with 0 impressions): GSC gives no
+                # target_keywords, which made them show "0% (0/0)" coverage
+                # and falsely flag HIGH in Missing Keywords. Derive the
+                # keywords they SHOULD target from the topical structure
+                # (pillar slug context + Ahrefs) so coverage is measured
+                # honestly. Only fires when GSC produced nothing — never
+                # overwrites real GSC keywords.
+                if not target_keywords:
+                    from utils.topical_scope import derive_target_keywords
+                    target_keywords = derive_target_keywords(
+                        url,
+                        topic_clusters=st.session_state.get("topic_clusters"),
+                        ahrefs_kw_df=st.session_state.get("ahrefs_organic_keywords"),
+                    )
+
                 # Get backlink data if available
                 page_auth = st.session_state.get("page_authority")
                 rd = 0
@@ -689,6 +705,18 @@ def render():
             for i, r in enumerate(results):
                 if r.get("body_text") or r.get("full_body_text"):
                     try:
+                        # Backfill derived keywords for pages GSC never gave
+                        # any (0-impression deep pages) so old cached audits
+                        # stop showing "0% (0/0)" and false HIGH priority.
+                        if not r.get("target_keywords"):
+                            from utils.topical_scope import derive_target_keywords
+                            derived = derive_target_keywords(
+                                r.get("url", ""),
+                                topic_clusters=st.session_state.get("topic_clusters"),
+                                ahrefs_kw_df=st.session_state.get("ahrefs_organic_keywords"),
+                            )
+                            if derived:
+                                r["target_keywords"] = derived
                         cat_audit = audit_category_content(
                             r,
                             r.get("cluster_keywords", []),

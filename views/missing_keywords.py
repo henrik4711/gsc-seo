@@ -31,6 +31,11 @@ def _build_action_list(audit_results):
 
         missing_kws_raw = kw_cov.get("missing", [])
         coverage_pct = kw_cov.get("coverage_pct", 100)
+        total_checked = kw_cov.get("total_checked", 0)
+        # No keywords were analyzed for this page (GSC + cluster + derivation
+        # all empty). "0% (0/0)" is NOT a coverage failure — it means there's
+        # nothing to measure. Don't let it drive HIGH priority or show as 0%.
+        no_kw_data = total_checked == 0 and not r.get("target_keywords")
 
         # Use AI to filter keywords by relevance (cached per page)
         ai_filter_key = f"_kw_filter_{stable_hash(url)}"
@@ -78,7 +83,12 @@ def _build_action_list(audit_results):
                 specific_actions.append(msg)
 
         # Determine priority based on impressions + coverage
-        if impressions > 1000 and coverage_pct < 50:
+        if no_kw_data:
+            # Nothing measurable — rank purely by how much traffic the page
+            # already pulls. A 0-impression page with no keyword data is the
+            # lowest priority, not HIGH.
+            priority = "high" if impressions > 500 else "medium" if impressions > 50 else "low"
+        elif impressions > 1000 and coverage_pct < 50:
             priority = "high"
         elif impressions > 500 or coverage_pct < 40:
             priority = "high"
@@ -134,7 +144,8 @@ def _build_action_list(audit_results):
             "in_h2": kw_cov.get("in_h2", 0),
             "in_intro": kw_cov.get("in_intro", 0),
             "covered": kw_cov.get("covered", 0),
-            "total_checked": kw_cov.get("total_checked", 0),
+            "total_checked": total_checked,
+            "no_kw_data": no_kw_data,
         })
 
     # Sort: high priority first, then most impressions
@@ -179,7 +190,10 @@ def render():
     high = sum(1 for a in actions if a["priority"] == "high")
     total_missing = sum(len(a["missing_keywords"]) for a in actions)
     total_topics = sum(len(a["missing_subtopics"]) for a in actions)
-    avg_cov = sum(a["coverage_pct"] for a in actions) / len(actions)
+    # Average only over pages with measurable coverage — no-data pages
+    # (0/0) would otherwise drag the average down to a meaningless number.
+    measurable = [a for a in actions if not a.get("no_kw_data")]
+    avg_cov = (sum(a["coverage_pct"] for a in measurable) / len(measurable)) if measurable else 0
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Pages to fix", len(actions))
@@ -217,6 +231,26 @@ def render():
         ptype = a["page_type"].upper()
         cov = a["coverage_pct"]
         cov_color = "#ff4455" if cov < 40 else "#ffaa33" if cov < 70 else "#33dd88"
+        no_kw_data = a.get("no_kw_data", False)
+
+        # Coverage line: honest "no data" state instead of misleading 0% (0/0)
+        if no_kw_data:
+            coverage_line = (
+                "<span style='color:#6b6b8a;'>No keyword data analyzed</span> "
+                "— GSC has no impressions and no Ahrefs/cluster keywords matched. "
+                "<span style='color:#9b9bb8;'>Re-scrape this page (Page Auditor) or upload Ahrefs to derive target keywords.</span>"
+            )
+            primary_line = "<span style='color:#6b6b8a;'>— (needs keyword research)</span>"
+        else:
+            coverage_line = (
+                f"Keyword coverage: <span style='color:{cov_color};'>{cov:.0f}%</span> "
+                f"({a['covered']}/{a['total_checked']}) · "
+                f"In H1: {a['in_h1']} · In H2: {a['in_h2']} · In intro: {a['in_intro']}"
+            )
+            primary_line = (
+                f"Primary keyword (by impressions): "
+                f"<span style='color:#c8b4ff; font-weight:600;'>{a.get('primary_keyword') or '?'}</span>"
+            )
 
         # ── Card header ──────────────────────────────────────
         st.markdown(
@@ -231,13 +265,10 @@ def render():
             f"</div>"
             # URL + primary keyword
             f"<div style='font-size:1rem; color:#e8e8f0; font-weight:600; margin-bottom:0.3rem;'>{url}</div>"
-            f"<div style='font-size:0.8rem; color:#9b9bb8; margin-bottom:0.5rem;'>"
-            f"Primary keyword (by impressions): <span style='color:#c8b4ff; font-weight:600;'>{a.get('primary_keyword', '?')}</span></div>"
+            f"<div style='font-size:0.8rem; color:#9b9bb8; margin-bottom:0.5rem;'>{primary_line}</div>"
             # Coverage bar
             f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem; margin-bottom:0.6rem;'>"
-            f"Keyword coverage: <span style='color:{cov_color};'>{cov:.0f}%</span> "
-            f"({a['covered']}/{a['total_checked']}) · "
-            f"In H1: {a['in_h1']} · In H2: {a['in_h2']} · In intro: {a['in_intro']}"
+            f"{coverage_line}"
             f"</div>"
             f"</div>",
             unsafe_allow_html=True,
