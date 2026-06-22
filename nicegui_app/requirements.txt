@@ -1,0 +1,5 @@
+# NiceGUI front-end deps — kept SEPARATE from the repo-root requirements.txt
+# so the live Streamlit deploy on main/Railway is unaffected. Install with:
+#   pip install -r nicegui_app/requirements.txt
+# The shared logic in utils/ still needs the root requirements.txt too.
+nicegui==3.13.0
