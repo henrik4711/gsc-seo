@@ -36,8 +36,9 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-import streamlit as st
 import pandas as pd
+
+from utils.state import state
 
 from utils.persistence import AI_CACHE_DIR
 from utils.ui_helpers import normalize_url
@@ -160,14 +161,14 @@ def refresh_decaying_pages_data(
     """
     from utils.gsc_client import build_gsc_service, fetch_gsc_two_windows
 
-    creds = st.session_state.get("gsc_credentials")
+    creds = state().get("gsc_credentials")
     if not creds:
         raise ValueError(
             "GSC credentials missing — set them up in Setup & Connect first"
         )
     # Prefer the user-selected site (`gsc_site`, written by Setup UI); fall
     # back to the env-var default (`gsc_site_url`, set by GSC_SITE_URL).
-    site_url = st.session_state.get("gsc_site") or st.session_state.get("gsc_site_url")
+    site_url = state().get("gsc_site") or state().get("gsc_site_url")
     if not site_url:
         raise ValueError(
             "No GSC site selected — pick one in Setup & Connect first"
@@ -202,7 +203,7 @@ def refresh_decaying_pages_data(
         "decaying": decaying,
     }
 
-    st.session_state[DECAYING_CACHE_KEY] = payload
+    state()[DECAYING_CACHE_KEY] = payload
     # Persist via the standard AI cache path so it survives Railway
     # restarts and auto-hydrates on next boot (persistence.load_all
     # picks up any file matching AI_CACHE_PREFIXES).
@@ -222,7 +223,7 @@ def refresh_decaying_pages_data(
 
 def get_decaying_pages() -> Optional[dict]:
     """UI helper — return the cached freshness report or None if not run yet."""
-    return st.session_state.get(DECAYING_CACHE_KEY)
+    return state().get(DECAYING_CACHE_KEY)
 
 
 def find_decay_for_url(url: str) -> Optional[dict]:

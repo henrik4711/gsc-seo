@@ -9,10 +9,10 @@ that work on most e-commerce sites regardless of language.
 
 To add site-specific patterns (like Swedish /sexleksaker/ or Danish /legetoj/),
 users configure them in Setup → Site Patterns, which stores them in
-st.session_state['site_patterns'] as a dict.
+the app state under 'site_patterns' (via utils.state) as a dict.
 """
 
-import streamlit as st
+from utils.state import state
 
 
 # ── Universal defaults (work across languages and domains) ────────
@@ -62,7 +62,7 @@ DEFAULT_LOCAL_PATTERNS: list[str] = []
 def _get(key: str, default):
     """Read a site_patterns override from session_state, fall back to default."""
     try:
-        cfg = st.session_state.get("site_patterns") or {}
+        cfg = state().get("site_patterns") or {}
         val = cfg.get(key)
         if val is None:
             return default

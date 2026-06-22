@@ -19,7 +19,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-import streamlit as st
+from utils.state import state
 
 from utils.persistence import (
     DATA_DIR,
@@ -108,7 +108,7 @@ def _row_count_for(key: str) -> Optional[int]:
     """Best-effort row/item count from in-memory session_state. We don't
     re-read the file because that defeats the purpose of an at-a-glance
     panel — and session_state already has the value if the data is loaded."""
-    val = st.session_state.get(key)
+    val = state().get(key)
     if val is None:
         return None
     try:

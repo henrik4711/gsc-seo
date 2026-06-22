@@ -28,8 +28,8 @@ def intro_text_key(url: str) -> str:
 
 
 def _get(key: str) -> dict:
-    import streamlit as st
-    v = st.session_state.get(key)
+    from utils.state import state
+    v = state().get(key)
     return v if isinstance(v, dict) else {}
 
 

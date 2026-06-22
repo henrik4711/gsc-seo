@@ -11,7 +11,7 @@ Persisted to /data/action_status.json via utils.persistence.save().
 from datetime import datetime
 from typing import Optional
 
-import streamlit as st
+from utils.state import state
 
 
 ACTION_STATUS_KEY = "action_status"
@@ -34,7 +34,7 @@ ACTION_TYPES = (
 
 def _store() -> dict:
     """Get the action status dict from session state, creating if missing."""
-    return st.session_state.setdefault(ACTION_STATUS_KEY, {})
+    return state().setdefault(ACTION_STATUS_KEY, {})
 
 
 def _save_to_disk() -> None:

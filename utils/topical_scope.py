@@ -148,8 +148,8 @@ def get_topical_scope(page_url: str, topic_clusters: dict) -> dict | None:
     # session_state so callers don't have to thread audit_results through.
     audit_lookup = None
     try:
-        import streamlit as _st
-        _audit = _st.session_state.get("audit_results") or []
+        from utils.state import state
+        _audit = state().get("audit_results") or []
         if _audit:
             audit_lookup = {normalize_url(r.get("url", "")): r for r in _audit
                             if r.get("url")}
@@ -254,8 +254,8 @@ def _find_ancestor_hub(page_url: str, topic_clusters: dict):
     # Slug-match-aware hub detection reads audit_results from session_state.
     audit_lookup = None
     try:
-        import streamlit as _st
-        _audit = _st.session_state.get("audit_results") or []
+        from utils.state import state
+        _audit = state().get("audit_results") or []
         if _audit:
             audit_lookup = {normalize_url(r.get("url", "")): r for r in _audit
                             if r.get("url")}

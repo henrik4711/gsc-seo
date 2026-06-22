@@ -74,8 +74,8 @@ def classify_page_type(url: str, page_data: dict = None) -> dict:
     # filterpage by URL. Pages outside that cache are products / blogs /
     # other — they cannot be categories.
     try:
-        import streamlit as _st
-        _active = _st.session_state.get("mshop_active_pages") or {}
+        from utils.state import state
+        _active = state().get("mshop_active_pages") or {}
         _lookup = _active.get("lookup") or {} if isinstance(_active, dict) else {}
         if _lookup:
             # CRITICAL: look up with the SAME normalizer that BUILT the
@@ -1511,9 +1511,9 @@ def _audit_internal_linking(
     ) if missing_links else []
 
     # ── Incoming anchor text analysis (from SF link map) ─────────
-    import streamlit as _st
+    from utils.state import state
     from utils.ui_helpers import normalize_url as _nurl
-    sf_link_map = _st.session_state.get("sf_link_map")
+    sf_link_map = state().get("sf_link_map")
     inbound_anchor_stats = {}
     url_norm = _nurl(url)
     if sf_link_map:

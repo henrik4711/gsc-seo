@@ -16,7 +16,8 @@ producing different suggestions for the same page).
 """
 
 import re
-import streamlit as st
+
+from utils.state import state
 
 
 _MATCH_TOKEN_RE = re.compile(r"[a-zåäöæøéèà0-9]+")
@@ -42,7 +43,7 @@ def site_brand_tokens() -> set:
     "match" a noise cluster called brand_<sitename>.
 
     Returns an empty set if no GSC site is configured yet."""
-    site = (st.session_state.get("gsc_site") or "").lower()
+    site = (state().get("gsc_site") or "").lower()
     if not site:
         return set()
     try:
