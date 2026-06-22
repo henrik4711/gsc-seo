@@ -51,6 +51,11 @@ APP_PASSWORD=dev python -m nicegui_app.main
       Verified: save→disk + load round-trip under a plain-dict (NiceGUI) store.
 - [x] Phase 1b: `utils/errors.py` report/get/clear use the bound store
       (works under Streamlit AND NiceGUI); render stays Streamlit-only.
-- [ ] Phase 2: small Bucket C files (`cache_keys`, `action_status`, …)
+- [x] Phase 2: small Bucket C files decoupled to `state()` — `cache_keys`,
+      `action_status`, `cluster_suggest`, `site_patterns`, `freshness`,
+      `content_freshness`, `topical_scope`, `category_analyzer`.
+- [ ] Phase 3: runner files (`quality_check_runner`, `cluster_health_runner`,
+      `page_fix_runner`, `audit_refresh`, `page_profile`) — also inject `Progress`
+- [ ] Phase 4: large analysis files (`ai_generator`, `cannibalization`)
 - [ ] Port first real view (candidate: Dashboard) — needs its logic decoupled
 - [ ] Decide NiceGUI storage scope (client vs user) + Railway start command
