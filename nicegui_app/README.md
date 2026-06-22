@@ -46,7 +46,11 @@ APP_PASSWORD=dev python -m nicegui_app.main
 
 - [x] Phase 0 foundation: `utils/state.py`, `utils/progress.py`
 - [x] NiceGUI skeleton + auth gate + reuse proof
-- [ ] Phase 1: decouple `utils/persistence.py` to `state()` so `load_all()`
-      can hydrate the NiceGUI store from `/data`
-- [ ] Port first real view (candidate: Dashboard)
+- [x] Phase 1a: decouple `utils/persistence.py` to `state()`; `app.py` binds
+      `st.session_state` at startup (identity binding — Streamlit unchanged).
+      Verified: save→disk + load round-trip under a plain-dict (NiceGUI) store.
+- [x] Phase 1b: `utils/errors.py` report/get/clear use the bound store
+      (works under Streamlit AND NiceGUI); render stays Streamlit-only.
+- [ ] Phase 2: small Bucket C files (`cache_keys`, `action_status`, …)
+- [ ] Port first real view (candidate: Dashboard) — needs its logic decoupled
 - [ ] Decide NiceGUI storage scope (client vs user) + Railway start command

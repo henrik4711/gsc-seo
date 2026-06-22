@@ -48,10 +48,35 @@ import sys
 import traceback
 from datetime import datetime, timezone
 
+from utils.state import is_bound, state
+
 
 # Cap on accumulated errors per session to prevent memory blow-up on
 # long-running services where something fails repeatedly.
 MAX_ERRORS_IN_SESSION = 50
+
+
+def _store():
+    """Return the active in-memory store to read/write errors from, or None.
+
+    Prefers the framework-agnostic bound store (Streamlit session under
+    app.py, per-client store under NiceGUI). Falls back to a live Streamlit
+    session if nothing is bound yet, and to None outside any GUI (e.g.
+    FastAPI in api.py) — in which case callers degrade to stderr only.
+    """
+    if is_bound():
+        try:
+            return state()
+        except Exception:
+            pass
+    try:
+        import streamlit as st
+        # Touch session_state to confirm a live script context exists;
+        # raises outside one (import time / FastAPI).
+        _ = st.session_state
+        return st.session_state
+    except Exception:
+        return None
 
 
 def report_error(stage: str,
@@ -99,41 +124,42 @@ def report_error(stage: str,
     except Exception:
         pass  # stderr broken (rare); nothing useful to do
 
-    # 2. Surface in Streamlit context if available
-    try:
-        import streamlit as st
+    # 2. Append to the in-memory store (shared across Streamlit/NiceGUI).
+    store = _store()
+    if store is not None:
         try:
-            errors_list = st.session_state.setdefault("_system_errors", [])
+            errors_list = store.setdefault("_system_errors", [])
             errors_list.append(entry)
             # Cap at MAX_ERRORS_IN_SESSION — drop oldest
             if len(errors_list) > MAX_ERRORS_IN_SESSION:
                 del errors_list[:len(errors_list) - MAX_ERRORS_IN_SESSION]
         except Exception:
-            # No active script context (e.g. import time)
+            # Store present but not writable in this context — skip
             pass
-        # 3. Pop a toast for immediate visibility
-        try:
-            icon_map = {"error": "🔴", "warning": "🟡", "info": "🔵"}
-            icon = icon_map.get(severity, "🔴")
-            toast_msg = f"{stage}: {err_class or msg_text[:80]}"
-            st.toast(toast_msg, icon=icon)
-        except Exception:
-            pass
+
+    # 3. Pop a Streamlit toast for immediate visibility (best-effort,
+    #    Streamlit-only — no-ops under NiceGUI / FastAPI).
+    try:
+        import streamlit as st
+        icon_map = {"error": "🔴", "warning": "🟡", "info": "🔵"}
+        icon = icon_map.get(severity, "🔴")
+        toast_msg = f"{stage}: {err_class or msg_text[:80]}"
+        st.toast(toast_msg, icon=icon)
     except Exception:
-        # Not running under Streamlit (e.g. FastAPI in api.py) —
-        # stderr already done above
         pass
 
 
 def get_recent_errors() -> list[dict]:
     """Return the accumulated error entries for this Streamlit session.
 
-    Empty list when running outside Streamlit (e.g. FastAPI in api.py)
+    Empty list when running outside any GUI (e.g. FastAPI in api.py)
     or when no errors have been reported yet.
     """
+    store = _store()
+    if store is None:
+        return []
     try:
-        import streamlit as st
-        return list(st.session_state.get("_system_errors", []))
+        return list(store.get("_system_errors", []))
     except Exception:
         return []
 
@@ -142,9 +168,11 @@ def clear_errors() -> None:
     """Drop all accumulated errors from this session. Bound to a UI
     dismiss button so the operator can clear the panel after acting on
     the errors."""
+    store = _store()
+    if store is None:
+        return
     try:
-        import streamlit as st
-        st.session_state.pop("_system_errors", None)
+        store.pop("_system_errors", None)
     except Exception:
         pass
 

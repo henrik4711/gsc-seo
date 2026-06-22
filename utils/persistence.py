@@ -8,8 +8,14 @@ so we never lose partial results on crash.
 
 import os
 import json
-import streamlit as st
 import pandas as pd
+
+# Phase 1 of the NiceGUI migration: read/write the in-memory store through
+# the framework-agnostic accessor instead of the Streamlit session directly.
+# In Streamlit, state() returns the very same session object (app.py binds it
+# at startup) so behaviour is identical; under NiceGUI it returns the
+# per-client store. See NICEGUI_MIGRATION_PLAN.md.
+from utils.state import state
 
 DATA_DIR = "/data"
 AI_CACHE_DIR = os.path.join(DATA_DIR, "ai_cache")
@@ -402,11 +408,11 @@ def _unpack_bundled_data():
         target_path = os.path.join(DATA_DIR, target_name)
 
         # Skip if already unpacked or already loaded
-        if os.path.exists(target_path) and key in st.session_state:
+        if os.path.exists(target_path) and key in state():
             result["skipped"].append({"key": logical_key,
                                         "reason": "already unpacked + in session"})
             continue
-        if os.path.exists(target_path) and key not in st.session_state:
+        if os.path.exists(target_path) and key not in state():
             # Stale unpack from a previous boot — load it into session
             # without re-unpacking, then fall through to next iteration.
             try:
@@ -414,14 +420,14 @@ def _unpack_bundled_data():
                     df = _load_bundled_dataframe(logical_key, target_path)
                     if not df.empty:
                         df = _normalize_df_urls(df)
-                        st.session_state[key] = df
+                        state()[key] = df
                         result["loaded"].append(logical_key)
                         print(f"[bundled] Loaded stale unpack {target_name}")
                 elif dtype == "json":
                     with open(target_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     if data:
-                        st.session_state[key] = data
+                        state()[key] = data
                         result["loaded"].append(logical_key)
                         print(f"[bundled] Loaded stale unpack {target_name}")
                 continue
@@ -482,7 +488,7 @@ def _unpack_bundled_data():
                 df = _load_bundled_dataframe(logical_key, target_path)
                 if not df.empty:
                     df = _normalize_df_urls(df)
-                    st.session_state[key] = df
+                    state()[key] = df
                     result["loaded"].append(logical_key)
                 else:
                     result["errors"].append({"key": logical_key, "stage": "load",
@@ -491,7 +497,7 @@ def _unpack_bundled_data():
                 with open(target_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if data:
-                    st.session_state[key] = data
+                    state()[key] = data
                     result["loaded"].append(logical_key)
                 else:
                     result["errors"].append({"key": logical_key, "stage": "load",
@@ -529,14 +535,14 @@ def _unpack_bundled_data():
         print(f"[bundled] Loaded from bundled data: {', '.join(result['loaded'])}")
 
         # If we loaded Ahrefs raw data, build page_authority
-        if any(k.startswith("ahrefs_") for k in result["loaded"]) and "page_authority" not in st.session_state:
+        if any(k.startswith("ahrefs_") for k in result["loaded"]) and "page_authority" not in state():
             try:
                 from utils.ahrefs_import import build_page_authority
                 authority = build_page_authority(
-                    best_by_links_df=st.session_state.get("ahrefs_best_by_links"),
-                    backlinks_df=st.session_state.get("ahrefs_backlinks"),
+                    best_by_links_df=state().get("ahrefs_best_by_links"),
+                    backlinks_df=state().get("ahrefs_backlinks"),
                 )
-                st.session_state["page_authority"] = authority
+                state()["page_authority"] = authority
                 save("page_authority")
                 print(f"[bundled] Built page_authority ({len(authority)} pages)")
             except Exception as e:
@@ -566,14 +572,14 @@ def _is_ai_key(key: str) -> bool:
 def save(key: str, value=None):
     """Save a single key to session state + disk. The ONE function to use everywhere."""
     if value is not None:
-        st.session_state[key] = value
-    elif key not in st.session_state:
+        state()[key] = value
+    elif key not in state():
         return
 
     if not _volume_available():
         return
 
-    data = st.session_state[key]
+    data = state()[key]
 
     try:
         if _is_ai_key(key):
@@ -630,10 +636,10 @@ def save_ai_cache():
         return
     os.makedirs(AI_CACHE_DIR, exist_ok=True)
     count = 0
-    for key in list(st.session_state.keys()):
-        if _is_ai_key(key) and st.session_state[key] is not None:
+    for key in list(state().keys()):
+        if _is_ai_key(key) and state()[key] is not None:
             try:
-                _save_ai_key(key, st.session_state[key])
+                _save_ai_key(key, state()[key])
                 count += 1
             except Exception as e:
                 # Was a silent pass — now surfaces in the UI so the
@@ -655,9 +661,9 @@ def save_all():
     if not _volume_available():
         return
     for key in PERSIST_KEYS:
-        if key in st.session_state:
+        if key in state():
             try:
-                _save_persist_key(key, st.session_state[key])
+                _save_persist_key(key, state()[key])
             except Exception as e:
                 # Was stdout-only; now goes to the central reporter so
                 # the operator sees disk-write failures in the UI. Losing
@@ -677,14 +683,14 @@ def load_all():
     """Load everything from disk into session state."""
     if not _volume_available():
         return
-    if st.session_state.get("_persistence_loaded"):
+    if state().get("_persistence_loaded"):
         return
 
     loaded = []
 
     # Load regular persist keys
     for key, data_type in PERSIST_KEYS.items():
-        if key in st.session_state:
+        if key in state():
             continue
         path = _file_path(key, data_type)
         if not os.path.exists(path):
@@ -694,7 +700,7 @@ def load_all():
                 with open(path, "r", encoding="utf-8") as f:
                     val = f.read().strip()
                 if val:
-                    st.session_state[key] = val
+                    state()[key] = val
                     loaded.append(key)
             elif data_type == "dataframe":
                 # Use the encoding+separator-aware reader so legacy
@@ -704,7 +710,7 @@ def load_all():
                 if not df.empty:
                     # Normalize URL columns loaded from disk
                     df = _normalize_df_urls(df)
-                    st.session_state[key] = df
+                    state()[key] = df
                     loaded.append(key)
             elif data_type == "dataframe_json":
                 with open(path, "r", encoding="utf-8") as f:
@@ -713,14 +719,14 @@ def load_all():
                     df = pd.DataFrame(records)
                     if not df.empty:
                         df = _normalize_df_urls(df)
-                        st.session_state[key] = df
+                        state()[key] = df
                         loaded.append(key)
             elif data_type == "json":
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if data:
                     data = _normalize_json_urls(key, data)
-                    st.session_state[key] = data
+                    state()[key] = data
                     loaded.append(key)
         except Exception as e:
             print(f"[load] Failed {key}: {e}")
@@ -733,12 +739,12 @@ def load_all():
         print(f"[persistence] AI cache dir has {len(all_files)} files")
         for fname in all_files:
             key = fname[:-5]  # remove .json
-            if key in st.session_state:
+            if key in state():
                 continue
             try:
                 path = os.path.join(AI_CACHE_DIR, fname)
                 with open(path, "r", encoding="utf-8") as f:
-                    st.session_state[key] = json.load(f)
+                    state()[key] = json.load(f)
                 ai_loaded += 1
                 if key.startswith("_site") or key.startswith("_ideal") or key.startswith("_gap") or key.startswith("_plan_v"):
                     ai_keys_loaded.append(key)
@@ -754,8 +760,8 @@ def load_all():
             with open(old_cache, "r", encoding="utf-8") as f:
                 cache = json.load(f)
             for key, val in cache.items():
-                if key not in st.session_state:
-                    st.session_state[key] = val
+                if key not in state():
+                    state()[key] = val
                     # Migrate to individual file
                     try:
                         _save_ai_key(key, val)
@@ -778,7 +784,7 @@ def load_all():
     # will then auto-sync against the correct shop.
     _validate_and_clean_shop_caches()
 
-    st.session_state["_persistence_loaded"] = True
+    state()["_persistence_loaded"] = True
     if loaded:
         print(f"[persistence] Loaded: {', '.join(loaded)}")
     if ai_loaded:
@@ -803,7 +809,7 @@ def _validate_and_clean_shop_caches() -> None:
     legacy imports). If audit_results contamination becomes an issue
     we'll add a similar check that flags rather than auto-wipes.
     """
-    cache = st.session_state.get("mshop_active_pages")
+    cache = state().get("mshop_active_pages")
     if not cache:
         return
     try:
@@ -829,7 +835,7 @@ def _validate_and_clean_shop_caches() -> None:
 
     # Wipe from session and disk so next bulk audit triggers a fresh
     # sync against the correct shop
-    st.session_state.pop("mshop_active_pages", None)
+    state().pop("mshop_active_pages", None)
     target_path = _file_path("mshop_active_pages", "json") if _volume_available() else ""
     if target_path and os.path.exists(target_path):
         try:
