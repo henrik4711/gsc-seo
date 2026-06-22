@@ -7,8 +7,9 @@ import re
 from collections import Counter
 from urllib.parse import urlparse
 
-import streamlit as st
 import pandas as pd
+
+from utils.state import state
 
 from utils.ui_helpers import normalize_url, stable_hash
 from utils.url_helpers import url_path as _url_path_fn
@@ -31,11 +32,11 @@ def build_page_profile(url: str) -> dict:
 
     # Cheap version token — changes if any input dataset is reloaded OR
     # if a per-URL AI artifact (quality, plan, intro/bottom text) is updated.
-    audit = st.session_state.get("audit_results", []) or []
-    gsc_df = st.session_state.get("gsc_data")
-    clusters = st.session_state.get("topic_clusters", {}) or {}
-    auth_df = st.session_state.get("page_authority")
-    sf_link_map = st.session_state.get("sf_link_map", {}) or {}
+    audit = state().get("audit_results", []) or []
+    gsc_df = state().get("gsc_data")
+    clusters = state().get("topic_clusters", {}) or {}
+    auth_df = state().get("page_authority")
+    sf_link_map = state().get("sf_link_map", {}) or {}
 
     version_token = (
         len(audit),
@@ -43,20 +44,20 @@ def build_page_profile(url: str) -> dict:
         len(clusters.get("clusters", []) or []),
         id(auth_df),
         sf_link_map.get("unique_pairs", 0),
-        id(st.session_state.get(quality_key_from_hash(h))),
-        id(st.session_state.get(f"_ai_plan_{h}")),
-        id(st.session_state.get(f"_intro_text_{h}")),
-        id(st.session_state.get(f"_bottom_text_{h}")),
-        id(st.session_state.get("_ideal_structure")),
+        id(state().get(quality_key_from_hash(h))),
+        id(state().get(f"_ai_plan_{h}")),
+        id(state().get(f"_intro_text_{h}")),
+        id(state().get(f"_bottom_text_{h}")),
+        id(state().get("_ideal_structure")),
     )
 
     cache_key = f"_pp_cache_{h}"
-    cached = st.session_state.get(cache_key)
+    cached = state().get(cache_key)
     if cached and cached.get("v") == version_token:
         return cached["p"]
 
     profile = _build_page_profile_uncached(norm)
-    st.session_state[cache_key] = {"v": version_token, "p": profile}
+    state()[cache_key] = {"v": version_token, "p": profile}
     return profile
 
 
@@ -148,7 +149,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 1. Audit results
     # ─────────────────────────────────────────────────────────
-    audit_results = st.session_state.get("audit_results", [])
+    audit_results = state().get("audit_results", [])
     page_data = {}
     if isinstance(audit_results, list):
         for r in audit_results:
@@ -197,7 +198,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 2. GSC data
     # ─────────────────────────────────────────────────────────
-    gsc_data = st.session_state.get("gsc_data")
+    gsc_data = state().get("gsc_data")
     if gsc_data is not None and isinstance(gsc_data, pd.DataFrame) and not gsc_data.empty:
         try:
             page_gsc = gsc_data[gsc_data["page"].apply(normalize_url) == norm]
@@ -223,7 +224,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 3. Page authority (Ahrefs)
     # ─────────────────────────────────────────────────────────
-    page_authority = st.session_state.get("page_authority")
+    page_authority = state().get("page_authority")
     if page_authority is not None and isinstance(page_authority, pd.DataFrame) and not page_authority.empty:
         try:
             pa_match = page_authority[page_authority["page"].apply(normalize_url) == norm]
@@ -237,7 +238,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 4. CTR gaps
     # ─────────────────────────────────────────────────────────
-    ctr_gaps = st.session_state.get("ctr_gaps")
+    ctr_gaps = state().get("ctr_gaps")
     if ctr_gaps is not None and isinstance(ctr_gaps, pd.DataFrame) and not ctr_gaps.empty:
         try:
             page_gaps = ctr_gaps[ctr_gaps["page"].apply(normalize_url) == norm]
@@ -260,7 +261,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 5. Topic clusters
     # ─────────────────────────────────────────────────────────
-    topic_clusters = st.session_state.get("topic_clusters", {})
+    topic_clusters = state().get("topic_clusters", {})
     if isinstance(topic_clusters, dict):
         page_topics = topic_clusters.get("page_topics", {})
         my_topics = page_topics.get(norm, [])
@@ -294,7 +295,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 6. Cannibalization
     # ─────────────────────────────────────────────────────────
-    cannibal_df = st.session_state.get("cannibalization")
+    cannibal_df = state().get("cannibalization")
     if cannibal_df is not None and isinstance(cannibal_df, pd.DataFrame) and not cannibal_df.empty:
         try:
             for _, crow in cannibal_df.iterrows():
@@ -329,7 +330,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 7. Internal links IN (sf_link_map)
     # ─────────────────────────────────────────────────────────
-    sf_link_map = st.session_state.get("sf_link_map")
+    sf_link_map = state().get("sf_link_map")
     if sf_link_map and isinstance(sf_link_map, dict):
         # links_to: {target_url: [{source, anchor}, ...]}
         links_to = sf_link_map.get("links_to", {})
@@ -359,7 +360,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 8. Crawl issues (sf_crawl_issues)
     # ─────────────────────────────────────────────────────────
-    sf_crawl_issues = st.session_state.get("sf_crawl_issues")
+    sf_crawl_issues = state().get("sf_crawl_issues")
     if sf_crawl_issues and isinstance(sf_crawl_issues, dict):
         for issue_type, issue_list in sf_crawl_issues.items():
             if not isinstance(issue_list, list):
@@ -380,7 +381,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 9. Quality assessment (_quality_*)
     # ─────────────────────────────────────────────────────────
-    quality = st.session_state.get(quality_key_from_hash(url_hash))
+    quality = state().get(quality_key_from_hash(url_hash))
     if isinstance(quality, dict):
         profile["quality_verdict"] = quality.get("verdict", None)
         profile["quality_score"] = quality.get("score", 0) or 0
@@ -391,7 +392,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 10. AI plan (_ai_plan_*)
     # ─────────────────────────────────────────────────────────
-    plan = st.session_state.get(f"_ai_plan_{url_hash}")
+    plan = state().get(f"_ai_plan_{url_hash}")
     if isinstance(plan, dict) and not plan.get("error"):
         profile["has_plan"] = True
         profile["plan_summary"] = plan.get("summary", "") or plan.get("plan_summary", "") or ""
@@ -399,7 +400,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 11. Ideal structure (_ideal_structure)
     # ─────────────────────────────────────────────────────────
-    ideal = st.session_state.get("_ideal_structure")
+    ideal = state().get("_ideal_structure")
     if isinstance(ideal, dict):
         # Check merges — is this page being merged FROM or TO?
         for m in ideal.get("merge", []) or []:
@@ -437,7 +438,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # ─────────────────────────────────────────────────────────
     # 12. Content gaps
     # ─────────────────────────────────────────────────────────
-    content_gaps = st.session_state.get("content_gaps", [])
+    content_gaps = state().get("content_gaps", [])
     if isinstance(content_gaps, list):
         my_cluster_topics = {c["topic"] for c in profile["clusters"]}
         for gap in content_gaps:
@@ -467,7 +468,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # For each conflict where THIS page competes, capture the
     # cluster/intent-aware recommended link_target so AI rewrites
     # add the correct cross-link.
-    cannibal_df = st.session_state.get("cannibalization")
+    cannibal_df = state().get("cannibalization")
     cannibal_link_targets = []
     if cannibal_df is not None and hasattr(cannibal_df, "iterrows"):
         for _, row in cannibal_df.iterrows():
@@ -490,7 +491,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     profile["cannibal_link_targets"] = cannibal_link_targets[:10]
 
     # ── Cluster link recommendations involving THIS page ──
-    cluster_recs = st.session_state.get("cluster_link_recommendations") or []
+    cluster_recs = state().get("cluster_link_recommendations") or []
     out_recs = []
     in_recs = []
     for r in cluster_recs:
@@ -513,7 +514,7 @@ def _build_page_profile_uncached(norm: str) -> dict:
     # Orphan: no internal links in AND no crawl issues mentioning it as linked
     if profile["internal_links_in_count"] == 0:
         # Double-check with sf_pages if available
-        sf_pages = st.session_state.get("sf_pages")
+        sf_pages = state().get("sf_pages")
         if sf_pages is not None and isinstance(sf_pages, pd.DataFrame) and not sf_pages.empty:
             try:
                 inlinks_col = None

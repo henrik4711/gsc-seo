@@ -31,7 +31,7 @@ import os
 from datetime import datetime
 from typing import Optional
 
-import streamlit as st
+from utils.state import state
 
 from utils.ui_helpers import normalize_url, stable_hash
 
@@ -57,7 +57,7 @@ def _find_audit_row(url: str) -> Optional[dict]:
     normalised form. Returns the row dict (mutable — caller can update
     in place) or None if no audit exists for this URL yet."""
     target = normalize_url(url)
-    rows = st.session_state.get("audit_results") or []
+    rows = state().get("audit_results") or []
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -72,7 +72,7 @@ def _target_keywords_for(url: str, limit: int = 20) -> list:
     page_auditor.py does, so the recomputed scores match what a fresh
     audit would produce. Falls back to whatever the audit row already
     has if GSC data is unavailable in this session."""
-    gsc = st.session_state.get("gsc_data")
+    gsc = state().get("gsc_data")
     if gsc is None or not hasattr(gsc, "loc"):
         row = _find_audit_row(url)
         if row:
@@ -92,7 +92,7 @@ def _target_keywords_for(url: str, limit: int = 20) -> list:
 def _cluster_keywords_for(url: str) -> list:
     """Same shape as views.page_auditor._get_cluster_keywords — needed so
     audit_category_content sees the full keyword universe for the page."""
-    tc = st.session_state.get("topic_clusters") or {}
+    tc = state().get("topic_clusters") or {}
     if not isinstance(tc, dict):
         return []
     norm = normalize_url(url)
@@ -134,7 +134,7 @@ def _invalidate_ai_plan_cache(url: str) -> None:
 
     # Session state
     for k in keys_to_drop:
-        st.session_state.pop(k, None)
+        state().pop(k, None)
 
     # Disk — only if /data exists (Railway). Best-effort: missing files
     # are not an error.
@@ -208,8 +208,8 @@ def _recompute_content_score(row: dict) -> None:
             row,
             cluster_kws,
             target_kws,
-            topic_clusters=st.session_state.get("topic_clusters"),
-            page_authority=st.session_state.get("page_authority"),
+            topic_clusters=state().get("topic_clusters"),
+            page_authority=state().get("page_authority"),
         )
     except Exception:
         return

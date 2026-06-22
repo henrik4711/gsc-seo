@@ -54,8 +54,11 @@ APP_PASSWORD=dev python -m nicegui_app.main
 - [x] Phase 2: small Bucket C files decoupled to `state()` — `cache_keys`,
       `action_status`, `cluster_suggest`, `site_patterns`, `freshness`,
       `content_freshness`, `topical_scope`, `category_analyzer`.
-- [ ] Phase 3: runner files (`quality_check_runner`, `cluster_health_runner`,
-      `page_fix_runner`, `audit_refresh`, `page_profile`) — also inject `Progress`
+- [x] Phase 3: runner files decoupled — `page_profile`, `cluster_health_runner`,
+      `quality_check_runner`, `audit_refresh` (pure state() swaps) and
+      `page_fix_runner` (state() + `Progress` injection for its st.spinner/
+      st.error; `default_progress()` auto-detects Streamlit so callers and the
+      paid Fix-ALL batch are unchanged).
 - [ ] Phase 4: large analysis files (`ai_generator`, `cannibalization`)
 - [ ] Port first real view (candidate: Dashboard) — needs its logic decoupled
 - [ ] Decide NiceGUI storage scope (client vs user) + Railway start command

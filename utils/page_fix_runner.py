@@ -12,12 +12,12 @@ article ideas). Bottom-text and intro rewrites are kicked off later, on
 demand, by the per-section buttons in Quick Wins.
 """
 
-import streamlit as st
-
+from utils.state import state
+from utils.progress import Progress, default_progress
 from utils.ui_helpers import stable_hash, show_ai_error
 
 
-def generate_ai_fixes_for_page(page: dict) -> dict | None:
+def generate_ai_fixes_for_page(page: dict, progress: Progress | None = None) -> dict | None:
     """Generate the AI implementation plan for one page.
     Returns the plan dict on success, None if the AI call errored (the
     error is shown via show_ai_error and the cache key is stamped with
@@ -36,23 +36,26 @@ def generate_ai_fixes_for_page(page: dict) -> dict | None:
     from utils.page_profile import build_page_profile
     from utils.persistence import save_ai_cache
 
+    if progress is None:
+        progress = default_progress()
+
     url = page["url"]
     url_hash = stable_hash(url)
     audit = page["audit"]
 
     if not has_anthropic_key():
-        st.error("Anthropic API key missing — set ANTHROPIC_API_KEY in Setup.")
+        progress.error("Anthropic API key missing — set ANTHROPIC_API_KEY in Setup.")
         return None
 
     client = get_client(get_anthropic_key())
-    site_context = st.session_state.get("site_context", "")
-    language = st.session_state.get("content_language", "Swedish")
-    topic_clusters = st.session_state.get("topic_clusters", {})
+    site_context = state().get("site_context", "")
+    language = state().get("content_language", "Swedish")
+    topic_clusters = state().get("topic_clusters", {})
 
     # Build site URLs (used for internal-link recommendations)
-    audit_results = st.session_state.get("audit_results", [])
+    audit_results = state().get("audit_results", [])
     raw_urls = set(r["url"] for r in audit_results if r.get("url"))
-    gsc = st.session_state.get("gsc_data")
+    gsc = state().get("gsc_data")
     if gsc is not None and hasattr(gsc, "page"):
         raw_urls.update(gsc["page"].unique().tolist())
     all_site_urls = sorted(raw_urls)
@@ -61,12 +64,12 @@ def generate_ai_fixes_for_page(page: dict) -> dict | None:
     profile = build_page_profile(url)
 
     plan_key = f"_ai_plan_{url_hash}"
-    existing_plan = st.session_state.get(plan_key)
+    existing_plan = state().get(plan_key)
     plan_is_errored = isinstance(existing_plan, dict) and bool(existing_plan.get("error"))
-    if plan_key in st.session_state and not plan_is_errored:
+    if plan_key in state() and not plan_is_errored:
         return existing_plan  # already generated; nothing to do
 
-    with st.spinner(
+    with progress.spinner(
         f"AI is reviewing this page (~30-60 sec): meta + intro + bottom + "
         f"link suggestions + action steps for {url[-40:]}…"
     ):
@@ -79,7 +82,7 @@ def generate_ai_fixes_for_page(page: dict) -> dict | None:
                 structural_signals=profile.get("structural_signals") or {},
                 editorial_images=profile.get("editorial_images") or [],
             )
-            st.session_state[plan_key] = result
+            state()[plan_key] = result
             save_ai_cache()
             return result
         except Exception as e:
@@ -94,7 +97,7 @@ def generate_ai_fixes_for_page(page: dict) -> dict | None:
                     "language": language,
                 },
             )
-            st.session_state[plan_key] = {
+            state()[plan_key] = {
                 "error": str(e),
                 "error_class": type(e).__name__,
                 "error_status_code": getattr(e, "status_code", None),
@@ -136,7 +139,6 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
     Returns a status dict {plan, bottom_text, intro} with values:
       "generated" | "cached" | "skipped" | "error: <message>"
     """
-    import streamlit as _st
     from utils.ui_helpers import stable_hash, show_ai_error
     from utils.persistence import save_ai_cache
     # Disk log mirroring Fix ALL's outer log so we can see WHICH step
@@ -160,7 +162,7 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
 
     # ── Step 1: Plan ────────────────────────────────────────────
     plan_key = f"_ai_plan_{url_hash}"
-    plan_existing = _st.session_state.get(plan_key)
+    plan_existing = state().get(plan_key)
     plan_errored = isinstance(plan_existing, dict) and bool(plan_existing.get("error"))
     if force or plan_existing is None or plan_errored:
         _gflog(f"runner.plan_start url={url}")
@@ -177,7 +179,7 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
 
     # ── Step 2: Bottom text (category only) ─────────────────────
     text_key = f"_bottom_text_{url_hash}"
-    text_existing = _st.session_state.get(text_key)
+    text_existing = state().get(text_key)
     text_errored = isinstance(text_existing, dict) and bool(text_existing.get("error"))
     if page_type != "category":
         status["bottom_text"] = "skipped"
@@ -188,7 +190,7 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
             _bottom_max = 1 if batch_mode else 3
             _gflog(f"runner.bottom_start url={url} max_attempts={_bottom_max}")
             result = generate_page_content(url, _max_attempts=_bottom_max)
-            _st.session_state[text_key] = result
+            state()[text_key] = result
             save_ai_cache()
             status["bottom_text"] = "generated"
             _gflog(f"runner.bottom_done url={url} chars={len((result or {}).get('bottom_html','') or '')}")
@@ -200,7 +202,7 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
                 e,
                 context={"url": url, "page_type": page_type, "step": "all_fixes"},
             )
-            _st.session_state[text_key] = {
+            state()[text_key] = {
                 "error": str(e),
                 "error_class": type(e).__name__,
                 "error_traceback": _tb.format_exc()[-3000:],
@@ -213,7 +215,7 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
 
     # ── Step 3: Intro rewrite (category, only if intro is thin) ─
     intro_key = f"_intro_text_{url_hash}"
-    intro_existing = _st.session_state.get(intro_key)
+    intro_existing = state().get(intro_key)
     intro_errored = isinstance(intro_existing, dict) and bool(intro_existing.get("error"))
     intro_words = audit.get("intro_word_count", 0) or 0
     intro_too_thin = intro_words < 50
@@ -240,11 +242,11 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
                 existing_intro=audit.get("intro_text", "") or "",
                 page_type=page_type,
                 url=url,
-                site_context=_st.session_state.get("site_context", ""),
-                language=_st.session_state.get("content_language", "Swedish"),
+                site_context=state().get("site_context", ""),
+                language=state().get("content_language", "Swedish"),
                 _max_attempts=_intro_max,
             )
-            _st.session_state[intro_key] = result
+            state()[intro_key] = result
             save_ai_cache()
             status["intro"] = "generated"
             _gflog(f"runner.intro_done url={url}")
@@ -256,7 +258,7 @@ def generate_all_fixes_for_page(page: dict, force: bool = False, batch_mode: boo
                 e,
                 context={"url": url, "page_type": page_type, "step": "all_fixes"},
             )
-            _st.session_state[intro_key] = {
+            state()[intro_key] = {
                 "error": str(e),
                 "error_class": type(e).__name__,
                 "error_traceback": _tb.format_exc()[-3000:],
@@ -345,9 +347,8 @@ def push_all_for_page(
     # repeat it here.
     if intro_html or meta_t or meta_d:
         try:
-            import streamlit as _st
             from utils.mshop_admin_api import update_for_page, lookup_url
-            active = _st.session_state.get("mshop_active_pages") or {}
+            active = state().get("mshop_active_pages") or {}
             pi = lookup_url(active, url)
             if not pi:
                 status["admin"] = "error"

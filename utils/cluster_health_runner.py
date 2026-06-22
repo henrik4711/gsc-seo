@@ -15,7 +15,7 @@ Single source of truth for:
 Views and pipeline steps MUST import from here — never re-implement.
 """
 
-import streamlit as st
+from utils.state import state
 from utils.url_helpers import url_segments as _url_segments
 from utils.ui_helpers import stable_hash
 
@@ -234,7 +234,7 @@ def run_cluster_eval(
     if isinstance(payload, dict) and not payload.get("topic"):
         payload["topic"] = cluster_topic
 
-    st.session_state[health_key] = payload
+    state()[health_key] = payload
     try:
         _persist_save(health_key)
     except Exception as save_e:
@@ -259,18 +259,18 @@ def run_all_clusters(progress_cb=None) -> dict:
     Returns a summary dict the pipeline can log: {evaluated, skipped,
     failed, total}.
     """
-    tc = st.session_state.get("topic_clusters") or {}
+    tc = state().get("topic_clusters") or {}
     clusters = tc.get("clusters", []) if isinstance(tc, dict) else []
     if not clusters:
         raise ValueError("Run Topic Clusters (step 5) first — no clusters to evaluate")
-    audit_results = st.session_state.get("audit_results", []) or []
+    audit_results = state().get("audit_results", []) or []
     if not audit_results:
         raise ValueError("Run Bulk Audit (step 6) first — cluster health needs page data")
 
-    gsc_data = st.session_state.get("gsc_data")
-    sf_link_map = st.session_state.get("sf_link_map")
-    site_context = st.session_state.get("site_context", "")
-    language = st.session_state.get("content_language", "Swedish")
+    gsc_data = state().get("gsc_data")
+    sf_link_map = state().get("sf_link_map")
+    site_context = state().get("site_context", "")
+    language = state().get("content_language", "Swedish")
 
     all_site_urls = sorted(set(r["url"] for r in audit_results if r.get("url")))
     if gsc_data is not None and hasattr(gsc_data, "page"):
@@ -286,7 +286,7 @@ def run_all_clusters(progress_cb=None) -> dict:
     for i, cluster in enumerate(clusters_sorted):
         topic = cluster.get("topic", f"Cluster {i}")
         health_key = f"_cluster_health_{stable_hash(topic)}"
-        cached = st.session_state.get(health_key)
+        cached = state().get(health_key)
         if isinstance(cached, dict) and not cached.get("error"):
             skipped += 1
         else:
@@ -305,15 +305,15 @@ def run_all_clusters(progress_cb=None) -> dict:
         # URL into _pp_cache_<hash>; across thousands of pages those
         # accumulate into GBs (5 GB peak on mshop.dk). Clear each batch so
         # the resident set stays ~one batch of clusters.
-        _pp = [k for k in list(st.session_state.keys())
+        _pp = [k for k in list(state().keys())
                if isinstance(k, str) and k.startswith("_pp_cache_")]
         for _k in _pp:
-            del st.session_state[_k]
+            del state()[_k]
         if _pp:
             gc.collect()
 
     def _ai_eval(item):
-        # PURE worker — runs in a thread, MUST NOT touch st.session_state.
+        # PURE worker — runs in a thread, MUST NOT touch state().
         # evaluate_cluster_health is verified free of session_state access.
         _cluster, _hk, _topic, _cd = item
         if not _cd:
@@ -354,7 +354,7 @@ def run_all_clusters(progress_cb=None) -> dict:
         for health_key, topic, payload in results:
             if isinstance(payload, dict) and not payload.get("topic"):
                 payload["topic"] = topic
-            st.session_state[health_key] = payload
+            state()[health_key] = payload
             try:
                 _persist_save(health_key)
             except Exception as save_e:
@@ -388,10 +388,9 @@ def cluster_health_has_run() -> bool:
     generation prompts get NO cannibalization / misplaced-keyword steering
     — so the AI may write a page for a keyword that belongs elsewhere.
     """
-    import streamlit as st
-    if st.session_state.get("_cluster_health_summary"):
+    if state().get("_cluster_health_summary"):
         return True
-    for k in list(st.session_state.keys()):
+    for k in list(state().keys()):
         if isinstance(k, str) and k.startswith("_cluster_health_") and k != "_cluster_health_summary":
             return True
     return False
@@ -431,7 +430,7 @@ def find_cluster_health_flagged_urls() -> list:
         if topic:
             entry["topics"].add(topic)
 
-    for k, v in list(st.session_state.items()):
+    for k, v in list(state().items()):
         if not k.startswith("_cluster_health_"):
             continue
         # `_cluster_health_summary` is the pipeline step's run stats —
@@ -516,7 +515,7 @@ def regenerate_flagged_pages(progress_cb=None, max_pages: int = 0) -> dict:
     if not flagged:
         return {"flagged": 0, "regenerated": 0, "errors": 0, "skipped": 0, "urls": []}
 
-    audit_results = st.session_state.get("audit_results", []) or []
+    audit_results = state().get("audit_results", []) or []
     audit_by_url = {_nu(r.get("url", "")): r for r in audit_results if isinstance(r, dict)}
 
     regenerated_urls: list[str] = []

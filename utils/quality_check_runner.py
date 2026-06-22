@@ -8,7 +8,8 @@ module instead.
 """
 
 import hashlib
-import streamlit as st
+
+from utils.state import state
 
 from utils.ui_helpers import stable_hash
 
@@ -74,7 +75,7 @@ def eligible_pages(audit_results: list) -> list:
         intuition that if you don't want AI to rewrite a page, you
         probably don't want to pay for assessing it either.
     """
-    skip_set = set(st.session_state.get("_fix_skip_list") or [])
+    skip_set = set(state().get("_fix_skip_list") or [])
     return [
         r for r in (audit_results or [])
         if r.get("page_type") in ELIGIBLE_PAGE_TYPES
@@ -87,7 +88,7 @@ def pages_needing_check(eligible: list) -> list:
     """Eligible pages that have no verdict OR a stale verdict (input hash mismatch)."""
     pending = []
     for r in eligible:
-        existing = st.session_state.get(quality_key(r.get("url", "")))
+        existing = state().get(quality_key(r.get("url", "")))
         if existing is None:
             pending.append(r)
         elif isinstance(existing, dict) and existing.get("_input_hash") != quality_input_hash(r):
@@ -99,7 +100,7 @@ def already_checked_count(eligible: list) -> int:
     """How many eligible pages have an up-to-date verdict."""
     n = 0
     for r in eligible:
-        existing = st.session_state.get(quality_key(r.get("url", "")))
+        existing = state().get(quality_key(r.get("url", "")))
         if isinstance(existing, dict) and existing.get("_input_hash") == quality_input_hash(r):
             n += 1
     return n
@@ -121,7 +122,7 @@ def _is_filterpage(url: str) -> bool:
     page_type collapses both to 'category', so we consult the cache."""
     try:
         from utils.mshop_admin_api import lookup_url
-        active = st.session_state.get("mshop_active_pages") or {}
+        active = state().get("mshop_active_pages") or {}
         info = lookup_url(active, url) if active else None
         return bool(info) and (info.get("type") or "").lower() == "filterpage"
     except Exception:
@@ -138,7 +139,7 @@ def empty_category_pages(audit_results: list, scope: str = "all") -> list:
       - "all"         → both
     Honours the AI skip-list, same as eligible_pages().
     """
-    skip_set = set(st.session_state.get("_fix_skip_list") or [])
+    skip_set = set(state().get("_fix_skip_list") or [])
     out = []
     for r in (audit_results or []):
         if r.get("page_type") not in ELIGIBLE_PAGE_TYPES:
@@ -168,7 +169,7 @@ def flag_empty_categories(audit_results: list, scope: str = "all") -> int:
     n = 0
     for r in pages:
         url = r.get("url", "")
-        st.session_state[quality_key(url)] = {
+        state()[quality_key(url)] = {
             "verdict": "REWRITE",
             "score": 0,
             "summary": (
@@ -197,7 +198,7 @@ def flagged_empty_pages(audit_results: list) -> list:
     for r in (audit_results or []):
         if r.get("page_type") not in ELIGIBLE_PAGE_TYPES:
             continue
-        v = st.session_state.get(quality_key(r.get("url", "")))
+        v = state().get(quality_key(r.get("url", "")))
         if isinstance(v, dict) and v.get(EMPTY_VERDICT_MARKER):
             out.append(r)
     return out
@@ -217,7 +218,7 @@ def run_quality_batches(
     - cap                                             — max pages to process this call
 
     Returns a list of (batch_num, error_str) for any batch that failed.
-    Verdicts are written into st.session_state and persisted via save_ai_cache()
+    Verdicts are written into state() and persisted via save_ai_cache()
     after each successful batch, so partial progress is never lost.
     """
     from config import get_anthropic_key, has_anthropic_key
@@ -232,9 +233,9 @@ def run_quality_batches(
         return []
 
     client = get_client(get_anthropic_key())
-    site_context = st.session_state.get("site_context", "")
-    language = st.session_state.get("content_language", "Swedish")
-    topic_clusters = st.session_state.get("topic_clusters")
+    site_context = state().get("site_context", "")
+    language = state().get("content_language", "Swedish")
+    topic_clusters = state().get("topic_clusters")
 
     errors = []
     batches = [
@@ -246,7 +247,7 @@ def run_quality_batches(
     import concurrent.futures as _cf
 
     def _assess(item):
-        # PURE worker — runs in a thread, MUST NOT touch st.session_state.
+        # PURE worker — runs in a thread, MUST NOT touch state().
         # assess_content_quality_batch is verified free of session_state.
         _bn, _batch = item
         try:
@@ -273,7 +274,7 @@ def run_quality_batches(
                     r = _batch[idx]
                     if isinstance(assessment, dict):
                         assessment["_input_hash"] = quality_input_hash(r)
-                    st.session_state[quality_key(r.get("url", ""))] = assessment
+                    state()[quality_key(r.get("url", ""))] = assessment
             completed += 1
             # Persist periodically so an interruption never loses much.
             if completed % 3 == 0:
@@ -323,7 +324,7 @@ def eligibility_diagnosis(audit_results: list) -> str:
     type_str = ", ".join(f"{t}: {n}" for t, n in type_counts.most_common())
 
     categories = [r for r in audit if r.get("page_type") in ELIGIBLE_PAGE_TYPES]
-    skip_set = set(st.session_state.get("_fix_skip_list") or [])
+    skip_set = set(state().get("_fix_skip_list") or [])
     cats_over_words = [
         r for r in categories if effective_word_count(r) > MIN_WORD_COUNT
     ]
@@ -331,7 +332,7 @@ def eligibility_diagnosis(audit_results: list) -> str:
 
     # Active-pages cache state — the gate that turns categories into
     # "product" during Step 6 when it's empty / for the wrong shop.
-    active = st.session_state.get("mshop_active_pages") or {}
+    active = state().get("mshop_active_pages") or {}
     lookup = active.get("lookup") or {} if isinstance(active, dict) else {}
     cache_cats = sum(
         1 for m in lookup.values()
