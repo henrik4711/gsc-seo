@@ -87,16 +87,23 @@ def generate_ai_fixes_for_page(page: dict, progress: Progress | None = None) -> 
             return result
         except Exception as e:
             import traceback as _tb
-            show_ai_error(
-                "Implementation plan generation",
-                e,
-                context={
-                    "url": url,
-                    "page_type": page.get("page_type"),
-                    "site_urls_count": len(all_site_urls),
-                    "language": language,
-                },
-            )
+            # show_ai_error renders Streamlit widgets; guard it so it can never
+            # raise (e.g. when this runs in a NiceGUI run_job worker thread with
+            # no Streamlit context) and mask the real error. The error is also
+            # persisted into the plan cache below, so it's never lost.
+            try:
+                show_ai_error(
+                    "Implementation plan generation",
+                    e,
+                    context={
+                        "url": url,
+                        "page_type": page.get("page_type"),
+                        "site_urls_count": len(all_site_urls),
+                        "language": language,
+                    },
+                )
+            except Exception:
+                pass
             state()[plan_key] = {
                 "error": str(e),
                 "error_class": type(e).__name__,

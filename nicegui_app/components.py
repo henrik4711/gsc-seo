@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from nicegui import run, ui
+from nicegui import app, run, ui
+
+from utils import state
 
 
 async def run_job(fn: Callable, *args, message: str = "Working…", **kwargs):
@@ -29,12 +31,24 @@ async def run_job(fn: Callable, *args, message: str = "Working…", **kwargs):
     wraps it in ``run.io_bound`` (a worker thread) and shows a spinner that is
     dismissed when the work finishes. Returns the function's result.
 
+    Why the scope() dance: our shared logic reads ``state()`` internally, but a
+    worker thread has no access to ``app.storage.client`` (NiceGUI's per-client
+    context isn't copied into the thread pool). So we snapshot the live store
+    HERE on the main task and re-bind it inside the worker via state.scope(),
+    which is thread-local and therefore concurrency-safe.
+
     Usage:
         result = await run_job(generate_ai_fixes_for_page, page, message="AI…")
     """
+    store = app.storage.client  # snapshot on the main task, where it's reachable
+
+    def _job():
+        with state.scope(store):
+            return fn(*args, **kwargs)
+
     note = ui.notification(message, spinner=True, timeout=None, close_button=False)
     try:
-        return await run.io_bound(lambda: fn(*args, **kwargs))
+        return await run.io_bound(_job)
     finally:
         note.dismiss()
 

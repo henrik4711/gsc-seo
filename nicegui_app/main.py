@@ -102,7 +102,10 @@ async def index() -> None:
             )
         return
 
-    if state.state().get("authenticated"):
+    # Auth lives in app.storage.user (signed per-browser cookie), NOT
+    # app.storage.client: the latter is wiped on ui.navigate.reload(), which
+    # would create a login loop. app.storage.user survives the reload.
+    if app.storage.user.get("authenticated"):
         await _render_dashboard()
         return
 
@@ -113,7 +116,7 @@ async def index() -> None:
 
         def _try_login() -> None:
             if pw.value == APP_PASSWORD:
-                state.state()["authenticated"] = True
+                app.storage.user["authenticated"] = True
                 ui.navigate.reload()
             else:
                 c.notify_err("Wrong password")
