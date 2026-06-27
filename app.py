@@ -5,12 +5,11 @@ from utils.state import bind
 from utils.persistence import load_all, save_all, get_storage_info
 
 # Bind the framework-agnostic state store to Streamlit's session BEFORE any
-# logic (persistence, errors, ...) reads state(). In Streamlit this is the
-# identity binding — state() returns this exact st.session_state object — so
-# nothing changes behaviourally. Runs every script-run; that's correct since
-# st.session_state is the same object across reruns within a session.
+# logic (persistence, errors, ...) reads state(). We bind a RESOLVER, not the
+# object: st.session_state is a context-aware proxy, so `lambda: st.session_state`
+# always resolves to the running session — identity behaviour, nothing changes.
 # See NICEGUI_MIGRATION_PLAN.md (Phase 0/1).
-bind(st.session_state)
+bind(lambda: st.session_state)
 
 st.set_page_config(
     page_title="SEO Intelligence Platform",

@@ -16,12 +16,15 @@ Run locally:
     # open http://localhost:8080
 
 What this pilot proves:
-  1. The NiceGUI app reuses real shared logic — ``get_storage_info()`` from
-     utils.persistence — without going through Streamlit.
-  2. The ``utils.state`` Store binds to a per-client backend, so logic that
-     reads ``state()`` works under NiceGUI exactly as under Streamlit.
-  3. Server-side persistent state needs no ``st.rerun`` — a counter updates
-     a single label in place.
+  1. Reuse — the dashboard calls real shared logic (get_storage_info) with no
+     Streamlit involved.
+  2. State resolver — state() is bound ONCE to ``lambda: app.storage.client``
+     and re-resolved on every access, so it is correct inside the page builder
+     AND inside event callbacks (which run in separate async tasks). The
+     counter handler calls state() fresh to prove it.
+  3. Off-loop work — slow calls go through ``run_job`` (run.io_bound + spinner)
+     so the event loop never freezes for other clients.
+  4. No rerun — the counter updates one label in place.
 """
 
 from __future__ import annotations
@@ -39,93 +42,81 @@ from nicegui import app, ui  # noqa: E402
 
 from utils import state  # noqa: E402
 from utils.persistence import get_storage_info  # noqa: E402
+from nicegui_app import components as c  # noqa: E402
 
 # Fail closed exactly like app.py: no APP_PASSWORD -> refuse to serve.
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 
-
-def _bind_client_store() -> None:
-    """Bind utils.state to this client's per-connection storage.
-
-    ``app.storage.client`` is a dict-like scoped to one browser connection —
-    the NiceGUI analogue of Streamlit's per-session ``st.session_state``.
-    """
-    state.bind(app.storage.client)
+# Bind ONCE at import: a resolver, not a captured object. app.storage.client
+# resolves to the current client on every state() call, so it is valid in page
+# builders, event callbacks and background tasks alike. (The lambda is only
+# *called* later, inside a client context, so referencing app.storage.client
+# here at import time is safe.)
+state.bind(lambda: app.storage.client)
 
 
-def _render_dashboard() -> None:
+async def _render_dashboard() -> None:
     """The (tiny) pilot dashboard — all reused logic, zero Streamlit."""
     with ui.column().classes("w-full max-w-3xl mx-auto p-6 gap-4"):
-        ui.label("SEO Platform — NiceGUI pilot").classes("text-2xl font-bold")
-        ui.label(
-            "This page reuses utils/ logic directly. No Streamlit, no rerun."
-        ).classes("text-gray-500")
+        c.page_header(
+            "SEO Platform — NiceGUI pilot",
+            "Reuses utils/ logic directly. No Streamlit, no rerun.",
+        )
 
-        # ── Proof 1+2: reuse real shared logic via the bound Store ──
+        # ── Proof 1+3: reuse shared logic, loaded off the event loop ──
         with ui.card().classes("w-full"):
-            ui.label("Persisted data on /data volume").classes("font-semibold")
-            info = get_storage_info()  # pure shared logic from utils.persistence
+            c.subheader("Persisted data on /data volume")
+            info = await c.run_job(get_storage_info, message="Loading storage info…")
             if not info.get("available"):
-                ui.label("No /data volume mounted (expected when running locally).")
+                c.banner("info", "No /data volume mounted (expected locally).")
             else:
-                ui.label(f"Total: {info['total_mb']} MB")
-                rows = [
+                c.caption(f"Total: {info['total_mb']} MB")
+                c.simple_table([
                     {"key": k, "size_mb": v.get("size_mb"), "count": v.get("count", "")}
                     for k, v in info.get("files", {}).items()
-                ]
-                ui.table(
-                    columns=[
-                        {"name": "key", "label": "key", "field": "key", "align": "left"},
-                        {"name": "size_mb", "label": "MB", "field": "size_mb"},
-                        {"name": "count", "label": "count", "field": "count"},
-                    ],
-                    rows=rows,
-                    row_key="key",
-                ).classes("w-full")
+                ])
 
-        # ── Proof 3: persistent server-side state, no rerun ──
+        # ── Proof 2+4: state() resolved fresh in a callback, no rerun ──
         with ui.card().classes("w-full"):
-            ui.label("Server-side state demo (no st.rerun)").classes("font-semibold")
-            store = state.state()
-            store.setdefault("pilot_counter", 0)
-            count_label = ui.label(f"counter = {store['pilot_counter']}")
+            c.subheader("Server-side state demo (no st.rerun)")
+            current = state.state().get("pilot_counter", 0)
+            count_label = ui.label(f"counter = {current}")
 
             def _bump() -> None:
-                store["pilot_counter"] += 1
-                count_label.text = f"counter = {store['pilot_counter']}"  # in-place
+                s = state.state()  # resolved FRESH in this event-callback task
+                s["pilot_counter"] = s.get("pilot_counter", 0) + 1
+                count_label.text = f"counter = {s['pilot_counter']}"  # in-place
 
             ui.button("Increment", on_click=_bump)
 
 
 @ui.page("/")
-def index() -> None:
-    _bind_client_store()
-
+async def index() -> None:
     if not APP_PASSWORD:
         with ui.column().classes("w-full max-w-xl mx-auto p-6"):
-            ui.label("🔒 Configuration error").classes("text-2xl font-bold")
-            ui.label(
+            c.page_header("🔒 Configuration error")
+            c.banner(
+                "error",
                 "APP_PASSWORD env var is not set. The app refuses to serve "
-                "without it. Set APP_PASSWORD=dev for local development."
-            ).classes("text-red-600")
+                "without it. Set APP_PASSWORD=dev for local development.",
+            )
         return
 
-    store = state.state()
-    if store.get("authenticated"):
-        _render_dashboard()
+    if state.state().get("authenticated"):
+        await _render_dashboard()
         return
 
     # ── Minimal login (per-client). Mirrors app.py's fail-closed gate. ──
     with ui.column().classes("w-full max-w-sm mx-auto p-6 gap-3"):
-        ui.label("🔒 Sign in").classes("text-xl font-bold")
+        c.page_header("🔒 Sign in")
         pw = ui.input("Password", password=True, password_toggle_button=True)
 
         def _try_login() -> None:
             if pw.value == APP_PASSWORD:
-                store["authenticated"] = True
+                state.state()["authenticated"] = True
                 ui.navigate.reload()
             else:
-                ui.notify("Wrong password", type="negative")
+                c.notify_err("Wrong password")
 
         pw.on("keydown.enter", lambda _: _try_login())
         ui.button("Sign in", on_click=_try_login)

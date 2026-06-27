@@ -1,56 +1,62 @@
 """Framework-agnostic access to per-session application state.
 
-This is Phase 0 of the Streamlit -> NiceGUI migration (see
-NICEGUI_MIGRATION_PLAN.md). Business logic calls ``state()`` instead of
-``st.session_state`` so it knows NOTHING about which GUI framework is
-running.
+Phase 0 of the Streamlit -> NiceGUI migration (see NICEGUI_MIGRATION_PLAN.md).
+Business logic calls ``state()`` instead of ``st.session_state`` so it knows
+NOTHING about which GUI framework is running.
 
-  * Streamlit binds ``st.session_state`` (already a MutableMapping) once
-    per script-run -> behaviour is bit-for-bit identical to before.
-  * NiceGUI binds a per-client dict (e.g. a slot in ``app.storage``) once
-    per client connection.
+Resolver model (revised after studying the NiceGUI app in wp-system):
+``bind()`` stores a *resolver* — a zero-arg callable that returns the live
+store — NOT a captured store object. ``state()`` calls the resolver on every
+access, so it always resolves through the framework's OWN current-context
+machinery:
 
-A ``ContextVar`` (not a plain module global) backs the active store so the
-SAME accessor keeps working when NiceGUI runs many clients concurrently in
-one process. In Streamlit each session runs in its own ScriptRunner thread
-and gets its own context, so per-run ``bind()`` is correctly isolated too.
+  * Streamlit:  ``bind(lambda: st.session_state)``  — the proxy resolves to
+    the running session, so it's the identity store (behaviour unchanged).
+  * NiceGUI:    ``bind(lambda: app.storage.client)`` — resolves to the
+    current client on every call, so it is correct inside page builders AND
+    inside event callbacks / background tasks, which run in separate async
+    task contexts. (Binding a captured object once would be stale there —
+    that was the latent bug this revision fixes.)
+
+A plain MutableMapping may still be passed (``bind({})`` in tests); it is
+wrapped in a constant resolver. A module-level global is enough — no
+ContextVar — because the resolver itself is context-aware.
 """
 
 from __future__ import annotations
 
-import contextvars
-from typing import MutableMapping
+from typing import Callable, MutableMapping, Union
 
-# No default value: an unbound access is a programming error we want to
-# surface loudly rather than silently operate on a throwaway dict.
-_active: contextvars.ContextVar = contextvars.ContextVar("app_state")
+# A zero-arg callable returning the live store, or None until bound.
+_resolver: Union[Callable[[], MutableMapping], None] = None
 
 
-def bind(store: MutableMapping) -> None:
-    """Bind the active state backend for the current context.
+def bind(store_or_resolver: Union[MutableMapping, Callable[[], MutableMapping]]) -> None:
+    """Bind how to reach the active state store.
 
-    Call once at app startup (Streamlit) or per client connection
-    (NiceGUI). ``store`` must be a MutableMapping — the logic only ever
-    uses ``in`` / ``[]`` / ``.get`` / ``.keys`` / ``.pop``.
+    Pass a resolver callable (preferred) so the store is re-resolved on every
+    access; or a plain MutableMapping (wrapped in a constant resolver) for
+    simple/test cases. Call once at startup.
     """
-    _active.set(store)
+    global _resolver
+    if callable(store_or_resolver):
+        _resolver = store_or_resolver
+    else:
+        _store = store_or_resolver
+        _resolver = lambda: _store
 
 
 def is_bound() -> bool:
-    """True if a backend is bound in the current context."""
-    try:
-        _active.get()
-        return True
-    except LookupError:
-        return False
+    """True if a backend has been bound."""
+    return _resolver is not None
 
 
 def state() -> MutableMapping:
     """Return the active state mapping. Drop-in for ``st.session_state``."""
-    try:
-        return _active.get()
-    except LookupError as exc:
+    if _resolver is None:
         raise RuntimeError(
-            "app state backend not bound — call utils.state.bind(store) "
-            "at startup (Streamlit) or per client connection (NiceGUI)"
-        ) from exc
+            "app state backend not bound — call utils.state.bind(resolver) "
+            "at startup (Streamlit: lambda: st.session_state; "
+            "NiceGUI: lambda: app.storage.client)"
+        )
+    return _resolver()

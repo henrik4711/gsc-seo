@@ -24,6 +24,27 @@ NiceGUI (this app)  ─┘        ▲
 A top-level package named `nicegui` would shadow the installed NiceGUI
 library and break `import nicegui`.
 
+## Patterns adopted from wp-system (the live NiceGUI app)
+
+After studying `C:\wp-system\wp_publisher\nicegui`:
+
+- **`components.py`** — the Streamlit→NiceGUI idiom cheat-sheet (`banner`,
+  `notify_ok/err`, `simple_table`, `page_header`, `run_job`). Every view imports
+  these so the port stays consistent. Foundation for the view-port phase.
+- **`run_job(fn, …)`** — wraps `run.io_bound` + a spinner notification so slow
+  AI/scrape/IO calls run OFF the event loop and never freeze other clients.
+  This is the NiceGUI answer for the multi-hour AI batches.
+- **State resolver fix** — `state.bind()` now takes a *resolver*
+  (`lambda: app.storage.client`) re-resolved on every `state()` call, so it is
+  correct inside event callbacks/background tasks (separate async contexts),
+  not just the page builder. The earlier "bind a captured object at render"
+  approach worked only by closure luck.
+- **Already had, didn't copy** — wp's `batch_state.py` checkpoint/resume is
+  already covered by our `persistence.py` (`_fix_history`, `_fix_failure_count`,
+  `_recheck_history`) + per-item `save_ai_cache()`.
+- **Kept our auth gate** — wp_publisher has none; ours is correct for customer
+  data.
+
 ## Run locally
 
 ```bash
