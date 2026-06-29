@@ -80,6 +80,14 @@ APP_PASSWORD=dev python -m nicegui_app.main
       `page_fix_runner` (state() + `Progress` injection for its st.spinner/
       st.error; `default_progress()` auto-detects Streamlit so callers and the
       paid Fix-ALL batch are unchanged).
-- [ ] Phase 4: large analysis files (`ai_generator`, `cannibalization`)
-- [ ] Port first real view (candidate: Dashboard) — needs its logic decoupled
-- [ ] Decide NiceGUI storage scope (client vs user) + Railway start command
+- [x] Phase 4: large analysis files decoupled — `ai_generator` (20),
+      `cannibalization` (10). Also removed the dead `import streamlit` left in
+      `gsc_client.py`. **The logic layer is now 100% framework-free** — the only
+      utils still importing streamlit are the Bucket A/A′ UI files
+      (`action_ui`, `footer_push_ui`, `mshop_admin_push_ui`, `page_deeplink`,
+      `ui_helpers`) + the two boundary modules (`errors` fallback, `progress`
+      adapter).
+- [ ] Port views to NiceGUI (Bucket A/A′ UI + the ~40 `views/`), using
+      `components.py` — the remaining work.
+- [ ] Production wiring: add `nicegui` to root requirements + Railway start
+      command; set a real `NICEGUI_STORAGE_SECRET`.

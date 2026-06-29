@@ -3,7 +3,6 @@ Google Search Console API client
 Handles authentication via service account and data retrieval
 """
 
-import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import json

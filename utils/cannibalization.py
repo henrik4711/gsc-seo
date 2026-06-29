@@ -13,6 +13,7 @@ from utils.url_helpers import (
     normalize_url as _nu,
     path_is_descendant,
 )
+from utils.state import state
 
 
 # ── Slug-match helpers (used by winner selection) ──────────────────────
@@ -124,16 +125,15 @@ def _url_hierarchy_winner_among(urls: list) -> str:
 def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
     """Classify cannibalization using REAL page_type from audit_results,
     topic cluster membership, and sf_link_map structural signals."""
-    import streamlit as _st
     _path_of = _url_path  # alias for readability in this function
 
-    audit_results = _st.session_state.get("audit_results", [])
+    audit_results = state().get("audit_results", [])
     type_lookup = {}
     for ar in audit_results:
         type_lookup[_nu(ar.get("url", ""))] = ar.get("page_type", "unknown")
 
     # ── Additional signal: topic cluster membership ──────────
-    topic_clusters = _st.session_state.get("topic_clusters")
+    topic_clusters = state().get("topic_clusters")
     page_topics = topic_clusters.get("page_topics", {}) if isinstance(topic_clusters, dict) else {}
     all_urls = [winner] + list(losers)
 
@@ -158,7 +158,7 @@ def _classify_cannibal_type(winner, losers, pages_detail, audit_lookup=None):
                     different_clusters = True
 
     # ── Additional signal: winner already links to losers (intentional) ──
-    sf_link_map = _st.session_state.get("sf_link_map")
+    sf_link_map = state().get("sf_link_map")
     winner_links_to_losers = False
     if sf_link_map and isinstance(sf_link_map, dict):
         links_from = sf_link_map.get("links_from", {})
@@ -258,11 +258,10 @@ def _get_brand_keywords(df: pd.DataFrame) -> set:
     2. Queries appearing on many pages (>5% of all pages or 10+ pages)
     3. Queries where homepage has >10x more clicks than any other page
     """
-    import streamlit as st
     brand_kws = set()
 
     # Method 1: Domain-based brand terms
-    site = st.session_state.get("gsc_site", "")
+    site = state().get("gsc_site", "")
     if site:
         from urllib.parse import urlparse
         domain = urlparse(site).netloc.replace("www.", "").split(".")[0]  # "mshop" from "www.mshop.se"
@@ -279,7 +278,7 @@ def _get_brand_keywords(df: pd.DataFrame) -> set:
         brand_kws.update(kw_page_counts[kw_page_counts >= threshold].index)
 
     # Method 3: Homepage-dominated queries (navigational intent)
-    homepage = st.session_state.get("gsc_site", "").rstrip("/")
+    homepage = state().get("gsc_site", "").rstrip("/")
     if homepage:
         from utils.ui_helpers import normalize_url
         hp_norm = normalize_url(homepage)
@@ -356,8 +355,7 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
             })
 
         # Determine winner: consider clicks + position + backlink authority
-        import streamlit as _st
-        page_auth = _st.session_state.get("page_authority")
+        page_auth = state().get("page_authority")
 
         best_page = query_data.iloc[0]  # Default: most clicks
         positions = [p["position"] for p in pages_detail]
@@ -395,7 +393,7 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         #   3. WEIGHTED SCORE (current logic). Falls back to clicks +
         #      backlinks + authority + category + shallow-depth bonus when
         #      neither slug match nor hierarchy resolve cleanly.
-        audit_results = _st.session_state.get("audit_results", [])
+        audit_results = state().get("audit_results", [])
         from urllib.parse import urlparse as _urlparse
         _audit_types = {}
         for ar in audit_results:
@@ -510,7 +508,7 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
         # it belongs to + which pages in this conflict are in the same
         # cluster. Within the same cluster, pillar pages (pages with
         # most internal links + most queries) are preferred over spokes.
-        topic_clusters_data = _st.session_state.get("topic_clusters", {}) or {}
+        topic_clusters_data = state().get("topic_clusters", {}) or {}
         clusters_list = topic_clusters_data.get("clusters", []) if isinstance(topic_clusters_data, dict) else []
 
         # Find cluster(s) this query belongs to
@@ -633,7 +631,7 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
 
             # Get body text and link data
             audit_by_url = {_nu(ar.get("url", "")): ar for ar in audit_results}
-            sf_link_map = _st.session_state.get("sf_link_map") or {}
+            sf_link_map = state().get("sf_link_map") or {}
             links_from = sf_link_map.get("links_from", {}) if isinstance(sf_link_map, dict) else {}
 
             all_conflict_urls = [_nu(p["page"]) for p in pages_detail]
@@ -656,7 +654,7 @@ def detect_cannibalization(df: pd.DataFrame, min_impressions: int = 10) -> pd.Da
 
                 # Check 0: AI quality verdict (E-E-A-T, relevance, depth)
                 from utils.quality_check_runner import quality_key as _qk_can
-                q_data = _st.session_state.get(_qk_can(p_url), {})
+                q_data = state().get(_qk_can(p_url), {})
                 if isinstance(q_data, dict) and q_data.get("verdict"):
                     verdict = q_data.get("verdict", "")
                     score = q_data.get("score", 0)

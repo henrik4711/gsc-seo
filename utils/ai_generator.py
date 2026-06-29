@@ -6,8 +6,9 @@ Uses Claude claude-sonnet-4-6 via Anthropic API
 import os
 import json
 import anthropic
-import streamlit as st
 from typing import Optional
+
+from utils.state import state
 
 from utils.footer_text_api import add_www_to_url
 
@@ -980,7 +981,7 @@ IMPORTANT: Meta for category pages should focus on category intent (browse/explo
     # flags a keyword as belonging on another page, the meta title MUST
     # NOT lead with that keyword. Empty string if cluster_health hasn't
     # been run.
-    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    _ch_topic_clusters = state().get("topic_clusters") or {}
     cluster_health_block = _format_cluster_health_insights(page_data, _ch_topic_clusters)
 
     prompt = f"""You are a senior SEO specialist and conversion optimization expert for an e-commerce webshop.
@@ -1400,7 +1401,7 @@ def assess_content_quality(
 
     # Cluster Health insights for THIS page — strategic review trumps
     # per-page signals when deciding KEEP/IMPROVE/REWRITE.
-    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    _ch_topic_clusters = state().get("topic_clusters") or {}
     cluster_health_block = _format_cluster_health_insights(
         {"url": url, **(pd or {})}, _ch_topic_clusters
     )
@@ -1533,7 +1534,7 @@ Focus on informational value, E-E-A-T signals and depth.
     # this page for a given keyword (says it belongs elsewhere) or flag
     # cannibalization with another page. Empty if cluster_health hasn't
     # been run yet.
-    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    _ch_topic_clusters = state().get("topic_clusters") or {}
     cluster_health_block = _format_cluster_health_insights(page_data, _ch_topic_clusters)
 
     prompt = f"""You are a senior SEO copywriter specialized in e-commerce.
@@ -1840,7 +1841,7 @@ def generate_intro_rewrite(
     # Cluster Health insights for THIS URL — strategic review may say a
     # keyword belongs on a different page; don't force it into the intro
     # here. Empty string if cluster_health hasn't run yet.
-    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    _ch_topic_clusters = state().get("topic_clusters") or {}
     cluster_health_block = _format_cluster_health_insights(
         {"url": url}, _ch_topic_clusters
     )
@@ -2674,7 +2675,7 @@ def _required_items_for_page(prof: dict, audit_by_url: dict) -> tuple[list, list
     # 'klassisk dildo' phrase — defeating the architectural purpose.
     try:
         from utils.topical_scope import get_topical_scope
-        _topic_clusters = st.session_state.get("topic_clusters", {}) or {}
+        _topic_clusters = state().get("topic_clusters", {}) or {}
         _scope = get_topical_scope(prof.get("url", ""), _topic_clusters)
         if _scope and not _scope.get("is_hub"):
             for kw in (_scope.get("owned") or [])[:5]:
@@ -2810,8 +2811,8 @@ def generate_page_content(
     page_type = prof["page_type"]
     title = prof["title"]
     h1 = prof["h1"]
-    language = st.session_state.get("content_language", "Swedish")
-    site_context = st.session_state.get("site_context", "")
+    language = state().get("content_language", "Swedish")
+    site_context = state().get("site_context", "")
 
     query = target_query or prof["primary_query"] or h1 or title.split("|")[0].strip()
 
@@ -2821,7 +2822,7 @@ def generate_page_content(
 
     # ── 1. Competing pages (from cannibalization) ──
     competing_pages = []
-    audit_results = st.session_state.get("audit_results", [])
+    audit_results = state().get("audit_results", [])
     audit_by_url = {normalize_url(r.get("url", "")): r for r in audit_results}
     for cannibal in prof["cannibalization"]:
         if cannibal.get("query", "").lower() == query.lower():
@@ -2845,7 +2846,7 @@ def generate_page_content(
 
     # ── 3. Related pages from topic clusters ──
     related_pages = []
-    topic_clusters = st.session_state.get("topic_clusters", {})
+    topic_clusters = state().get("topic_clusters", {})
     for cluster_info in prof["clusters"]:
         topic_name = cluster_info.get("topic", "")
         if isinstance(topic_clusters, dict):
@@ -2867,7 +2868,7 @@ def generate_page_content(
             cannibal_link_instruction += f"\n  - MUST LINK: <a href=\"{cp_url}\">{query}</a> (anchor = the cannibalized query)"
 
     # Add suggested anchors from GSC queries for related pages
-    gsc_data = st.session_state.get("gsc_data")
+    gsc_data = state().get("gsc_data")
     for i, rp in enumerate(related_pages):
         rp_url = rp.strip().split(" ")[1].strip('"') if len(rp.strip().split(" ")) > 1 else ""
         if rp_url:
@@ -3087,7 +3088,7 @@ def generate_page_content(
     topical_boundary_block = ""
     try:
         from utils.topical_scope import get_topical_scope
-        _topic_clusters = st.session_state.get("topic_clusters", {}) or {}
+        _topic_clusters = state().get("topic_clusters", {}) or {}
         _scope = get_topical_scope(url, _topic_clusters)
         if _scope and not _scope.get("is_hub"):
             _do_not = _scope.get("do_not_compete", []) or []
@@ -3144,7 +3145,7 @@ Concretely, when you rewrite the text:
     # Pulls per-page findings out of cached _cluster_health_<topic> session
     # keys. Empty string when cluster_health hasn't been run — caller's
     # responsibility (the pipeline now runs cluster_health BEFORE bulk AI).
-    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    _ch_topic_clusters = state().get("topic_clusters") or {}
     cluster_health_block = _format_cluster_health_insights(
         {"url": url}, _ch_topic_clusters
     )
@@ -3578,7 +3579,7 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
         # 8) Cluster-link direction — hub-to-spoke, spoke-to-hub, missing
         #    hub link from spoke. Reads cluster topology from session.
         try:
-            _topic_clusters_local = st.session_state.get("topic_clusters", {}) or {}
+            _topic_clusters_local = state().get("topic_clusters", {}) or {}
         except Exception:
             _topic_clusters_local = {}
         cluster_direction_issues = _validate_cluster_link_directions(
@@ -3898,7 +3899,7 @@ Fleshlight, Tenga, Lelo, Fun Factory, Doll King, etc.
                         )
                 # Add a few related cluster pages as candidates
                 for rp_url in [normalize_url(p.get("page", ""))
-                               for cl in (st.session_state.get("topic_clusters", {}).get("clusters", []) or [])
+                               for cl in (state().get("topic_clusters", {}).get("clusters", []) or [])
                                for p in cl.get("pages", []) or []][:8]:
                     if rp_url and rp_url != normalize_url(url) and rp_url not in str(candidate_lines):
                         candidate_lines.append(f"<a href=\"{rp_url}\">[topical sibling]</a>")
@@ -4116,7 +4117,7 @@ def generate_category_bottom_text(
     # Cluster Health insights for THIS page — strategic review trumps
     # per-page keyword signals. Empty string when cluster_health hasn't
     # been run yet (pipeline now runs it before bulk AI generation).
-    _ch_topic_clusters = st.session_state.get("topic_clusters") or {}
+    _ch_topic_clusters = state().get("topic_clusters") or {}
     cluster_health_block = _format_cluster_health_insights(
         {"url": url}, _ch_topic_clusters
     )
@@ -4202,7 +4203,6 @@ def _format_cluster_health_insights(page_data: dict, topic_clusters: dict = None
     cluster context). The recommendation to users is "run Cluster Health
     BEFORE bulk AI text generation" so this section is populated.
     """
-    import streamlit as st
     from utils.ui_helpers import normalize_url
 
     url = page_data.get("url", "")
@@ -4220,7 +4220,7 @@ def _format_cluster_health_insights(page_data: dict, topic_clusters: dict = None
     # Now we iterate every _cluster_health_* key in session_state and
     # collect findings that mention this URL anywhere.
     insights = []
-    for skey, health in list(st.session_state.items()):
+    for skey, health in list(state().items()):
         if not isinstance(skey, str) or not skey.startswith("_cluster_health_"):
             continue
         # _cluster_health_summary is the pipeline step's run stats, not a
@@ -4574,7 +4574,7 @@ def generate_page_implementation_plan(
             ctr_gap_info = "\nCTR gap analysis shows these keyword opportunities:\n" + "\n".join(gap_lines)
 
     # Site-level validation context (informs per-page recommendations)
-    site_validation = st.session_state.get("_site_validation")
+    site_validation = state().get("_site_validation")
     site_context_info = ""
     if isinstance(site_validation, dict):
         health = site_validation.get("overall_health_score", 0)
@@ -4949,7 +4949,7 @@ def generate_action_plan(
         })
 
     # Technical issues summary from Screaming Frog
-    crawl_issues = st.session_state.get("sf_crawl_issues", {})
+    crawl_issues = state().get("sf_crawl_issues", {})
     tech_summary = ""
     if crawl_issues:
         tech_counts = {k: len(v) for k, v in crawl_issues.items() if v}
