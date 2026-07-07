@@ -17,7 +17,10 @@ import pandas as pd
 # per-client store. See NICEGUI_MIGRATION_PLAN.md.
 from utils.state import state
 
-DATA_DIR = "/data"
+# Persistence volume. Defaults to the Railway mount "/data"; override with the
+# DATA_DIR env var for local testing (e.g. DATA_DIR=./data). Streamlit/Railway
+# are unaffected because the default is unchanged.
+DATA_DIR = os.environ.get("DATA_DIR", "/data").strip() or "/data"
 AI_CACHE_DIR = os.path.join(DATA_DIR, "ai_cache")
 
 # Keys to persist and their types

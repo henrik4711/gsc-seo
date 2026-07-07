@@ -38,6 +38,15 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+# Load a local .env for development BEFORE importing anything that reads env at
+# import time (e.g. utils.persistence reads DATA_DIR). On Railway there is no
+# .env — real env vars are already set — so a missing python-dotenv is fine.
+try:
+    from dotenv import load_dotenv  # noqa: E402
+    load_dotenv(os.path.join(_REPO_ROOT, ".env"))
+except Exception:
+    pass
+
 from nicegui import app, ui  # noqa: E402
 
 from utils import state  # noqa: E402
@@ -102,12 +111,57 @@ def _ensure_loaded() -> None:
     s = app.storage.client
     if s.get("_loaded_from_disk"):
         return
+    # Make sure the persistence volume exists (local DATA_DIR=./data won't
+    # exist on first run; the Railway /data mount always does).
+    try:
+        from utils.persistence import DATA_DIR
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except Exception as e:
+        print(f"[nicegui] could not ensure DATA_DIR: {e}")
     try:
         from utils.persistence import load_all
         load_all()
     except Exception as e:  # never block the page on a load hiccup
         print(f"[nicegui] load_all failed: {e}")
+    _hydrate_from_env(s)
     s["_loaded_from_disk"] = True
+
+
+def _hydrate_from_env(s) -> None:
+    """Fill GSC + site config from env vars (only gaps — disk values win).
+
+    Mirrors Streamlit's config.init_from_env for the NiceGUI app. The Anthropic
+    key is NOT stored here — config.get_anthropic_key() already falls back to
+    ANTHROPIC_API_KEY directly. GSC credentials accept either an inline
+    GSC_CREDENTIALS_JSON string or a GSC_CREDENTIALS_FILE path.
+    """
+    import json as _json
+
+    def _fill(key, val):
+        if val and not s.get(key):
+            s[key] = val
+
+    if not s.get("gsc_credentials"):
+        raw = os.environ.get("GSC_CREDENTIALS_JSON", "").strip()
+        path = os.environ.get("GSC_CREDENTIALS_FILE", "").strip()
+        creds = None
+        if raw:
+            try:
+                creds = _json.loads(raw)
+            except Exception as e:
+                print(f"[nicegui] bad GSC_CREDENTIALS_JSON: {e}")
+        elif path and os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    creds = _json.load(f)
+            except Exception as e:
+                print(f"[nicegui] bad GSC_CREDENTIALS_FILE: {e}")
+        if creds:
+            s["gsc_credentials"] = creds
+
+    _fill("gsc_site", os.environ.get("GSC_SITE_URL", "").strip())
+    _fill("site_context", os.environ.get("SITE_CONTEXT", "").strip())
+    _fill("content_language", os.environ.get("CONTENT_LANGUAGE", "").strip())
 
 
 def _guard() -> bool:

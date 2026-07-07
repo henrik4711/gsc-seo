@@ -3,3 +3,4 @@
 #   pip install -r nicegui_app/requirements.txt
 # The shared logic in utils/ still needs the root requirements.txt too.
 nicegui==3.13.0
+python-dotenv>=1.0.0   # loads .env for local development (Railway ignores it)
