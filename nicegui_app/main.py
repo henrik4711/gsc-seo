@@ -43,6 +43,7 @@ from nicegui import app, ui  # noqa: E402
 from utils import state  # noqa: E402
 from utils.persistence import get_storage_info  # noqa: E402
 from nicegui_app import components as c  # noqa: E402
+from nicegui_app.layout import page_shell  # noqa: E402
 
 # Fail closed exactly like app.py: no APP_PASSWORD -> refuse to serve.
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
@@ -57,9 +58,9 @@ state.bind(lambda: app.storage.client)
 
 async def _render_dashboard() -> None:
     """The (tiny) pilot dashboard — all reused logic, zero Streamlit."""
-    with ui.column().classes("w-full max-w-3xl mx-auto p-6 gap-4"):
+    with page_shell("/"):
         c.page_header(
-            "SEO Platform — NiceGUI pilot",
+            "SEO Platform — NiceGUI",
             "Reuses utils/ logic directly. No Streamlit, no rerun.",
         )
 
@@ -90,8 +91,27 @@ async def _render_dashboard() -> None:
             ui.button("Increment", on_click=_bump)
 
 
-@ui.page("/")
-async def index() -> None:
+def _ensure_loaded() -> None:
+    """Rehydrate the per-client store from the /data volume once per session.
+
+    Makes the whole app resumable (goal #4): a redeploy / reconnect reloads
+    GSC data, the keyword universe, competitor uploads, audit results, etc.
+    from disk into app.storage.client. No-op locally (no /data volume) and
+    guarded so it runs only once per client connection.
+    """
+    s = app.storage.client
+    if s.get("_loaded_from_disk"):
+        return
+    try:
+        from utils.persistence import load_all
+        load_all()
+    except Exception as e:  # never block the page on a load hiccup
+        print(f"[nicegui] load_all failed: {e}")
+    s["_loaded_from_disk"] = True
+
+
+def _guard() -> bool:
+    """Fail-closed auth gate shared by every page. Returns True if usable."""
     if not APP_PASSWORD:
         with ui.column().classes("w-full max-w-xl mx-auto p-6"):
             c.page_header("🔒 Configuration error")
@@ -100,14 +120,14 @@ async def index() -> None:
                 "APP_PASSWORD env var is not set. The app refuses to serve "
                 "without it. Set APP_PASSWORD=dev for local development.",
             )
-        return
+        return False
 
     # Auth lives in app.storage.user (signed per-browser cookie), NOT
     # app.storage.client: the latter is wiped on ui.navigate.reload(), which
     # would create a login loop. app.storage.user survives the reload.
     if app.storage.user.get("authenticated"):
-        await _render_dashboard()
-        return
+        _ensure_loaded()
+        return True
 
     # ── Minimal login (per-client). Mirrors app.py's fail-closed gate. ──
     with ui.column().classes("w-full max-w-sm mx-auto p-6 gap-3"):
@@ -123,6 +143,20 @@ async def index() -> None:
 
         pw.on("keydown.enter", lambda _: _try_login())
         ui.button("Sign in", on_click=_try_login)
+    return False
+
+
+@ui.page("/")
+async def index() -> None:
+    if _guard():
+        await _render_dashboard()
+
+
+@ui.page("/keywords")
+async def keywords_page() -> None:
+    if _guard():
+        from nicegui_app.pages import keywords
+        keywords.render()
 
 
 def run() -> None:

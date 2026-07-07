@@ -45,7 +45,15 @@ PERSIST_KEYS = {
     "page_authority": "dataframe",
     "ahrefs_best_by_links": "dataframe",
     "ahrefs_backlinks": "dataframe",
-    "ahrefs_organic_keywords": "dataframe",
+    "ahrefs_organic_keywords": "dataframe",  # mshop's OWN organic keywords
+    # Competitor keyword import + the unified keyword universe built from
+    # GSC + own Ahrefs + brand-stripped competitor keywords. See
+    # utils/keyword_universe.py. Raw upload is kept so the universe can be
+    # rebuilt when GSC refreshes (resumable). competitor_meta records what
+    # was uploaded (domain, brand terms, count) for the import screen.
+    "ahrefs_competitor_keywords": "dataframe",   # flat, tagged (source/competitor)
+    "competitor_meta": "json",
+    "keyword_universe": "dataframe_json",        # nested list cols (competitors/sources)
     # AI generated
     "generated_content": "json",
     "action_plan": "json",
