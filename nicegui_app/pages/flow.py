@@ -73,7 +73,7 @@ def render() -> None:
                             ui.label(f"· {P.step_count(s, store)}").classes("text-xs text-green-700")
                     ui.label(s.description).classes("text-xs text-gray-500")
                 # action
-                if s.kind == "data" and s.page:
+                if s.kind in ("data", "view") and s.page:
                     ui.button("Open", icon="open_in_new",
                               on_click=lambda p=s.page: ui.navigate.to(p)).props("flat dense")
                 elif s.run is not None:

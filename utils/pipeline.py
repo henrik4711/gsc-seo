@@ -119,6 +119,11 @@ def _run_cannibalization(progress: Progress = NULL) -> None:
     save_key("cannibalization")
 
 
+def _run_bulk_audit(progress: Progress = NULL) -> None:
+    from utils.audit_runner import run_bulk_audit
+    run_bulk_audit(progress)
+
+
 def _run_cluster_health(progress: Progress = NULL) -> None:
     from utils.state import state
     from utils.cluster_health_runner import run_all_clusters
@@ -200,7 +205,7 @@ STEPS = [
          PHASES[1], state_key="topic_clusters", run=_run_clusters),
     Step("bulk_audit", "Audit pages",
          "Scrape every live category/CMS page for text, headings, keyword coverage.",
-         PHASES[1], state_key="audit_results"),  # port pending (heavy UI + checkpoints)
+         PHASES[1], state_key="audit_results", run=_run_bulk_audit),
     Step("cluster_health", "Cluster health review",
          "Strategic per-cluster AI review before any per-page writing.",
          PHASES[1], state_key="_cluster_health_summary", run=_run_cluster_health),
@@ -212,6 +217,10 @@ STEPS = [
     Step("cannibalization", "Cannibalization",
          "Multiple pages fighting for the same keyword.",
          PHASES[2], state_key="cannibalization", run=_run_cannibalization),
+    Step("keyword_gaps", "Keyword gaps",
+         "The payoff: searches competitors rank for and you don't, as content "
+         "opportunities prioritized by volume.",
+         PHASES[2], state_key="keyword_universe", kind="view", page="/gaps"),
     Step("content_quality", "AI content quality",
          "Assess each eligible category's text: keep / improve / rewrite.",
          PHASES[2], state_key=None, run=_run_quality, done_fn=_quality_done),

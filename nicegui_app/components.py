@@ -63,18 +63,21 @@ def notify_err(msg: str) -> None:
     ui.notify(msg, type="negative")
 
 
+# Dark-theme banners: tinted border + faint fill, readable on #0d0d15.
 _BANNER_STYLE = {
-    "success": ("✅", "bg-green-50 text-green-900 border-green-300"),
-    "error":   ("🔴", "bg-red-50 text-red-900 border-red-300"),
-    "warning": ("🟡", "bg-amber-50 text-amber-900 border-amber-300"),
-    "info":    ("🔵", "bg-blue-50 text-blue-900 border-blue-300"),
+    "success": ("✅", "#33dd88"),
+    "error":   ("🔴", "#ff4455"),
+    "warning": ("🟡", "#ffaa33"),
+    "info":    ("🔵", "#5bb4d4"),
 }
 
 
 def banner(kind: str, msg: str) -> None:
     """Persistent inline alert box (replaces st.success/error/warning/info)."""
-    icon, cls = _BANNER_STYLE.get(kind, _BANNER_STYLE["info"])
-    with ui.row().classes(f"w-full items-center gap-2 p-3 rounded border {cls}"):
+    icon, color = _BANNER_STYLE.get(kind, _BANNER_STYLE["info"])
+    with ui.row().classes("w-full items-center gap-2 p-3 rounded border").style(
+        f"border-color:{color}55; background:{color}14; color:#e8e8f0"
+    ):
         ui.label(icon)
         ui.label(msg).classes("text-sm")
 

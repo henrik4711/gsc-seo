@@ -19,26 +19,32 @@ NAV = [
     ("/", "Dashboard", "dashboard"),
     ("/flow", "SEO flow", "account_tree"),
     ("/keywords", "Keyword universe", "travel_explore"),
+    ("/gaps", "Keyword gaps", "lightbulb"),
 ]
 
 
 @contextmanager
 def page_shell(active_path: str):
     """Header + left nav + centered content column. Yields the content column."""
-    with ui.header().classes("items-center justify-between px-4 py-2 bg-primary text-white"):
-        ui.label("SEO Platform").classes("text-lg font-bold")
-        ui.label("NiceGUI").classes("text-xs opacity-70")
+    from nicegui_app import theme
+    theme.apply()
 
-    with ui.left_drawer(bordered=True).props("width=220").classes("bg-grey-1 gap-1 p-2"):
+    with ui.header().classes("items-center justify-between px-4 py-2"):
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("insights").classes("text-2xl").style(f"color:{theme.PRIMARY}")
+            ui.label("SEO Platform").classes("text-lg font-bold")
+        ui.label("mshop").classes("text-xs opacity-60")
+
+    with ui.left_drawer(bordered=True).props("width=230").classes("gap-1 p-2"):
         for path, label, icon in NAV:
             active = path == active_path
             btn = (
                 ui.button(label, icon=icon, on_click=lambda p=path: ui.navigate.to(p))
-                .props(f"flat align=left no-caps{' color=primary' if active else ' color=grey-8'}")
+                .props(f"flat no-caps{' color=primary' if active else ' color=grey-6'}")
                 .classes("w-full justify-start")
             )
             if active:
-                btn.classes("bg-primary/10 font-semibold")
+                btn.style(f"background:{theme.PRIMARY}22; font-weight:600")
 
     content = ui.column().classes("w-full max-w-5xl mx-auto p-6 gap-4")
     with content:

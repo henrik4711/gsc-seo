@@ -166,6 +166,13 @@ async def keywords_page() -> None:
         keywords.render()
 
 
+@ui.page("/gaps")
+async def gaps_page() -> None:
+    if _guard():
+        from nicegui_app.pages import gaps
+        gaps.render()
+
+
 def run() -> None:
     ui.run(
         host="0.0.0.0",
