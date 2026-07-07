@@ -173,6 +173,26 @@ def _run_cluster_linking(progress: Progress = NULL) -> None:
         pass
 
 
+def _run_site_validation(progress: Progress = NULL) -> None:
+    from utils.planning_runner import run_site_validation
+    run_site_validation(progress=progress)
+
+
+def _run_ideal_structure(progress: Progress = NULL) -> None:
+    from utils.planning_runner import run_ideal_structure
+    run_ideal_structure(progress=progress)
+
+
+def _run_gap_analysis(progress: Progress = NULL) -> None:
+    from utils.planning_runner import run_gap_analysis
+    run_gap_analysis(progress=progress)
+
+
+def _run_plan_validation(progress: Progress = NULL) -> None:
+    from utils.planning_runner import run_plan_validation
+    run_plan_validation(progress=progress)
+
+
 def _quality_done(s) -> bool:
     from utils.quality_check_runner import eligible_pages, already_checked_count
     eligible = eligible_pages(s.get("audit_results", []) or [])
@@ -231,16 +251,16 @@ STEPS = [
          PHASES[3], state_key="cluster_link_recommendations", run=_run_cluster_linking),
     Step("site_validation", "Site validation",
          "AI review of overall structure + health score.",
-         PHASES[3], state_key="_site_validation"),        # port pending
+         PHASES[3], state_key="_site_validation", run=_run_site_validation),
     Step("ideal_structure", "Ideal structure",
          "AI proposes the ideal cluster/merge/delete/create map.",
-         PHASES[3], state_key="_ideal_structure"),        # port pending
+         PHASES[3], state_key="_ideal_structure", run=_run_ideal_structure),
     Step("gap_analysis", "Migration plan",
          "Phased plan from current to ideal structure.",
-         PHASES[3], state_key="_gap_analysis"),           # port pending
+         PHASES[3], state_key="_gap_analysis", run=_run_gap_analysis),
     Step("plan_validation", "Plan validation",
          "Cross-check all per-page plans against site issues.",
-         PHASES[3], state_key="_plan_validation"),        # port pending
+         PHASES[3], state_key="_plan_validation", run=_run_plan_validation),
 ]
 
 
