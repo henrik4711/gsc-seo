@@ -17,6 +17,7 @@ from nicegui import ui
 # source of truth for the navigation.
 NAV = [
     ("/", "Dashboard", "dashboard"),
+    ("/flow", "SEO flow", "account_tree"),
     ("/keywords", "Keyword universe", "travel_explore"),
 ]
 

@@ -152,6 +152,13 @@ async def index() -> None:
         await _render_dashboard()
 
 
+@ui.page("/flow")
+async def flow_page() -> None:
+    if _guard():
+        from nicegui_app.pages import flow
+        flow.render()
+
+
 @ui.page("/keywords")
 async def keywords_page() -> None:
     if _guard():
